@@ -51,14 +51,16 @@ session_stats = {"note": "deprecated: use telemetry snapshot"}  # kept for backw
 
 
 @mcp.tool()
-async def search_tools(query: str, top_k: int = 5) -> dict:
+async def search_tools(query: str = "", top_k: int = 5) -> dict:
     """
     Search available tools by capability. Call this FIRST before any task.
     Returns lightweight references (~300 tokens total), not full definitions.
 
     Examples: "codebase symbols", "git operations", "compress context"
     """
-    results = await registry.search_async(query, top_k)
+    # Some clients/agents may accidentally call this tool with `{}`.
+    # Make the parameter optional to avoid hard validation failures.
+    results = await registry.search_async(query or "", top_k)
 
     return {
         "tools": results,
