@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "braindrain": {
+      "command": "python3",
+      "args": [
+        "-m",
+        "braindrain.server",
+        "stdio"
+      ],
+      "env": {
+        "PYTHONPATH": "/Volumes/devnvme/Development/BRAIN_MCP_HUB",
+        "BRAINDRAIN_CONFIG": "/Volumes/devnvme/Development/BRAIN_MCP_HUB/config/hub_config.yaml"
+      },
+      "cwd": "/Volumes/devnvme/Development/BRAIN_MCP_HUB"
+    }
+  }
+}

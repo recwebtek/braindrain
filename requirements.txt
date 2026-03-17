@@ -1,0 +1,16 @@
+# BRAINDRAIN Dependencies
+
+# Core
+fastmcp @ git+https://github.com/jlowin/fastmcp.git
+pyyaml
+pydantic
+
+# Search
+rank-bm25
+sentence-transformers
+
+# Anthropic SDK (for defer_loading support)
+anthropic
+
+# Utilities
+python-dotenv

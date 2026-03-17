@@ -1,0 +1,8 @@
+{
+  "mcp": {
+    "braindrain": {
+      "type": "local",
+      "command": ["/Volumes/devnvme/Development/BRAIN_MCP_HUB/config/braindrain"]
+    }
+  }
+}

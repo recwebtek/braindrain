@@ -1,0 +1,20 @@
+.DS_Store
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtualenvs
+.venv/
+venv/
+
+# Env files (keep examples)
+.env
+.env.*
+!.env.example
+
+# Local runtime logs/state
+.braindrain/
+*.log
+

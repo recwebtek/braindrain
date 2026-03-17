@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "braindrain"
+version = "1.0.0-mvp"
+description = "Intelligent MCP Context Hub"
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp>=3.0.0",
+    "pyyaml",
+    "pydantic",
+    "rank-bm25",
+    "anthropic",
+    "python-dotenv",
+]
+
+[project.scripts]
+braindrain = "braindrain.server:main"

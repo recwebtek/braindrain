@@ -1,0 +1,150 @@
+# BRAINDRAIN Configuration - MVP
+# Version: 1.0.0-mvp
+
+version: "1.0.0-mvp"
+project_name: "braindrain"
+
+# ─── MODULES ─────────────────────────────────────────────────────
+modules:
+  tool_gate:
+    enabled: true
+    beta_features:
+      advanced_tool_use: true
+      defer_loading: true
+      prompt_caching: true
+
+  output_sandbox:
+    enabled: true
+    backend: context_mode
+    enforce_hooks: true
+
+  workflow_engine:
+    enabled: false  # Deferred to Phase 3
+
+  context_database:
+    enabled: false  # Deferred - custom L0/L1/L2 to come
+
+# ─── MCP TOOLS ─────────────────────────────────────────────────
+mcp_tools:
+
+  # HOT: context-mode (always loaded - intercepts all outputs)
+  - name: context_mode
+    transport: stdio
+    command: "npx -y context-mode"
+    hot: true
+    defer_loading: false
+    tags: [sandbox, output, compression, fts5, session]
+    description: "Output sandbox with FTS5 index. Routes all tool outputs through search."
+    token_weight: negligible
+
+  # DEFERRED: Codebase tools (loaded on-demand via search_tools)
+  - name: repo_mapper
+    transport: stdio
+    command: "python3 /usr/local/bin/repomap_server.py"
+    defer_loading: true
+    tags: [codebase, symbols, graph, map, pagerank, tree-sitter]
+    description: "PageRank dependency graph + token-budgeted repo map."
+    input_examples:
+      - {path: "./src", token_budget: 2000}
+      - {path: "./src", token_budget: 1000, include_tests: false}
+    token_weight: low
+
+  - name: jcodemunch
+    transport: stdio
+    command: "uvx jcodemunch-mcp"
+    defer_loading: true
+    tags: [codebase, symbols, retrieval, search, function, class]
+    description: "Surgical symbol-level retrieval. Respects token_budget."
+    input_examples:
+      - {query: "auth functions", token_budget: 1500}
+      - {symbol: "UserModel", include_dependencies: true}
+    token_weight: low
+
+  # GitHub MCP (deferred - 26K tokens if loaded)
+  - name: github
+    transport: stdio
+    command: "npx @modelcontextprotocol/server-github"
+    defer_loading: true
+    hot_tools: [create_pull_request]
+    tags: [git, pr, issues, commits, review]
+    description: "GitHub operations: PR creation, issue management, code review."
+    env:
+      GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}"
+    token_weight: high
+
+  # DEFERRED: codebase distillation (high ROI for big repos)
+  - name: ai_distiller
+    transport: stdio
+    command: "npx -y @janreges/ai-distiller-mcp"
+    defer_loading: true
+    tags: [codebase, distillation, api, compression, tree-sitter]
+    description: "Distills codebases to public APIs/types (90%+ context reduction on large repos)."
+    token_weight: low
+
+  # DEFERRED: token-efficient editing (line-range reads + safe patching)
+  - name: text_editor
+    transport: stdio
+    command: "uvx mcp-text-editor"
+    defer_loading: true
+    tags: [editing, line-oriented, patching, token-efficient]
+    description: "Line-oriented text editing server to avoid full-file reads."
+    token_weight: low
+
+  # DEFERRED: dependency-aware file importance scoring
+  - name: filescope
+    transport: stdio
+    # Install/build: https://github.com/admica/FileScopeMCP then point to the built server entry.
+    # Example: node /path/to/FileScopeMCP/mcp-server.js --base-dir=/path/to/project
+    command: "node ${FILESCOPE_MCP_SERVER_JS:-/usr/local/bin/filescope-mcp-server.js} --base-dir=${FILESCOPE_BASE_DIR:-.}"
+    defer_loading: true
+    tags: [dependency-graph, file-importance, visualization, mermaid]
+    description: "Scores files by importance from dependency graph; can output Mermaid diagrams."
+    token_weight: medium
+
+  # DEFERRED: semantic search / chunk retrieval
+  - name: sourcerer
+    transport: stdio
+    command: "sourcerer"
+    defer_loading: true
+    tags: [semantic-search, embeddings, code-navigation]
+    description: "Semantic code search MCP (local-first fallback, optional cloud embeddings)."
+    env:
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"
+      OLLAMA_HOST: "${OLLAMA_HOST}"
+    token_weight: medium
+
+# ─── WORKFLOWS ─────────────────────────────────────────────────
+# Workflows will be implemented in Phase 3
+workflows: []
+
+# ─── MODEL TIERS (for later phases) ───────────────────────────
+models:
+  tier_micro:
+    provider: ollama
+    model: llama3.2:1b
+    api_base: http://localhost:11434
+    use_for: [history_compression, classification]
+    cost_per_1k: 0.0
+    max_tokens: 2048
+
+  tier_local:
+    provider: lm_studio
+    model: qwen3:4b
+    api_base: http://192.168.1.202:1234/v1
+    use_for: [routing, extraction, simple_tasks]
+    cost_per_1k: 0.0
+    max_tokens: 8192
+
+# ─── COST TRACKING ─────────────────────────────────────────────
+cost_tracking:
+  enabled: true
+  log_file: ~/.braindrain/costs/session.jsonl
+  track_fields:
+    - tokens_in_raw
+    - tokens_in_actual
+    - tokens_saved
+    - cost_avoided_usd
+    - cache_hits
+    - module_attribution
+  alert_threshold_usd_per_session: 0.50
+  dashboard: true
