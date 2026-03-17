@@ -135,6 +135,45 @@ models:
     cost_per_1k: 0.0
     max_tokens: 8192
 
+# ─── EMBEDDINGS (Phase 3 wiring) ─────────────────────────────────
+# Configure providers via env vars (.env.dev / .env.prod). Order is local-first.
+# This section is consumed by future semantic search / rerank workflows.
+embeddings:
+  default_model: "${EMBEDDINGS_MODEL:-text-embedding-3-small}"
+  providers:
+    # Local-first (LM Studio OpenAI-compatible embeddings endpoint)
+    - name: lmstudio_local
+      kind: openai_compat
+      base_url: "${LMSTUDIO_BASE_URL:-http://192.168.1.202:1234/v1}"
+      api_key_env: "LMSTUDIO_API_KEY"   # usually not required; can be empty
+      model: "${LMSTUDIO_EMBED_MODEL:-text-embedding-3-small}"
+      priority: 10
+
+    # Google AI Studio (generous free tier) via OpenAI-compatible gateway if you run one,
+    # or wire directly in Phase 3 if not.
+    - name: google_aistudio
+      kind: openai_compat
+      base_url: "${GOOGLE_AISTUDIO_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/openai/}"
+      api_key_env: "GOOGLE_AISTUDIO_API_KEY"
+      model: "${GOOGLE_AISTUDIO_EMBED_MODEL:-text-embedding-004}"
+      priority: 20
+
+    # Hugging Face Inference (or compatible gateway)
+    - name: huggingface
+      kind: hf_inference
+      base_url: "${HUGGINGFACE_BASE_URL:-https://api-inference.huggingface.co}"
+      api_key_env: "HUGGINGFACE_API_KEY"
+      model: "${HUGGINGFACE_EMBED_MODEL:-sentence-transformers/all-MiniLM-L6-v2}"
+      priority: 30
+
+    # Mixedbread (embeddings + rerankers)
+    - name: mixedbread
+      kind: openai_compat
+      base_url: "${MIXEDBREAD_BASE_URL:-https://api.mixedbread.ai/v1}"
+      api_key_env: "MIXEDBREAD_API_KEY"
+      model: "${MIXEDBREAD_EMBED_MODEL:-mxbai-embed-large-v1}"
+      priority: 40
+
 # ─── COST TRACKING ─────────────────────────────────────────────
 cost_tracking:
   enabled: true
