@@ -1,33 +1,17 @@
-# BRAINDRAIN MCP Tools - Always Use These First
+# Cursor rules (thin wrapper)
+#
+# Canonical agent protocol lives in `AGENTS.md`. Keep this file short to avoid
+# duplicated/contradicting instructions across agents and IDEs.
 
-## Tool Discovery Rule
-Before answering any task that requires searching, finding, or retrieving code:
-1. ALWAYS use `braindrain_search_tools` to discover available MCP tools first
-2. NEVER assume a tool doesn't exist - search first
-3. Prefer hot tools from braindrain over direct grep/read
+## Always use BRAINDRAIN first
 
-## When to Use MCP Tools
+- For discovery: call `search_tools(query, top_k=...)` before any repo-wide search or large file reads.
+- For big outputs: call `route_output(text, source, intent=...)` instead of pasting raw logs/diffs/JSON into chat.
+- For retrieval: use `search_index(query, limit=...)` (or `ctx_search` on context-mode) to pull only relevant chunks.
+- For measurement: call `get_token_dashboard()` at milestones to confirm savings.
 
-### Codebase Searches
-- Looking for functions, classes, or symbols → `braindrain_search_tools` with relevant query
-- Finding code patterns → search tools first, then use found tool (repo_mapper, jcodemunch)
-- Understanding project structure → use repo_mapper via search
+## Fallback policy
 
-### Workflow Execution
-- Multi-step tasks → check `braindrain_list_workflows` for pre-built workflows
-- Use existing workflows before creating custom solutions
-
-### Cost Awareness
-- Periodically check `braindrain_get_token_stats` to monitor token usage
-- Use search to find previous results before re-executing expensive operations
-
-## Context Compression
-All tool outputs route through context-mode FTS5 index. Use search to find:
-- Previous search results
-- Indexed code chunks
-- Past tool outputs
-
-## Priority Order
-1. braindrain_search_tools (discover)
-2. Found MCP tool (execute)
-3. Native tools as fallback (grep, read, glob)
+Only fall back to native file reads/grep/glob when:
+- `search_tools()` can’t find a suitable MCP tool, or
+- the task is tiny and local (single small file / small diff).
