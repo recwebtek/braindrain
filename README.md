@@ -188,6 +188,30 @@ Add to `~/.gemini/antigravity/mcp_config.json` under `mcpServers`:
 
 ---
 
+## Setting up on a new device
+
+Clone the repo, create a venv, point the IDE config at the local launcher. That's it.
+
+```bash
+git clone https://github.com/youruser/BRAIN_MCP_HUB.git
+cd BRAIN_MCP_HUB
+python3.12 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Then add `config/braindrain` (absolute path on the new machine) to whichever IDE configs you use — same snippets as above, different path prefix.
+
+To pull updates on any device:
+
+```bash
+cd BRAIN_MCP_HUB && git pull && .venv/bin/pip install -r requirements.txt
+```
+
+Each device runs its own probe and gets its own `env_context` — correct Python paths, correct IDE configs, correct installed apps for that machine.
+
+---
+
 ## Environment Variables
 
 | Variable | Purpose |
