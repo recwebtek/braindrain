@@ -1,4 +1,5 @@
 #!/bin/bash
 # BRAINDRAIN MCP Server Launcher
-cd /Volumes/devnvme/Development/BRAIN_MCP_HUB
-PYTHONPATH=/Volumes/devnvme/Development/BRAIN_MCP_HUB exec python3 -m braindrain.server stdio
+REPO=/Volumes/devnvme/Development/BRAIN_MCP_HUB
+cd "$REPO"
+exec "$REPO/.venv/bin/python" -m braindrain.server stdio
