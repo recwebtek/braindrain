@@ -25,6 +25,139 @@ CACHE_PATH = Path.home() / ".braindrain" / "env_context.json"
 # All run with stderr suppressed; None result means command failed/missing.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Known app categories for synthesis (keyword → canonical name)
+# Used to classify raw /Applications/ and brew cask output.
+# ---------------------------------------------------------------------------
+
+_BROWSERS: dict[str, str] = {
+    "safari": "Safari",
+    "firefox": "Firefox",
+    "chrome": "Google Chrome",
+    "chromium": "Chromium",
+    "zen": "Zen Browser",
+    "brave": "Brave Browser",
+    "opera": "Opera",
+    "vivaldi": "Vivaldi",
+    "arc": "Arc",
+    "edge": "Microsoft Edge",
+    "waterfox": "Waterfox",
+    "tor browser": "Tor Browser",
+}
+
+_LLM_TOOLS: dict[str, str] = {
+    "lm studio": "LM Studio",
+    "lmstudio": "LM Studio",
+    "anythingllm": "AnythingLLM",
+    "anything llm": "AnythingLLM",
+    "ollama": "Ollama",
+    "jan": "Jan",
+    "gpt4all": "GPT4All",
+    "msty": "Msty",
+    "openwebui": "Open WebUI",
+    "llamafile": "llamafile",
+}
+
+_VM_TOOLS: dict[str, str] = {
+    "virtualbox": "VirtualBox",
+    "vmware": "VMware",
+    "parallels": "Parallels",
+    "utm": "UTM",
+    "qemu": "QEMU",
+    "multipass": "Multipass",
+    "vagrant": "Vagrant",
+}
+
+_GUI_TOOLS: dict[str, str] = {
+    "raycast": "Raycast",
+    "alfred": "Alfred",
+    "yabai": "yabai (tiling WM)",
+    "skhd": "skhd (hotkeys)",
+    "borders": "JankyBorders",
+    "flycut": "Flycut (clipboard)",
+    "clipy": "Clipy (clipboard)",
+    "maccy": "Maccy (clipboard)",
+    "rectangle": "Rectangle (window)",
+    "magnet": "Magnet (window)",
+    "bartender": "Bartender",
+    "hiddenbar": "HiddenBar",
+    "istat": "iStat Menus",
+    "stats": "Stats (menu bar)",
+    "karabiner": "Karabiner-Elements",
+    "bettertouchtool": "BetterTouchTool",
+    "hammerspoon": "Hammerspoon",
+    "spacebar": "Spacebar",
+    "übersicht": "Übersicht",
+    "uebersicht": "Übersicht",
+    "sketchybar": "SketchyBar",
+}
+
+_IDE_AGENTS: dict[str, str] = {
+    "cursor": "Cursor",
+    "windsurf": "Windsurf",
+    "zed": "Zed",
+    "codex": "Codex",
+    "void": "Void",
+    "theia": "Theia",
+    "lapce": "Lapce",
+    "helix": "Helix",
+    "nova": "Nova",
+    "bbedit": "BBEdit",
+    "textmate": "TextMate",
+    "sublime text": "Sublime Text",
+    "visual studio code": "VS Code",
+    "code": "VS Code",
+    "rubymine": "RubyMine",
+    "pycharm": "PyCharm",
+    "webstorm": "WebStorm",
+    "intellij": "IntelliJ IDEA",
+    "goland": "GoLand",
+    "clion": "CLion",
+    "datagrip": "DataGrip",
+    "rider": "Rider",
+}
+
+_PRODUCTIVITY: dict[str, str] = {
+    "logseq": "Logseq",
+    "obsidian": "Obsidian",
+    "notion": "Notion",
+    "zotero": "Zotero",
+    "capcut": "CapCut",
+    "davinci resolve": "DaVinci Resolve",
+    "final cut": "Final Cut Pro",
+    "handbrake": "HandBrake",
+    "vlc": "VLC",
+    "iina": "IINA",
+    "discord": "Discord",
+    "slack": "Slack",
+    "zoom": "Zoom",
+    "figma": "Figma",
+    "sketch": "Sketch",
+    "affinity": "Affinity",
+    "gimp": "GIMP",
+    "inkscape": "Inkscape",
+    "blender": "Blender",
+    "docker desktop": "Docker Desktop",
+    "tableplus": "TablePlus",
+    "insomnia": "Insomnia",
+    "postman": "Postman",
+    "proxyman": "Proxyman",
+    "wireshark": "Wireshark",
+    "transmit": "Transmit",
+    "cyberduck": "Cyberduck",
+}
+
+# Local LLM server ports (port → tool name)
+_LLM_PORTS: dict[int, str] = {
+    1234: "LM Studio",
+    11434: "Ollama",
+    3001: "AnythingLLM",
+    8080: "llamafile/LocalAI",
+    5000: "Open WebUI (alt)",
+    8000: "generic LLM server",
+    1337: "LM Studio (alt)",
+}
+
 _PROBE_COMMANDS: list[tuple[str, str]] = [
     # Identity
     ("hostname", "hostname"),
@@ -127,6 +260,66 @@ _PROBE_COMMANDS: list[tuple[str, str]] = [
     # Arch
     ("arch", "uname -m"),
     ("os_type", "uname -s"),
+    # ── Bulk installed app discovery (one command, everything) ─────────────
+    # macOS: /Applications/ covers GUI apps; ~/Applications/ for user installs
+    ("apps_system", "ls /Applications/ 2>/dev/null"),
+    ("apps_user", "ls ~/Applications/ 2>/dev/null"),
+    # brew casks = GUI apps installed via homebrew
+    ("brew_casks", "brew list --cask 2>/dev/null"),
+    # Linux bulk: pacman, yay (AUR), apt, dpkg, flatpak, snap
+    (
+        "linux_pkgs",
+        "pacman -Qe 2>/dev/null | awk '{print $1}' | head -100 || "
+        "yay -Qm 2>/dev/null | awk '{print $1}' | head -50 || "
+        "apt list --installed 2>/dev/null | grep -v WARNING | cut -d/ -f1 | head -100 || "
+        "dpkg -l 2>/dev/null | awk '/^ii/{print $2}' | head -100",
+    ),
+    ("flatpak_list", "flatpak list --app --columns=name 2>/dev/null | head -30"),
+    ("snap_list", "snap list 2>/dev/null | awk 'NR>1{print $1}' | head -30"),
+    # ── Running processes snapshot (covers LLM servers, GUI tools, VMs) ───
+    (
+        "procs_notable",
+        "ps aux 2>/dev/null | grep -iE "
+        "'(lmstudio|lm.studio|anythingllm|anything.llm|ollama|jan[^a-z]|gpt4all|"
+        "virtualbox|vboxmanage|vmware|vmrun|parallels|utm[^a-z]|qemu|"
+        "raycast|alfred|yabai|skhd|borders|flycut|clipy|maccy|rectangle|"
+        "bartender|karabiner|hammerspoon|sketchybar|spacebar|"
+        "logseq|obsidian|zotero|figma|discord|slack|"
+        "codex|antigravity|gemini.cli)' "
+        "| grep -v grep | awk '{print $11}' | sort -u | head -30",
+    ),
+    # ── Local LLM server port checks (is anything listening?) ─────────────
+    (
+        "llm_ports_listening",
+        "for port in 1234 11434 3001 8080 1337; do "
+        "lsof -i :$port 2>/dev/null | grep -q LISTEN && echo $port; "
+        "done",
+    ),
+    # Quick model count from running servers (1s timeout, best-effort)
+    (
+        "lmstudio_models",
+        "curl -s --max-time 1 http://localhost:1234/v1/models 2>/dev/null "
+        '| python3 -c "import json,sys; d=json.load(sys.stdin); '
+        "print(len(d.get('data',[])), 'models loaded')\" 2>/dev/null",
+    ),
+    (
+        "ollama_models",
+        "curl -s --max-time 1 http://localhost:11434/api/tags 2>/dev/null "
+        '| python3 -c "import json,sys; d=json.load(sys.stdin); '
+        "print(len(d.get('models',[])), 'models loaded')\" 2>/dev/null",
+    ),
+    # ── VM / hypervisor CLI tools ─────────────────────────────────────────
+    (
+        "vm_tools",
+        "for v in vboxmanage VBoxManage vmrun prlctl utmctl multipass vagrant qemu-system-x86_64; do "
+        "which $v 2>/dev/null && echo $v; done",
+    ),
+    # ── Agent / AI CLI tools ──────────────────────────────────────────────
+    (
+        "ai_cli_tools",
+        "for t in codex claude aider goose sgpt shell-gpt llm gemini opencode antigravity; do "
+        "which $t 2>/dev/null && echo $t; done",
+    ),
 ]
 
 # ---------------------------------------------------------------------------
@@ -150,16 +343,24 @@ _APP_CONFIG_PROBES: list[tuple[str, str, str, str]] = [
         "mcpServers",
     ),
     ("gemini_cli", "Gemini CLI", "~/.gemini/settings.json", "mcpServers"),
-    ("claude", "Claude", "~/.config/claude/claude_desktop_config.json", "mcpServers"),
     (
-        "claude_alt",
-        "Claude (alt)",
+        "claude_desktop",
+        "Claude Desktop",
         "~/Library/Application Support/Claude/claude_desktop_config.json",
         "mcpServers",
     ),
-    ("codex", "Codex", "~/.codex/config.json", "mcpServers"),
+    (
+        "claude_config",
+        "Claude CLI",
+        "~/.config/claude/claude_desktop_config.json",
+        "mcpServers",
+    ),
+    ("codex_cli", "Codex CLI", "~/.codex/config.json", "mcpServers"),
+    ("codex_openai", "Codex (OpenAI)", "~/.openai/mcp.json", "mcpServers"),
     ("continue", "Continue", "~/.continue/config.json", "mcpServers"),
     ("vscode", "VS Code", "~/.vscode/settings.json", "mcp.servers"),
+    ("void", "Void", "~/.void/mcp.json", "mcpServers"),
+    ("aider", "Aider", "~/.aider/mcp.json", "mcpServers"),
 ]
 
 
@@ -264,12 +465,22 @@ def probe_app_configs() -> dict[str, Any]:
 
 def run_probe() -> dict[str, Any]:
     """Execute all probe commands + app config discovery, return raw results dict."""
+    import concurrent.futures
+
     raw: dict[str, Any] = {
         "probe_timestamp": datetime.now(timezone.utc).isoformat(),
         "platform_python": platform.platform(),
     }
-    for key, cmd in _PROBE_COMMANDS:
-        raw[key] = _run(cmd)
+
+    # Run all shell commands in parallel (all have 5s timeouts)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as pool:
+        futures = {pool.submit(_run, cmd): key for key, cmd in _PROBE_COMMANDS}
+        for future in concurrent.futures.as_completed(futures):
+            key = futures[future]
+            try:
+                raw[key] = future.result()
+            except Exception:
+                raw[key] = None
 
     # App config discovery runs separately (file I/O, not subprocess)
     raw["_app_configs"] = probe_app_configs()
@@ -280,6 +491,121 @@ def run_probe() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Synthesizer — turns raw probe output into a structured summary
 # ---------------------------------------------------------------------------
+
+
+def _classify_apps(
+    raw_app_lines: list[str],
+    categories: dict[str, dict[str, str]],
+) -> dict[str, list[str]]:
+    """
+    Given a flat list of app names (from /Applications/ or brew casks),
+    classify them into category buckets using keyword matching.
+    Returns {category_name: [canonical_name, ...]}
+    """
+    result: dict[str, list[str]] = {cat: [] for cat in categories}
+    seen: set[str] = set()
+
+    for app_raw in raw_app_lines:
+        app_lower = app_raw.lower().replace(".app", "").strip()
+        for category, keywords in categories.items():
+            for keyword, canonical in keywords.items():
+                if keyword in app_lower and canonical not in seen:
+                    result[category].append(canonical)
+                    seen.add(canonical)
+                    break
+
+    return result
+
+
+def _parse_installed_apps(raw: dict[str, Any]) -> dict[str, Any]:
+    """
+    Parse bulk app discovery sources into categorised sections.
+    Sources: apps_system, apps_user, brew_casks, linux_pkgs, flatpak_list, snap_list
+    Returns structured dict with browsers, llm_tools, vm_tools, gui_tools,
+    ide_agents, productivity, and all_app_names (raw deduplicated list).
+    """
+    all_lines: list[str] = []
+
+    for key in (
+        "apps_system",
+        "apps_user",
+        "brew_casks",
+        "linux_pkgs",
+        "flatpak_list",
+        "snap_list",
+    ):
+        raw_val = raw.get(key) or ""
+        for line in raw_val.splitlines():
+            line = line.strip()
+            if line:
+                all_lines.append(line)
+
+    # Also include brew_leaves (formulae — catches yabai, skhd, borders etc.)
+    for line in (raw.get("brew_leaves") or "").splitlines():
+        line = line.strip()
+        if line:
+            all_lines.append(line)
+
+    categories = {
+        "browsers": _BROWSERS,
+        "llm_tools": _LLM_TOOLS,
+        "vm_tools": _VM_TOOLS,
+        "gui_tools": _GUI_TOOLS,
+        "ide_agents": _IDE_AGENTS,
+        "productivity": _PRODUCTIVITY,
+    }
+    classified = _classify_apps(all_lines, categories)
+
+    # Deduplicated raw list (strip .app suffix, sort)
+    seen: set[str] = set()
+    clean: list[str] = []
+    for line in all_lines:
+        name = line.replace(".app", "").strip()
+        if name and name not in seen:
+            seen.add(name)
+            clean.append(name)
+    clean.sort()
+
+    return {**classified, "all_app_names": clean}
+
+
+def _parse_running_notable(raw: dict[str, Any]) -> dict[str, Any]:
+    """
+    Parse procs_notable output into categories of what's currently running.
+    Also checks llm_ports_listening + model counts from live servers.
+    """
+    procs_raw = raw.get("procs_notable") or ""
+    proc_paths = [l.strip() for l in procs_raw.splitlines() if l.strip()]
+    proc_lower = " ".join(proc_paths).lower()
+
+    # Detect which LLM servers are running
+    llm_running: list[dict[str, Any]] = []
+    ports_raw = raw.get("llm_ports_listening") or ""
+    listening_ports = {
+        int(p.strip()) for p in ports_raw.splitlines() if p.strip().isdigit()
+    }
+
+    for port, name in _LLM_PORTS.items():
+        if port in listening_ports:
+            entry: dict[str, Any] = {"name": name, "port": port, "status": "running"}
+            # Attach model count if we got it
+            if port == 1234 and raw.get("lmstudio_models"):
+                entry["models"] = raw["lmstudio_models"]
+            elif port == 11434 and raw.get("ollama_models"):
+                entry["models"] = raw["ollama_models"]
+            llm_running.append(entry)
+
+    # Detect other notable running processes
+    gui_running: list[str] = []
+    for keyword, canonical in {**_GUI_TOOLS, **_VM_TOOLS, **_PRODUCTIVITY}.items():
+        if keyword in proc_lower and canonical not in gui_running:
+            gui_running.append(canonical)
+
+    return {
+        "llm_servers": llm_running,
+        "other_notable": gui_running,
+        "raw_proc_paths": proc_paths,
+    }
 
 
 def _parse_python_interpreters(raw: dict[str, Any]) -> list[dict[str, str]]:
@@ -385,6 +711,16 @@ def synthesize(raw: dict[str, Any]) -> dict[str, Any]:
     # App configs
     app_configs: dict[str, Any] = raw.get("_app_configs", {})
 
+    # Installed apps (categorised from bulk discovery)
+    installed_apps = _parse_installed_apps(raw)
+
+    # Running notable processes + LLM servers
+    running = _parse_running_notable(raw)
+
+    # AI CLI tools
+    ai_cli_raw = raw.get("ai_cli_tools") or ""
+    ai_cli_tools = [l.strip() for l in ai_cli_raw.splitlines() if l.strip()]
+
     # Agent behaviour hints — derived from what's installed
     agent_hints: list[str] = []
     if "fd" in modern_tools:
@@ -402,6 +738,14 @@ def synthesize(raw: dict[str, Any]) -> dict[str, Any]:
     if is_linux:
         agent_hints.append(
             "Linux — systemd available" if "systemd" in _val("init_system") else "Linux"
+        )
+
+    # LLM server hints
+    for server in running.get("llm_servers", []):
+        model_note = f" ({server['models']})" if server.get("models") else ""
+        agent_hints.append(
+            f"{server['name']} running on :{server['port']}{model_note} — "
+            f"use http://localhost:{server['port']}/v1 for OpenAI-compat API"
         )
 
     # Python interpreter warning
@@ -442,6 +786,9 @@ def synthesize(raw: dict[str, Any]) -> dict[str, Any]:
         "runtimes": runtimes,
         "python_interpreters": python_interpreters,
         "pyenv": pyenv_info,
+        "installed_apps": installed_apps,
+        "running": running,
+        "ai_cli_tools": ai_cli_tools,
         "containers": {
             "docker": _val("docker_version"),
             "docker_compose": _val("docker_compose"),
@@ -456,6 +803,7 @@ def synthesize(raw: dict[str, Any]) -> dict[str, Any]:
         },
         "agent_hints": agent_hints,
         "app_configs": app_configs,
+        "ai_cli_tools": ai_cli_tools,
         "brew_packages": [
             l.strip() for l in _val("brew_leaves").splitlines() if l.strip()
         ],
@@ -546,6 +894,45 @@ def render_agents_md_block(summary: dict[str, Any]) -> str:
         lines.append(
             f"- **Git**: {git.get('version', '')} · {git.get('config', '').replace(chr(10), ', ')}"
         )
+
+    # Installed app categories
+    installed = summary.get("installed_apps", {})
+    running = summary.get("running", {})
+    ai_cli = summary.get("ai_cli_tools", [])
+
+    if installed.get("browsers"):
+        lines.append(f"- **Browsers**: {', '.join(installed['browsers'])}")
+
+    if installed.get("llm_tools"):
+        lines.append(f"- **LLM tools installed**: {', '.join(installed['llm_tools'])}")
+
+    if running.get("llm_servers"):
+        for srv in running["llm_servers"]:
+            model_note = f" · {srv['models']}" if srv.get("models") else ""
+            lines.append(
+                f"- **{srv['name']}** running on `localhost:{srv['port']}`{model_note}"
+            )
+
+    if installed.get("vm_tools"):
+        lines.append(f"- **VM tools**: {', '.join(installed['vm_tools'])}")
+
+    if installed.get("gui_tools"):
+        lines.append(f"- **GUI/WM tools**: {', '.join(installed['gui_tools'])}")
+
+    if installed.get("ide_agents"):
+        lines.append(
+            f"- **IDEs/agents installed**: {', '.join(installed['ide_agents'])}"
+        )
+
+    if installed.get("productivity"):
+        lines.append(
+            f"- **Productivity/media apps**: {', '.join(installed['productivity'])}"
+        )
+
+    if ai_cli:
+        # Strip full paths — just the binary names
+        names = list({p.split("/")[-1] for p in ai_cli})
+        lines.append(f"- **AI CLI tools**: {', '.join(names)}")
 
     # IDE / Agent MCP configs — the key section that eliminates config-hunting
     configured_apps = {k: v for k, v in app_configs.items() if v.get("exists")}
