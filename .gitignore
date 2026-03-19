@@ -18,3 +18,5 @@ venv/
 .braindrain/
 *.log
 
+# Docs dir is dev-only, not tracked in repo
+.devdocs/
