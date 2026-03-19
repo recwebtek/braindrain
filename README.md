@@ -169,17 +169,22 @@ Add to `~/.config/opencode/opencode.jsonc` (note: OpenCode uses an array for the
 
 ### Antigravity (Google)
 
+Add to `~/.gemini/antigravity/mcp_config.json` under `mcpServers`:
+
 ```json
 {
   "mcpServers": {
     "braindrain": {
       "command": "/path/to/BRAIN_MCP_HUB/config/braindrain",
       "args": [],
-      "env": {}
+      "env": {},
+      "disabledTools": []
     }
   }
 }
 ```
+
+> **Note:** Do not use `"command": "python3"` with `args` and `PYTHONPATH` — pyenv will resolve `python3` to the wrong interpreter (e.g. 3.8) and the server will crash silently before producing any JSON-RPC output. Always point directly at the launcher script.
 
 ---
 
