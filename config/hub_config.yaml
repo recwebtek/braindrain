@@ -19,14 +19,22 @@ modules:
     enforce_hooks: true
 
   workflow_engine:
-    enabled: false  # Deferred to Phase 3
+    enabled: true # Phase 3: Workflow engine
 
   context_database:
-    enabled: false  # Deferred - custom L0/L1/L2 to come
+    enabled: false # Deferred - custom L0/L1/L2 to come
+
+  env_context:
+    enabled: true
+    cache_path: ~/.braindrain/env_context.json
+    hot: true # always loaded — it's tiny (~400 tokens)
+    description: >
+      OS environment fingerprint. Provides identity, network, shell, runtimes,
+      editors, CLI tools, and agent behaviour hints. Zero discovery cost after
+      first probe. Re-run via refresh_env_context when env changes.
 
 # ─── MCP TOOLS ─────────────────────────────────────────────────
 mcp_tools:
-
   # HOT: context-mode (always loaded - intercepts all outputs)
   - name: context_mode
     transport: stdio
@@ -37,6 +45,24 @@ mcp_tools:
     description: "Output sandbox with FTS5 index. Routes all tool outputs through search."
     token_weight: negligible
 
+  # HOT: env context (always loaded — deterministic OS fingerprint, zero API cost)
+  - name: get_env_context
+    hot: true
+    defer_loading: false
+    tags: [os, environment, shell, identity, network, tools, runtimes]
+    description: >
+      Return cached OS environment snapshot: hostname, LAN IPs, username,
+      shell, package manager, runtimes, editors, CLI tools, agent hints.
+      Use refresh=True to re-probe after environment changes.
+
+  - name: refresh_env_context
+    hot: false
+    defer_loading: true
+    tags: [os, environment, probe, refresh, onboarding]
+    description: >
+      Re-run full OS probe and update cached env context.
+      Only needed after installing new tools or changing machines.
+
   # DEFERRED: Codebase tools (loaded on-demand via search_tools)
   - name: repo_mapper
     transport: stdio
@@ -45,8 +71,8 @@ mcp_tools:
     tags: [codebase, symbols, graph, map, pagerank, tree-sitter]
     description: "PageRank dependency graph + token-budgeted repo map."
     input_examples:
-      - {path: "./src", token_budget: 2000}
-      - {path: "./src", token_budget: 1000, include_tests: false}
+      - { path: "./src", token_budget: 2000 }
+      - { path: "./src", token_budget: 1000, include_tests: false }
     token_weight: low
 
   - name: jcodemunch
@@ -56,8 +82,8 @@ mcp_tools:
     tags: [codebase, symbols, retrieval, search, function, class]
     description: "Surgical symbol-level retrieval. Respects token_budget."
     input_examples:
-      - {query: "auth functions", token_budget: 1500}
-      - {symbol: "UserModel", include_dependencies: true}
+      - { query: "auth functions", token_budget: 1500 }
+      - { symbol: "UserModel", include_dependencies: true }
     token_weight: low
 
   # GitHub MCP (deferred - 26K tokens if loaded)
@@ -114,8 +140,33 @@ mcp_tools:
     token_weight: medium
 
 # ─── WORKFLOWS ─────────────────────────────────────────────────
-# Workflows will be implemented in Phase 3
-workflows: []
+# ─── WORKFLOWS ─────────────────────────────────────────────────
+workflows:
+  - name: ingest_codebase
+    description: "Full codebase indexing. Run once per project, then use incremental."
+    steps:
+      - repo_mapper.generate
+      - jcodemunch.index
+    executes_in: sandbox
+    model: tier_local
+    token_budget: 2000
+    plan_before_run: false
+    input_examples:
+      - { path: "./src", mode: "new_project" }
+      - { path: "./src", mode: "incremental", since_commit: "HEAD~10" }
+
+  - name: refactor_prep
+    description: "Blast radius analysis: affected files/symbols for a proposed change."
+    steps:
+      - repo_mapper.dependency_graph
+      - jcodemunch.get_affected_symbols
+    executes_in: sandbox
+    model: tier_local
+    token_budget: 3000
+    plan_before_run: true
+    input_examples:
+      - { files: ["./auth/"], change_description: "migrate to JWT" }
+      - { symbol: "UserModel", change_type: "schema_change" }
 
 # ─── MODEL TIERS (for later phases) ───────────────────────────
 models:
@@ -145,7 +196,7 @@ embeddings:
     - name: lmstudio_local
       kind: openai_compat
       base_url: "${LMSTUDIO_BASE_URL:-http://192.168.1.202:1234/v1}"
-      api_key_env: "LMSTUDIO_API_KEY"   # usually not required; can be empty
+      api_key_env: "LMSTUDIO_API_KEY" # usually not required; can be empty
       model: "${LMSTUDIO_EMBED_MODEL:-text-embedding-3-small}"
       priority: 10
 

@@ -8,6 +8,13 @@ Welcome to the BRAIN MCP HUB. This repository provides custom Model Context Prot
 - **Output sandbox routing**: large outputs can be indexed into `context-mode` (FTS5) instead of being dumped into the model context.
 - **Token telemetry**: `get_token_dashboard` / `get_token_stats` exposes estimated “raw vs actual” tokens saved, and writes JSONL logs to disk.
 
+## What BRAINDRAIN adds (Phase 3)
+
+- **Workflow engine**: `run_workflow` executes multi-step workflows with output routing (handles instead of blobs).
+- **Planning**: `plan_workflow` emits a markdown execution plan for review.
+- **Sandbox stage**: uses `llm-sandbox` (Docker) when available; falls back to deterministic local summary if Docker isn’t running.
+- **First workflows**: `ingest_codebase`, `refactor_prep` (configured in `config/hub_config.yaml`).
+
 ## Run paths (dev + prod)
 
 ### Dev (recommended)
@@ -27,6 +34,16 @@ python -m pip install -r requirements.txt
 python braindrain/server.py stdio
 ```
 
+### Workflows (Phase 3)
+
+- **List workflows**: call `list_workflows()`
+- **Plan a workflow**: call `plan_workflow(name, args)`
+- **Run a workflow**: call `run_workflow(name, args)`
+
+Docker note:
+- Start Docker Desktop if you want the Docker sandbox stage enabled.
+- To disable the Docker sandbox: `BRAINDRAIN_DISABLE_DOCKER_SANDBOX=1`
+
 ### “Prod” (stable local install)
 
 - Use the launcher script referenced by your IDE MCP config:
@@ -44,6 +61,9 @@ python braindrain/server.py stdio
 - **FILESCOPE_MCP_SERVER_JS / FILESCOPE_BASE_DIR**: optional (for FileScopeMCP wiring)
 
 See `.env.example` for a starting point. If you keep separate environments, use `.env.dev` / `.env.prod` and load them in your launcher script or shell profile.
+
+Server auto-loading note:
+- On startup, `braindrain/server.py` will auto-load `.env.dev` → `.env.prod` → `.env` (first found), without overriding existing env vars.
 
 ## Token reduction: how to see it
 

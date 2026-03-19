@@ -14,3 +14,9 @@ anthropic
 
 # Utilities
 python-dotenv
+
+# Workflow engine sandbox (Phase 3)
+llm-sandbox[mcp-docker]
+
+# Test
+pytest

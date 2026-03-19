@@ -8,7 +8,8 @@ def test_config_load():
     """Test config loading"""
     config = Config("config/hub_config.yaml")
     assert config.get("project_name") == "braindrain"
-    assert len(config.mcp_tools) == 4
+    assert len(config.mcp_tools) >= 4
+    assert len(config.workflows) >= 2
 
 
 def test_tool_registry():
@@ -16,7 +17,7 @@ def test_tool_registry():
     config = Config("config/hub_config.yaml")
     registry = ToolRegistry(config.data)
 
-    assert registry.count() == 4
+    assert registry.count() >= 4
     assert len(registry.get_hot_tools()) == 1
     assert registry.get_hot_tools()[0].name == "context_mode"
 

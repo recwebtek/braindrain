@@ -1,8 +1,8 @@
 """BRAINDRAIN MCP Server - FastMCP implementation"""
 
+import json
 import os
 import sys
-import json
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -12,14 +12,16 @@ _project_root = Path(__file__).parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
+from dotenv import load_dotenv
 from fastmcp import FastMCP
 
 from braindrain.config import Config
-from braindrain.tool_registry import ToolRegistry
 from braindrain.context_mode_client import ContextModeClient, MCPProtocolError
-from braindrain.output_router import should_route, build_routed_output
+from braindrain.env_probe import get_env_context as _probe_env_context
+from braindrain.output_router import build_routed_output, should_route
 from braindrain.telemetry import telemetry_from_config
-
+from braindrain.tool_registry import ToolRegistry
+from braindrain.workflow_engine import WorkflowEngine
 
 mcp = FastMCP("braindrain")
 
@@ -28,11 +30,21 @@ CONFIG_PATH = os.environ.get(
     str(Path(__file__).parent.parent / "config" / "hub_config.yaml"),
 )
 
+# Load environment variables early (dev/prod).
+# Precedence: existing env vars win; `.env.dev` preferred if present, else `.env.prod`, else `.env`.
+_repo_root = Path(__file__).parent.parent
+for _env_name in (".env.dev", ".env.prod", ".env"):
+    _env_path = _repo_root / _env_name
+    if _env_path.exists():
+        load_dotenv(dotenv_path=_env_path, override=False)
+        break
+
 config = Config(CONFIG_PATH)
 registry = ToolRegistry(config.data)
 telemetry = telemetry_from_config(config.get("cost_tracking", {}) or {})
 
 _context_mode_client: Optional[ContextModeClient] = None
+_workflow_engine: Optional[WorkflowEngine] = None
 
 
 def _get_context_mode_client() -> Optional[ContextModeClient]:
@@ -47,7 +59,27 @@ def _get_context_mode_client() -> Optional[ContextModeClient]:
     _context_mode_client = ContextModeClient(tool.command)
     return _context_mode_client
 
-session_stats = {"note": "deprecated: use telemetry snapshot"}  # kept for backwards compatibility
+
+def _get_workflow_engine() -> Optional[WorkflowEngine]:
+    global _workflow_engine
+    if _workflow_engine is not None:
+        return _workflow_engine
+
+    enabled = bool(config.get("modules.workflow_engine.enabled", False) or False)
+    if not enabled:
+        return None
+
+    _workflow_engine = WorkflowEngine(
+        config=config,
+        telemetry=telemetry,
+        context_mode_client_getter=_get_context_mode_client,
+    )
+    return _workflow_engine
+
+
+session_stats = {
+    "note": "deprecated: use telemetry snapshot"
+}  # kept for backwards compatibility
 
 
 @mcp.tool()
@@ -96,12 +128,16 @@ async def run_workflow(name: str, args: dict = None) -> dict:
             "available": [wf.name for wf in config.workflows],
         }
 
-    return {
-        "workflow": name,
-        "status": "not_implemented_mvp",
-        "message": "Workflow engine (Module C) deferred to post-MVP",
-        "token_budget": workflow.token_budget,
-    }
+    engine = _get_workflow_engine()
+    if engine is None:
+        return {
+            "workflow": name,
+            "status": "workflow_engine_disabled",
+            "message": "Enable modules.workflow_engine.enabled in config/hub_config.yaml",
+            "token_budget": workflow.token_budget,
+        }
+
+    return await engine.run(name=name, args=args)
 
 
 @mcp.tool()
@@ -112,10 +148,31 @@ async def plan_workflow(name: str, args: dict = None) -> dict:
 
     Note: This feature requires crit (Phase 3). Currently returns stub.
     """
-    return {
-        "status": "deferred",
-        "message": "Plan workflow requires crit integration (Phase 3)",
-    }
+    if args is None:
+        args = {}
+
+    workflow = config.get_workflow(name)
+    if not workflow:
+        return {
+            "error": f"Workflow '{name}' not found",
+            "available": [wf.name for wf in config.workflows],
+        }
+
+    engine = _get_workflow_engine()
+    if engine is None:
+        return {
+            "workflow": name,
+            "status": "workflow_engine_disabled",
+            "message": "Enable modules.workflow_engine.enabled in config/hub_config.yaml to run workflows",
+            "plan": {
+                "workflow": name,
+                "token_budget": workflow.token_budget,
+                "steps": workflow.steps,
+                "args": args,
+            },
+        }
+
+    return engine.plan(name=name, args=args)
 
 
 @mcp.tool()
@@ -185,7 +242,11 @@ async def route_output(
             "bytes_raw": len(text.encode("utf-8", errors="ignore")),
             "text": text,
         }
-        telemetry.record(tool_name="route_output", raw_text=text, actual_text=json.dumps(resp, ensure_ascii=False))
+        telemetry.record(
+            tool_name="route_output",
+            raw_text=text,
+            actual_text=json.dumps(resp, ensure_ascii=False),
+        )
         return resp
 
     client = _get_context_mode_client()
@@ -197,12 +258,18 @@ async def route_output(
             "bytes_raw": len(text.encode("utf-8", errors="ignore")),
             "text_preview": text[:400],
         }
-        telemetry.record(tool_name="route_output", raw_text=text, actual_text=json.dumps(resp, ensure_ascii=False))
+        telemetry.record(
+            tool_name="route_output",
+            raw_text=text,
+            actual_text=json.dumps(resp, ensure_ascii=False),
+        )
         return resp
 
     routed, md = build_routed_output(source=source, content=text, intent=intent)
     try:
-        index_result = await client.index_markdown(content_md=md, source=source, intent=intent)
+        index_result = await client.index_markdown(
+            content_md=md, source=source, intent=intent
+        )
     except MCPProtocolError as e:
         resp = {
             "routed": False,
@@ -211,7 +278,11 @@ async def route_output(
             "bytes_raw": routed.bytes_raw,
             "text_preview": routed.preview,
         }
-        telemetry.record(tool_name="route_output", raw_text=text, actual_text=json.dumps(resp, ensure_ascii=False))
+        telemetry.record(
+            tool_name="route_output",
+            raw_text=text,
+            actual_text=json.dumps(resp, ensure_ascii=False),
+        )
         return resp
 
     resp = {
@@ -227,7 +298,9 @@ async def route_output(
         },
         "next_steps": {
             "use_ctx_search": True,
-            "examples": [{"tool": "ctx_search", "query": q} for q in routed.suggested_queries[:3]],
+            "examples": [
+                {"tool": "ctx_search", "query": q} for q in routed.suggested_queries[:3]
+            ],
         },
     }
     telemetry.record(
@@ -249,16 +322,28 @@ async def search_index(query: str, limit: int = 5) -> dict:
     client = _get_context_mode_client()
     if client is None:
         resp = {"error": "context_mode is not configured; cannot search"}
-        telemetry.record(tool_name="search_index", raw_text=query, actual_text=json.dumps(resp, ensure_ascii=False))
+        telemetry.record(
+            tool_name="search_index",
+            raw_text=query,
+            actual_text=json.dumps(resp, ensure_ascii=False),
+        )
         return resp
     try:
         results = await client.search(query=query, limit=limit)
         resp = {"query": query, "limit": limit, "results": results}
-        telemetry.record(tool_name="search_index", raw_text=query, actual_text=json.dumps(resp, ensure_ascii=False))
+        telemetry.record(
+            tool_name="search_index",
+            raw_text=query,
+            actual_text=json.dumps(resp, ensure_ascii=False),
+        )
         return resp
     except MCPProtocolError as e:
         resp = {"error": f"context-mode search failed: {e}"}
-        telemetry.record(tool_name="search_index", raw_text=query, actual_text=json.dumps(resp, ensure_ascii=False))
+        telemetry.record(
+            tool_name="search_index",
+            raw_text=query,
+            actual_text=json.dumps(resp, ensure_ascii=False),
+        )
         return resp
 
 
@@ -276,6 +361,53 @@ async def ping() -> dict:
         "service": "braindrain",
         "version": config.get("version", "1.0.0-mvp"),
         "timestamp": datetime.now().isoformat(),
+    }
+
+
+@mcp.tool()
+def get_env_context(refresh: bool = False) -> dict:
+    """
+    Return a cached snapshot of the host OS environment: identity, network,
+    shell, runtimes, editors, installed CLI tools, and agent behaviour hints.
+
+    Returns a ready-to-paste AGENTS.md block plus full structured summary.
+
+    Args:
+        refresh: If True, re-run the OS probe and update the cache.
+                 Default False returns the cached result instantly.
+
+    Use this at the start of any session that involves shell commands, package
+    installs, file operations, or tool invocations — so you know exactly what's
+    available without discovery probing.
+    """
+    result = _probe_env_context(refresh=refresh)
+    return {
+        "cached": result["cached"],
+        "probe_timestamp": result["probe_timestamp"],
+        "agents_md_block": result["agents_md_block"],
+        "summary": result["summary"],
+    }
+
+
+@mcp.tool()
+def refresh_env_context() -> dict:
+    """
+    Re-run the full OS environment probe and update the cached snapshot.
+
+    Run this when:
+    - You've installed new tools or changed your shell config
+    - You've switched machines or changed your network
+    - The cached data feels stale
+
+    Returns the fresh AGENTS.md block and structured summary.
+    """
+    result = _probe_env_context(refresh=True)
+    return {
+        "cached": False,
+        "probe_timestamp": result["probe_timestamp"],
+        "agents_md_block": result["agents_md_block"],
+        "summary": result["summary"],
+        "message": "Environment context refreshed and cached to ~/.braindrain/env_context.json",
     }
 
 
