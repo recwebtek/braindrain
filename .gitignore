@@ -20,3 +20,14 @@ venv/
 
 # Docs dir is dev-only, not tracked in repo
 .devdocs/
+
+# AGENTS.md is generated per device by install.sh / refresh_env_context()
+# It contains personal env data (hostname, IPs, paths, IDE configs)
+AGENTS.md
+
+# Tests are dev-only (not needed on consumer installs)
+tests/
+
+# Obsolete local config files with hardcoded machine paths
+config/zed_mcp.json
+config/opencode_mcp.json

@@ -76,7 +76,7 @@ The `config/braindrain` launcher script is the preferred entry point for IDE con
 
 ```bash
 # Launcher (used by all IDE configs below)
-/Volumes/devnvme/Development/BRAIN_MCP_HUB/config/braindrain
+/path/to/BRAIN_MCP_HUB/config/braindrain
 ```
 
 > **Important:** The launcher calls `.venv/bin/python` directly. Do not replace this with a bare `python3` call — if pyenv or system Python is a different version (e.g. 3.8), it will have none of the project's dependencies and the server will crash silently on startup.

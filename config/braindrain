@@ -1,5 +1,8 @@
 #!/bin/bash
 # BRAINDRAIN MCP Server Launcher
-REPO=/Volumes/devnvme/Development/BRAIN_MCP_HUB
+# Self-detecting: works from any clone location on any machine.
+# IDEs point at this file directly — no hardcoded paths needed.
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
 exec "$REPO/.venv/bin/python" -m braindrain.server stdio

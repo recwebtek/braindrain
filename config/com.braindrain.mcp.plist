@@ -1,17 +1,32 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  BRAINDRAIN launchd service (macOS auto-start)
+
+  SETUP: Replace /path/to/BRAIN_MCP_HUB below with your actual repo path,
+         then install with:
+
+    cp config/com.braindrain.mcp.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.braindrain.mcp.plist
+
+  To unload:
+    launchctl unload ~/Library/LaunchAgents/com.braindrain.mcp.plist
+
+  NOTE: This file is a template. Do not commit your edited copy with real paths.
+        Run install.sh — it generates a filled-in copy automatically.
+-->
 <plist version="1.0">
 <dict>
     <key>Label</key>
     <string>com.braindrain.mcp</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Volumes/devnvme/Development/BRAIN_MCP_HUB/config/braindrain</string>
+        <string>/path/to/BRAIN_MCP_HUB/config/braindrain</string>
     </array>
     <key>RunAtLoad</key>
-    <true/>
+    <false/>
     <key>KeepAlive</key>
-    <true/>
+    <false/>
     <key>StandardOutPath</key>
     <string>/tmp/braindrain.log</string>
     <key>StandardErrorPath</key>

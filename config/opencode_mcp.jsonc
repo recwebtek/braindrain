@@ -1,8 +1,11 @@
 {
+  // OpenCode MCP configuration for BRAINDRAIN
+  // Copy the command path from your local install:
+  //   macOS/Linux: run `pwd` inside your BRAIN_MCP_HUB clone, append /config/braindrain
   "mcp": {
     "braindrain": {
       "type": "local",
-      "command": ["/Volumes/devnvme/Development/BRAIN_MCP_HUB/config/braindrain"]
-    }
-  }
+      "command": ["/path/to/BRAIN_MCP_HUB/config/braindrain"],
+    },
+  },
 }

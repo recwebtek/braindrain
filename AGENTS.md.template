@@ -1,0 +1,67 @@
+# AGENTS.md — BRAINDRAIN protocol
+
+## Rules (always)
+
+1. **Environment first**: call `get_env_context()` at the start of any session involving
+   shell commands, file operations, package installs, or tool invocations.
+   The cached snapshot tells you exactly what's available — no discovery probing needed.
+
+2. **Discover before loading**: call `search_tools(query, top_k=...)` before any
+   repo-wide search or read. Never assume a tool exists; find it first.
+
+3. **Route big outputs**: use `route_output(text, source, intent=...)` for large blobs;
+   retrieve via `search_index(query, limit=...)`. Never dump raw large text into context.
+
+4. **Measure**: call `get_token_dashboard()` (or `get_token_stats()`) at session
+   milestones to track savings.
+
+5. **Keep docs current**: if behaviour, run paths, or tools change, update
+   `.devdocs/SESSION_PROGRESS.md`, `.devdocs/OPS.md`, and `README.md`.
+
+6. **Never probe the environment yourself**: no `which`, `command -v`, or `uname`
+   chains. The cached context is authoritative. Call `refresh_env_context()` if
+   something seems stale.
+
+---
+
+## BRAINDRAIN hot tools
+
+| Tool | Purpose |
+|---|---|
+| `get_env_context(refresh=False)` | Cached OS fingerprint — call this first |
+| `search_tools(query, top_k=5)` | Discover deferred tools by capability |
+| `route_output(text, source, ...)` | Index large text into context-mode |
+| `search_index(query, limit=5)` | Retrieve from FTS5 index |
+| `list_workflows()` | List available workflows |
+| `run_workflow(name, args)` | Execute workflow in sandbox |
+| `plan_workflow(name, args)` | Review plan before running |
+| `get_token_dashboard()` | Token savings snapshot |
+| `get_token_stats()` | Full session cost breakdown |
+| `get_available_tools()` | Show hot vs deferred tools |
+| `ping()` | Health check |
+| `refresh_env_context()` | Re-probe OS environment (deferred) |
+
+---
+
+## Environment Context Protocol
+
+Before running any shell commands, installing packages, or assuming tool
+availability — call `get_env_context()` first.
+
+It tells you:
+- Exact hostname, username, and LAN IPs
+- Which package manager to use (`brew` vs `apt` vs `dnf` etc.)
+- Which Python interpreters are in PATH and which is active via pyenv
+- Active runtimes and their version managers
+- Which modern CLI tools are installed (`fd`, `bat`, `rg`, `fzf` …)
+- Which IDEs/agents have MCP configs and where those files live
+- Which LLM servers are running locally and on what ports
+- Shell type, browsers, VM tools, GUI tools
+- Agent behaviour hints (what to prefer and avoid on this OS)
+
+**Never probe the environment yourself.** If something seems missing,
+call `refresh_env_context()`.
+
+<!-- ENV_CONTEXT_START -->
+<!-- Run refresh_env_context() or install.sh to populate this block -->
+<!-- ENV_CONTEXT_END -->
