@@ -16,7 +16,7 @@
    milestones to track savings.
 
 5. **Keep docs current**: if behaviour, run paths, or tools change, update
-   `.dev.devdocs/SESSION_PROGRESS.md`, `.dev.devdocs/OPS.md`, and `README.md`.
+   `.devdocs/SESSION_PROGRESS.md`, `.devdocs/OPS.md`, and `README.md`.
 
 6. **Never probe the environment yourself**: no `which`, `command -v`, or `uname`
    chains. The cached context is authoritative. Call `refresh_env_context()` if
