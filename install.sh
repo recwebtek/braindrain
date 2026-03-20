@@ -57,7 +57,7 @@ python_is_supported() {
     minor="$("$py" -c 'import sys; print(sys.version_info.minor)' 2>/dev/null || echo 0)"
     if [[ "$major" -ne 3 ]]; then return 1; fi
     if [[ "$minor" -lt 11 ]]; then return 1; fi
-    if [[ "$minor" -gt 13 ]]; then return 2; fi
+    if [[ "$minor" -gt 14 ]]; then return 2; fi
     return 0
 }
 
@@ -85,9 +85,9 @@ header "1. Python interpreter"
 PYTHON="${PYTHON:-}"
 
 if [[ -z "$PYTHON" ]]; then
-    PYTHON="$(choose_python python3.13 python3.12 python3.11 python3 || true)"
+    PYTHON="$(choose_python python3.14 python3.13 python3.12 python3.11 python3 || true)"
 fi
-[[ -z "$PYTHON" ]] && die "No Python found. Install Python 3.11-3.13 and retry."
+[[ -z "$PYTHON" ]] && die "No Python found. Install Python 3.11-3.14 and retry."
 
 if ! PYVER="$(python_version_tuple "$PYTHON" 2>/dev/null)"; then
     die "'$PYTHON' is not a working Python interpreter."
@@ -97,9 +97,9 @@ PYTHON_REAL="$("$PYTHON" -c "import sys; print(sys.executable)")"
 python_is_supported "$PYTHON" || {
     code=$?
     if [[ "$code" -eq 1 ]]; then
-        die "Python 3.11-3.13 required. Found $PYTHON -> $PYVER. Try PYTHON=python3.12 ./install.sh"
+        die "Python 3.11-3.14 required. Found $PYTHON -> $PYVER. Try PYTHON=python3.12 ./install.sh"
     fi
-    die "Python 3.14+ is not supported for first-run install yet (wheel availability). Found $PYTHON -> $PYVER. Install python3.12 or python3.13."
+    die "Python 3.15+ is not supported for first-run install yet (wheel availability). Found $PYTHON -> $PYVER. Install python3.12–python3.14."
 }
 
 if echo "$PYTHON_REAL" | grep -q "pyenv/shims"; then

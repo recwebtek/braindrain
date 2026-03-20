@@ -34,6 +34,7 @@ def _strip_jsonc_comments(text: str) -> str:
 
     text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
     text = re.sub(r"(?<!:)//[^\n]*", "", text)
+    text = re.sub(r",(\s*[}\]])", r"\1", text)
     return text
 
 

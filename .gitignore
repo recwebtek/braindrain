@@ -18,7 +18,13 @@ venv/
 .braindrain/
 *.log
 
-# Docs dir is dev-only, not tracked in repo
+# QA / installer scratch (local-only)
+QA-Logs/
+.tmp/
+.pytest_cache/
+.ruff_cache/
+
+# Dev docs dir (local-only; excluded from public repo)
 .devdocs/
 
 # AGENTS.md is generated per device by install.sh / refresh_env_context()

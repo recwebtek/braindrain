@@ -79,14 +79,14 @@ OS environment data is probed once, cached locally, and served instantly on ever
 ### Quickstart (one command)
 
 ```bash
-git clone https://github.com/yourorg/braindrain.git
+git clone https://github.com/recwebtek/braindrain.git
 cd braindrain
 ./install.sh
 ```
 
 `install.sh` now does a full guided setup:
 
-- Validates Python **3.11-3.13** (fails fast on unsupported runtimes like 3.14+)
+- Validates Python **3.11-3.14** (fails fast on unsupported runtimes like 3.15+)
 - Creates `.env.dev` early (before dependency steps) so env setup never gets skipped
 - Installs full dependencies with visible progress, retries, and install logging to `.gstack/install-logs/`
 - On Linux CPU-only machines, prefers PyTorch CPU wheels to avoid accidental CUDA downloads
@@ -97,7 +97,7 @@ cd braindrain
 ### Manual setup (if you prefer)
 
 ```bash
-python3.12 -m venv .venv
+python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
 ```
@@ -105,7 +105,7 @@ pip install -r requirements.txt
 ### Installer options
 
 ```bash
-PYTHON=python3.12 ./install.sh   # force interpreter
+PYTHON=python3.14 ./install.sh   # force interpreter
 SKIP_TEST=1 ./install.sh         # skip MCP initialize handshake
 ```
 
@@ -113,9 +113,25 @@ Install logs are written to `.gstack/install-logs/install-<timestamp>.log`.
 
 ### Requirements
 
-- Python 3.11+
+- Python 3.11–3.14
 - Node.js (for `context-mode` output routing)
 - An MCP-compatible AI client
+
+### Arch / Linux dev machines
+
+On Arch/rolling-release distros (e.g. EndeavourOS) where `python3` often points at Python 3.14:
+
+- The installer supports Python 3.11–3.14 and prefers `python3.14` when available.
+- Make sure system `python`/`python3` and `pip` are installed via your package manager (e.g. `pacman -S python python-pip`).
+- For first-time runs, a simple:
+
+```bash
+git clone https://github.com/recwebtek/braindrain.git
+cd braindrain
+./install.sh
+```
+
+is expected to succeed; if it doesn’t, capture the full log from `.gstack/install-logs/` and append a new section to `QA-Logs/bdqadebug.md` (Lenovo/Arch debug log) before iterating.
 
 ---
 
@@ -228,7 +244,7 @@ Any client that uses the standard `mcpServers` format:
 ## New device setup
 
 ```bash
-git clone https://github.com/yourorg/braindrain.git
+git clone https://github.com/recwebtek/braindrain.git
 cd braindrain
 ./install.sh
 ```
