@@ -76,7 +76,7 @@ OS environment data is probed once, cached locally, and served instantly on ever
 
 ## Installation
 
-### Quickstart
+### Quickstart (one command)
 
 ```bash
 git clone https://github.com/yourorg/braindrain.git
@@ -84,7 +84,15 @@ cd braindrain
 ./install.sh
 ```
 
-`install.sh` handles everything: Python version check, venv creation, dependency install, `.env.dev` creation, initial environment probe, and an MCP handshake self-test. At the end it prints the exact command string to paste into your IDE config.
+`install.sh` now does a full guided setup:
+
+- Validates Python **3.11-3.13** (fails fast on unsupported runtimes like 3.14+)
+- Creates `.env.dev` early (before dependency steps) so env setup never gets skipped
+- Installs full dependencies with visible progress, retries, and install logging to `.gstack/install-logs/`
+- On Linux CPU-only machines, prefers PyTorch CPU wheels to avoid accidental CUDA downloads
+- Runs fresh `get_env_context()` probe and regenerates `AGENTS.md`
+- Runs an interactive MCP target checklist (Cursor, Windsurf, Zed, OpenCode, Antigravity, Codex, etc.), previews diffs, creates backups, then applies on confirmation
+- Performs MCP handshake self-test and prints a structured final status summary + next steps
 
 ### Manual setup (if you prefer)
 
@@ -93,6 +101,15 @@ python3.12 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
 ```
+
+### Installer options
+
+```bash
+PYTHON=python3.12 ./install.sh   # force interpreter
+SKIP_TEST=1 ./install.sh         # skip MCP initialize handshake
+```
+
+Install logs are written to `.gstack/install-logs/install-<timestamp>.log`.
 
 ### Requirements
 
