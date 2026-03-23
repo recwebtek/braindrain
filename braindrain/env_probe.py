@@ -74,6 +74,8 @@ _GUI_TOOLS: dict[str, str] = {
     "yabai": "yabai (tiling WM)",
     "skhd": "skhd (hotkeys)",
     "borders": "JankyBorders",
+    "amethyst": "Amethyst (tiling WM)",
+    "nikitabobko.aerospace": "AeroSpace (tiling WM)",
     "flycut": "Flycut (clipboard)",
     "clipy": "Clipy (clipboard)",
     "maccy": "Maccy (clipboard)",
@@ -90,6 +92,20 @@ _GUI_TOOLS: dict[str, str] = {
     "übersicht": "Übersicht",
     "uebersicht": "Übersicht",
     "sketchybar": "SketchyBar",
+}
+
+_TERMINALS: dict[str, str] = {
+    "iterm": "iTerm2",
+    "warp": "Warp",
+    "ghostty": "Ghostty",
+    "termius": "Termius",
+    "alacritty": "Alacritty",
+    "kitty": "Kitty",
+    "wezterm": "WezTerm",
+    "tabby": "Tabby",
+    "hyper": "Hyper",
+    "rio": "Rio",
+    "cool-retro-term": "Cool Retro Term",
 }
 
 _IDE_AGENTS: dict[str, str] = {
@@ -168,6 +184,8 @@ _PROBE_COMMANDS: list[tuple[str, str]] = [
     ("uname", "uname -a"),
     ("os_release", "cat /etc/os-release 2>/dev/null || sw_vers 2>/dev/null"),
     ("kernel", "uname -r"),
+    # Window system / Desktop Environment
+    ("wm_de_info", "echo $XDG_CURRENT_DESKTOP; echo $DESKTOP_SESSION; echo $XDG_SESSION_TYPE; [ -f /usr/bin/sw_vers ] && sw_vers -productVersion"),
     # Network — LAN IPs + interface names
     (
         "lan_ip",
@@ -282,9 +300,10 @@ _PROBE_COMMANDS: list[tuple[str, str]] = [
         "ps aux 2>/dev/null | grep -iE "
         "'(lmstudio|lm.studio|anythingllm|anything.llm|ollama|jan[^a-z]|gpt4all|"
         "virtualbox|vboxmanage|vmware|vmrun|parallels|utm[^a-z]|qemu|"
-        "raycast|alfred|yabai|skhd|borders|flycut|clipy|maccy|rectangle|"
+        "raycast|alfred|yabai|skhd|borders|amethyst|aerospace|flycut|clipy|maccy|rectangle|"
         "bartender|karabiner|hammerspoon|sketchybar|spacebar|"
         "logseq|obsidian|zotero|figma|discord|slack|"
+        "ghostty|termius|iterm|warp|alacritty|kitty|wezterm|tabby|hyper|"
         "codex|antigravity|gemini.cli)' "
         "| grep -v grep | awk '{print $11}' | sort -u | head -30",
     ),
@@ -548,6 +567,7 @@ def _parse_installed_apps(raw: dict[str, Any]) -> dict[str, Any]:
 
     categories = {
         "browsers": _BROWSERS,
+        "terminals": _TERMINALS,
         "llm_tools": _LLM_TOOLS,
         "vm_tools": _VM_TOOLS,
         "gui_tools": _GUI_TOOLS,
@@ -657,6 +677,10 @@ def synthesize(raw: dict[str, Any]) -> dict[str, Any]:
     os_type = _val("os_type")
     is_mac = "Darwin" in os_type
     is_linux = "Linux" in os_type
+
+    # Window Manager / Desktop Environment info
+    wm_de_raw = _val("wm_de_info").splitlines()
+    wm_de = " · ".join([l.strip() for l in wm_de_raw if l.strip()])
 
     # Package manager (first found wins)
     pkg_mgrs = [l.strip() for l in _val("pkg_managers").splitlines() if l.strip()]
@@ -772,6 +796,7 @@ def synthesize(raw: dict[str, Any]) -> dict[str, Any]:
             "detail": _val("os_release").split("\n")[0] if _val("os_release") else "",
             "kernel": _val("kernel"),
             "arch": _val("arch"),
+            "wm_de": wm_de,
         },
         "hardware": {
             "cpu": _val("cpu_info"),
@@ -845,6 +870,7 @@ def render_agents_md_block(summary: dict[str, Any]) -> str:
         f"- **User**: `{ident.get('username', 'unknown')}` on `{ident.get('hostname', 'unknown')}`",
         f"- **LAN IPs**: {', '.join(f'`{ip}`' for ip in ident.get('lan_ips', [])) or 'n/a'}",
         f"- **OS**: {os_info.get('type', '')} — {os_info.get('detail', '')} · {os_info.get('arch', '')}",
+        f"- **Windowing**: `{os_info.get('wm_de', 'n/a')}`",
         f"- **Kernel**: `{os_info.get('kernel', 'n/a')}`",
     ]
 
@@ -902,6 +928,9 @@ def render_agents_md_block(summary: dict[str, Any]) -> str:
 
     if installed.get("browsers"):
         lines.append(f"- **Browsers**: {', '.join(installed['browsers'])}")
+
+    if installed.get("terminals"):
+        lines.append(f"- **Terminals**: {', '.join(installed['terminals'])}")
 
     if installed.get("llm_tools"):
         lines.append(f"- **LLM tools installed**: {', '.join(installed['llm_tools'])}")
