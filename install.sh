@@ -28,6 +28,7 @@ START_TS="$(date +%s)"
 
 PIP_OK=0
 HANDSHAKE_OK=0
+RULER_STATUS="skipped"
 MCP_CONFIG_STATUS="skipped"
 
 header "=== BRAINDRAIN installer ==="
@@ -196,6 +197,44 @@ header "6. Launcher permissions"
 chmod +x "$REPO/config/braindrain"
 ok "config/braindrain is executable"
 
+header "6b. Register BRAINDRAIN_LAUNCHER_PATH"
+LAUNCHER_PATH="$REPO/config/braindrain"
+ENV_EXAMPLE="$REPO/.env.example"
+
+# Update .env.example if it exists
+if [[ -f "$ENV_EXAMPLE" ]]; then
+    # Check if BRAINDRAIN_LAUNCHER_PATH is already set (uncommented)
+    if grep -q "^BRAINDRAIN_LAUNCHER_PATH=" "$ENV_EXAMPLE"; then
+        sed -i '' "s|^BRAINDRAIN_LAUNCHER_PATH=.*|BRAINDRAIN_LAUNCHER_PATH=$LAUNCHER_PATH|" "$ENV_EXAMPLE"
+        ok "Updated BRAINDRAIN_LAUNCHER_PATH in .env.example"
+    # Check if BRAINDRAIN_LAUNCHER_PATH is commented out
+    elif grep -q "# BRAINDRAIN_LAUNCHER_PATH=" "$ENV_EXAMPLE"; then
+        sed -i '' "s|^# BRAINDRAIN_LAUNCHER_PATH=.*|BRAINDRAIN_LAUNCHER_PATH=$LAUNCHER_PATH|" "$ENV_EXAMPLE"
+        ok "Uncommented and set BRAINDRAIN_LAUNCHER_PATH in .env.example"
+    # Otherwise append it
+    else
+        if ! {
+            echo ""
+            echo "# Absolute path to the braindrain launcher (auto-set by install.sh)"
+            echo "BRAINDRAIN_LAUNCHER_PATH=$LAUNCHER_PATH"
+        } >> "$ENV_EXAMPLE"; then
+            warn "Failed to write BRAINDRAIN_LAUNCHER_PATH to .env.example"
+        else
+            ok "Appended BRAINDRAIN_LAUNCHER_PATH to .env.example"
+        fi
+    fi
+
+    # Prominent instruction for the user
+    header "=== ACTION REQUIRED: Setup Environment ==="
+    info "Set up your environment file and API keys by running:"
+    echo -e "  ${BOLD}mv .env.example .env.dev${RESET}   (or .env.prod)"
+    info "Then edit the file to add your API keys (e.g., OPENAI_API_KEY)."
+else
+    warn ".env.example not found. Please create .env.dev manually with:"
+    echo -e "  ${BOLD}BRAINDRAIN_LAUNCHER_PATH=$LAUNCHER_PATH${RESET}"
+fi
+export BRAINDRAIN_LAUNCHER_PATH="$LAUNCHER_PATH"
+
 header "7. Guided MCP config install"
 if [[ "$PIP_OK" -eq 1 ]] && [[ -t 0 ]]; then
     read -r -p "Configure MCP files now (interactive checklist)? [Y/n]: " MCP_SETUP_CHOICE
@@ -218,6 +257,43 @@ else
     warn "Skipping MCP config updates (non-interactive session or failed deps)."
 fi
 
+header "7b. Deploy Ruler templates + apply to braindrain repo itself"
+RULER_TMPL="$REPO/config/templates/ruler"
+RULER_DEST="$REPO/.ruler"
+
+if [[ ! -f "$RULER_TMPL/ruler.toml" ]]; then
+    warn "Ruler templates not found at $RULER_TMPL — skipping"
+elif ! command -v npx >/dev/null 2>&1; then
+    warn "npx not found — skipping ruler apply (install Node.js to enable)"
+elif [[ "$PIP_OK" -eq 0 ]]; then
+    warn "Skipping ruler apply (deps failed)"
+else
+    # Copy templates if .ruler/ not yet initialised
+    if [[ ! -d "$RULER_DEST" ]]; then
+        mkdir -p "$RULER_DEST"
+        cp -r "$RULER_TMPL/." "$RULER_DEST/"
+        # Substitute launcher path in ruler.toml
+        sed -i.bak \
+            "s|BRAINDRAIN_LAUNCHER_PATH|${BRAINDRAIN_LAUNCHER_PATH:-$REPO/config/braindrain}|g" \
+            "$RULER_DEST/ruler.toml"
+        rm -f "$RULER_DEST/ruler.toml.bak"
+        ok "Ruler templates deployed to .ruler/"
+    else
+        info ".ruler/ already exists — skipping template copy (user-managed)"
+    fi
+
+    # Run ruler apply
+    if npx --yes @intellectronica/ruler apply \
+        --config "$RULER_DEST/ruler.toml" 2>>"$LOG_FILE"; then
+        RULER_STATUS="ok"
+        ok "ruler apply — agent rule files distributed"
+    else
+        RULER_STATUS="failed"
+        warn "ruler apply failed (non-fatal). Run manually:"
+        warn "  npx @intellectronica/ruler apply --config $RULER_DEST/ruler.toml"
+    fi
+fi
+
 header "8. Self-test (MCP handshake)"
 if [[ "${SKIP_TEST:-0}" == "1" ]]; then
     warn "SKIP_TEST=1 — skipping self-test"
@@ -236,10 +312,12 @@ fi
 
 ELAPSED="$(( $(date +%s) - START_TS ))"
 header "=== Installation status ==="
+echo "Version:            V1.0.1"
 echo "Platform:           $OS/$ARCH"
 echo "Python:             $PYTHON ($PYVER)"
 echo "Dependencies:       $([[ "$PIP_OK" -eq 1 ]] && echo "ok" || echo "failed")"
 echo ".env.dev:           $([[ -f "$REPO/.env.dev" ]] && echo "present" || echo "missing")"
+echo "Ruler apply:        $RULER_STATUS"
 echo "MCP config updates: $MCP_CONFIG_STATUS"
 echo "Handshake:          $([[ "$HANDSHAKE_OK" -eq 1 ]] && echo "ok" || echo "needs-attention")"
 echo "Install log:        $LOG_FILE"

@@ -29,6 +29,19 @@ class Target:
     detected: bool
 
 
+@dataclass(frozen=True)
+class CliCommandTarget:
+    key: str
+    display: str
+    command_template: str  # e.g. "claude mcp add braindrain -- {launcher}"
+    detected: bool
+    style: str = "cli_command"
+
+    @property
+    def path(self) -> Path:
+        return Path("/dev/null")  # sentinel — no config file
+
+
 def _strip_jsonc_comments(text: str) -> str:
     import re
 
@@ -38,20 +51,35 @@ def _strip_jsonc_comments(text: str) -> str:
     return text
 
 
-def _load_json(path: Path) -> dict[str, Any]:
+def _load_config(path: Path, style: str) -> dict[str, Any]:
     if not path.exists():
         return {}
     raw = path.read_text(encoding="utf-8", errors="ignore")
+    if style == "goose_yaml":
+        import yaml
+        return yaml.safe_load(raw) or {}
+    if style == "toml_mcp_servers":
+        try:
+            import tomllib  # type: ignore # Python 3.11+ stdlib
+        except ImportError:
+            import tomli as tomllib  # type: ignore # fallback
+        return tomllib.loads(raw)
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
         parsed = json.loads(_strip_jsonc_comments(raw))
     if not isinstance(parsed, dict):
-        raise ValueError(f"Config at {path} is not a JSON object")
+        raise ValueError(f"Config at {path} is not a object/dict")
     return parsed
 
 
-def _render_json(obj: dict[str, Any], style: str) -> str:
+def _render_output(obj: dict[str, Any], style: str) -> str:
+    if style == "goose_yaml":
+        import yaml
+        return yaml.dump(obj, default_flow_style=False, allow_unicode=True)
+    if style == "toml_mcp_servers":
+        import tomli_w
+        return tomli_w.dumps(obj)
     # Keep JSONC-compatible files as plain JSON output for safety.
     _ = style
     return json.dumps(obj, indent=2, ensure_ascii=False) + "\n"
@@ -111,10 +139,27 @@ def _ensure_server_entry(config: dict[str, Any], target: Target, launcher: str) 
         block["braindrain"] = {"command": launcher, "args": [], "env": {}}
         return config
 
+    if target.style == "goose_yaml":
+        import yaml  # already a dep
+        block = _get_nested(config, "mcp_servers")
+        if not isinstance(block, dict):
+            block = {}
+            _set_nested(config, "mcp_servers", block)
+        block["braindrain"] = {"command": launcher, "args": []}
+        return config
+
+    if target.style == "toml_mcp_servers":
+        mcp_servers = _get_nested(config, "mcp_servers")
+        if not isinstance(mcp_servers, dict):
+            mcp_servers = {}
+            _set_nested(config, "mcp_servers", mcp_servers)
+        mcp_servers["braindrain"] = {"command": launcher, "args": []}
+        return config
+
     raise ValueError(f"Unsupported style: {target.style}")
 
 
-def _build_targets(detected_configs: dict[str, Any]) -> list[Target]:
+def _build_targets(detected_configs: dict[str, Any]) -> list[Target | CliCommandTarget]:
     defaults: list[tuple[str, str, str, str]] = [
         ("cursor", "Cursor", "~/.cursor/mcp.json", "mcpServers"),
         ("windsurf", "Windsurf", "~/.codeium/windsurf/mcp_config.json", "mcpServers"),
@@ -135,18 +180,36 @@ def _build_targets(detected_configs: dict[str, Any]) -> list[Target]:
         ("vscode", "VS Code", "~/.vscode/settings.json", "mcp.servers"),
         ("void", "Void", "~/.void/mcp.json", "mcpServers"),
         ("aider", "Aider", "~/.aider/mcp.json", "mcpServers"),
+        ("kiro", "Kiro", "~/.kiro/settings/mcp.json", "mcpServers"),
+        ("warp", "Warp", "~/.warp/mcp.json", "mcpServers"),
+        ("amp", "Amp", "~/.amp/mcp.json", "mcpServers"),
+        ("goose", "Goose", "~/.config/goose/config.yaml", "goose_yaml"),
+        ("codex_cli_toml", "Codex CLI (TOML)", "~/.codex/config.toml", "toml_mcp_servers"),
     ]
 
-    out: list[Target] = []
+    import shutil
+
+    out: list[Target | CliCommandTarget] = []
     for key, display, default_path, style in defaults:
         probe = detected_configs.get(key) if isinstance(detected_configs, dict) else None
         path = Path((probe or {}).get("config_path", default_path)).expanduser()
         detected = bool((probe or {}).get("exists", False))
         out.append(Target(key=key, display=display, path=path, style=style, detected=detected))
+
+    # Detect claude CLI presence
+    claude_detected = bool(shutil.which("claude"))
+    out.append(
+        CliCommandTarget(
+            key="claude_code_cli",
+            display="Claude Code CLI",
+            command_template="claude mcp add braindrain -- {launcher}",
+            detected=claude_detected,
+        )
+    )
     return out
 
 
-def _ask_selection(targets: list[Target]) -> list[Target]:
+def _ask_selection(targets: list[Target | CliCommandTarget]) -> list[Target | CliCommandTarget]:
     print("\nSelect MCP targets to configure (interactive checklist):")
     print("Enter comma-separated numbers, 'all', or press Enter for detected-only.")
     for idx, target in enumerate(targets, start=1):
@@ -185,11 +248,17 @@ def _ask_selection(targets: list[Target]) -> list[Target]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Configure MCP client config files for BRAINDRAIN.")
-    parser.add_argument("--launcher", required=True, help="Absolute path to config/braindrain launcher")
+    parser.add_argument("--launcher", default="", help="Absolute path to config/braindrain launcher")
     parser.add_argument("--detected-configs", default="", help="JSON object from env_probe summary.app_configs")
     args = parser.parse_args()
 
-    launcher = str(Path(args.launcher).expanduser().resolve())
+    import os
+    launcher = args.launcher or os.environ.get("BRAINDRAIN_LAUNCHER_PATH", "")
+    if not launcher:
+        # derive from script location as last resort
+        launcher = str(Path(__file__).parent.parent.parent / "config" / "braindrain")
+    launcher = str(Path(launcher).expanduser().resolve())
+
     detected_configs = {}
     if args.detected_configs:
         try:
@@ -200,16 +269,19 @@ def main() -> int:
     targets = _build_targets(detected_configs)
     selected = _ask_selection(targets)
 
-    planned: list[tuple[Target, str, str]] = []
+    planned: list[tuple[Target | CliCommandTarget, str, str]] = []
     for target in selected:
+        if isinstance(target, CliCommandTarget):
+            planned.append((target, "", target.command_template.format(launcher=launcher)))
+            continue
         try:
-            before_obj = _load_json(target.path)
+            before_obj = _load_config(target.path, target.style)
         except Exception as e:
             print(f"\nSkipping {target.display}: could not parse {target.path} ({e})")
             continue
         before_text = target.path.read_text(encoding="utf-8", errors="ignore") if target.path.exists() else ""
         after_obj = _ensure_server_entry(before_obj, target, launcher)
-        after_text = _render_json(after_obj, target.style)
+        after_text = _render_output(after_obj, target.style)
         planned.append((target, before_text, after_text))
 
     if not planned:
@@ -218,6 +290,11 @@ def main() -> int:
 
     print("\nPlanned MCP config changes:")
     for target, before, after in planned:
+        if isinstance(target, CliCommandTarget):
+            print(f"\n--- {target.display} ---")
+            print(f"Command: {after}")
+            continue
+
         diff = "".join(
             difflib.unified_diff(
                 before.splitlines(keepends=True),
@@ -234,9 +311,24 @@ def main() -> int:
         print("No files changed.")
         return 0
 
+    import subprocess
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     applied = 0
     for target, before, after in planned:
+        if isinstance(target, CliCommandTarget):
+            print(f"\n--- {target.display} ---")
+            print(f"Running: {after}")
+            try:
+                result = subprocess.run(after, shell=True, capture_output=True, text=True, timeout=30)
+                if result.returncode == 0:
+                    print(f"APPLIED: {target.display}")
+                    applied += 1
+                else:
+                    print(f"FAILED: {result.stderr}")
+            except subprocess.TimeoutExpired:
+                print(f"FAILED: {target.display} (timed out after 30s)")
+            continue
+
         if before == after:
             continue
         target.path.parent.mkdir(parents=True, exist_ok=True)

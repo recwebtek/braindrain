@@ -1,6 +1,6 @@
 """BRAINDRAIN - Intelligent MCP Context Hub"""
 
-__version__ = "1.0.0-mvp"
+__version__ = "1.0.1"
 
 from braindrain.server import mcp
 from braindrain.config import Config

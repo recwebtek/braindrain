@@ -29,6 +29,7 @@
 | Tool | Purpose |
 |---|---|
 | `get_env_context(refresh=False)` | Cached OS fingerprint — call this first |
+| `prime_workspace(path=".", agents=None, dry_run=False)` | Prime a new project — deploys braindrain rules + MCP configs to all agents |
 | `search_tools(query, top_k=5)` | Discover deferred tools by capability |
 | `route_output(text, source, ...)` | Index large text into context-mode |
 | `search_index(query, limit=5)` | Retrieve from FTS5 index |

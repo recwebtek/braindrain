@@ -56,12 +56,67 @@ class TelemetrySession:
     )
 
     def _ensure_parent(self) -> None:
-        self.log_file.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.log_file.parent.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            # Fallback to current working directory if home dir is restricted
+            fallback = Path(".logs") / self.log_file.name
+            if self.log_file != fallback:
+                self.log_file = fallback
+                self.log_file.parent.mkdir(parents=True, exist_ok=True)
 
     def _append_jsonl(self, obj: dict[str, Any]) -> None:
         self._ensure_parent()
-        with open(self.log_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        try:
+            with open(self.log_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        except PermissionError:
+            # Last resort: just ignore or print to stderr if even fallback fails
+            import sys
+            print(f"Telemetry warning: could not write to {self.log_file}", file=sys.stderr)
+
+    def log_error(self, error: str, context: Optional[dict[str, Any]] = None) -> None:
+        """
+        Log an error or bad response to a daily debug report.
+        Sanitizes personal information (device paths, usernames).
+        """
+        import re
+        from datetime import datetime
+
+        # 1. Sanitize error string
+        # Mask absolute paths starting with /Users/ or /Volumes/
+        sanitized = re.sub(r"(/Users/[^/\s]+|/Volumes/[^/\s]+)", "[REDACTED_PATH]", error)
+        
+        # 2. Prepare event
+        event = {
+            "ts": time.time(),
+            "type": "error",
+            "message": sanitized,
+            "context": context or {},
+        }
+
+        # 3. Write to daily debug report in .logs/
+        # Use project root for .logs/ (assumed to be current working directory or relative to it)
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        debug_log_path = Path(".logs") / f"braindrain_debug_report_{date_str}.md"
+        
+        # Ensure .logs exists
+        debug_log_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Append to markdown report
+        header_exists = debug_log_path.exists()
+        with open(debug_log_path, "a", encoding="utf-8") as f:
+            if not header_exists:
+                f.write(f"# BRAINDRAIN Debug Report — {date_str}\n\n")
+            
+            f.write(f"### [{datetime.now().strftime('%H:%M:%S')}] Error\n")
+            f.write(f"- **Message**: {sanitized}\n")
+            if context:
+                f.write(f"- **Context**: `{json.dumps(context)}`\n")
+            f.write("\n---\n\n")
+
+        # Also append to session JSONL
+        self._append_jsonl(event)
 
     def record(
         self,

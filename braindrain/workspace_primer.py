@@ -1,0 +1,179 @@
+"""Workspace primer — deploys braindrain Ruler templates and runs ruler apply."""
+
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+from pathlib import Path
+from typing import Optional
+
+
+TEMPLATES_DIR = Path(__file__).parent.parent / "config" / "templates" / "ruler"
+
+
+def _get_launcher_path() -> str:
+    return os.environ.get(
+        "BRAINDRAIN_LAUNCHER_PATH",
+        str(Path(__file__).parent.parent / "config" / "braindrain"),
+    )
+
+
+def deploy_templates(target_dir: Path, launcher_path: str) -> dict[str, bool]:
+    """
+    Copy Ruler templates into <target_dir>/.ruler/, substituting launcher path.
+    Returns {filename: was_written}.
+    Skips files that already exist (user-managed).
+    """
+    ruler_dir = target_dir / ".ruler"
+    ruler_dir.mkdir(parents=True, exist_ok=True)
+    written: dict[str, bool] = {}
+
+    for src in TEMPLATES_DIR.rglob("*"):
+        if src.is_dir():
+            continue
+        rel = src.relative_to(TEMPLATES_DIR)
+        dst = ruler_dir / rel
+
+        if dst.exists():
+            written[str(rel)] = False  # exists, not overwritten
+            continue
+
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        content = src.read_text(encoding="utf-8")
+
+        if src.name == "ruler.toml":
+            content = content.replace("BRAINDRAIN_LAUNCHER_PATH", launcher_path)
+
+        dst.write_text(content, encoding="utf-8")
+        written[str(rel)] = True
+
+    return written
+
+
+def run_ruler_apply(
+    target_dir: Path,
+    *,
+    agents: Optional[list[str]] = None,
+    dry_run: bool = False,
+) -> dict:
+    """
+    Run `npx @intellectronica/ruler apply` in target_dir.
+    Returns {"ok": bool, "stdout": str, "stderr": str, "command": str}.
+    """
+    ruler_config = target_dir / ".ruler" / "ruler.toml"
+    if not ruler_config.exists():
+        return {
+            "ok": False,
+            "error": f".ruler/ruler.toml not found in {target_dir}",
+            "stdout": "",
+            "stderr": "",
+        }
+
+    cmd = ["npx", "--yes", "@intellectronica/ruler", "apply",
+           "--config", str(ruler_config)]
+    if dry_run:
+        cmd.append("--dry-run")
+    if agents:
+        cmd += ["--agents", ",".join(agents)]
+
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=str(target_dir),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        return {
+            "ok": result.returncode == 0,
+            "stdout": result.stdout.strip(),
+            "stderr": result.stderr.strip(),
+            "command": " ".join(cmd),
+            "returncode": result.returncode,
+        }
+    except FileNotFoundError:
+        return {
+            "ok": False,
+            "error": "npx not found — install Node.js to use prime_workspace",
+            "stdout": "",
+            "stderr": "",
+            "command": " ".join(cmd),
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "ok": False,
+            "error": "ruler apply timed out after 60s",
+            "stdout": "",
+            "stderr": "",
+            "command": " ".join(cmd),
+        }
+
+
+def prime(
+    path: str = ".",
+    agents: Optional[list[str]] = None,
+    dry_run: bool = False,
+) -> dict:
+    """
+    Full prime flow: deploy templates + run ruler apply.
+    Returns structured result for MCP tool response.
+    """
+    target_dir = Path(path).expanduser().resolve()
+    if not target_dir.exists():
+        return {"ok": False, "error": f"Path does not exist: {target_dir}"}
+
+    # If no agents specified, auto-detect IDEs or default to 'agents_md' (CLAUDE.md)
+    if agents is None:
+        agents = []
+        # Check for Trae
+        if (target_dir / ".trae").exists():
+            agents.append("trae")
+        # Check for Cursor
+        if (target_dir / ".cursor").exists():
+            agents.append("cursor")
+        # Check for Windsurf
+        if (target_dir / ".windsurf").exists() or (target_dir / ".codeium").exists():
+            agents.append("windsurf")
+        # Check for VS Code
+        if (target_dir / ".vscode").exists():
+            # Ruler uses 'cline' or similar for VS Code rule injection usually, 
+            # but we'll stick to what it listed in valid agents.
+            # In the error message, 'vscode' was invalid, but 'cline' is valid.
+            agents.append("cline")
+        
+        # Default fallback: CLAUDE.md/AGENTS.md
+        if not agents:
+            agents = ["agents_md", "claude"]
+
+    launcher_path = _get_launcher_path()
+
+    # Step 1: deploy templates
+    if not dry_run:
+        template_results = deploy_templates(target_dir, launcher_path)
+    else:
+        template_results = {
+            str(f.relative_to(TEMPLATES_DIR)): "(dry-run)"
+            for f in TEMPLATES_DIR.rglob("*") if f.is_file()
+        }
+
+    # Step 2: run ruler apply
+    ruler_result = run_ruler_apply(target_dir, agents=agents, dry_run=dry_run)
+
+    return {
+        "ok": ruler_result["ok"],
+        "target": str(target_dir),
+        "launcher_path": launcher_path,
+        "dry_run": dry_run,
+        "templates": {
+            "source": str(TEMPLATES_DIR),
+            "deployed": template_results,
+            "new_files": sum(1 for v in template_results.values() if v is True),
+            "skipped_existing": sum(1 for v in template_results.values() if v is False),
+        },
+        "ruler": ruler_result,
+        "next_steps": (
+            [] if ruler_result["ok"] else
+            ["Check Node.js is installed", "Run: npx @intellectronica/ruler apply"]
+        ),
+    }

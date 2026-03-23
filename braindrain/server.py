@@ -22,12 +22,18 @@ from braindrain.output_router import build_routed_output, should_route
 from braindrain.telemetry import telemetry_from_config
 from braindrain.tool_registry import ToolRegistry
 from braindrain.workflow_engine import WorkflowEngine
+from braindrain.workspace_primer import prime as _prime_workspace
 
 mcp = FastMCP("braindrain")
 
 CONFIG_PATH = os.environ.get(
     "BRAINDRAIN_CONFIG",
     str(Path(__file__).parent.parent / "config" / "hub_config.yaml"),
+)
+
+BRAINDRAIN_LAUNCHER_PATH = os.environ.get(
+    "BRAINDRAIN_LAUNCHER_PATH",
+    str(Path(__file__).parent.parent / "config" / "braindrain"),
 )
 
 # Load environment variables early (dev/prod).
@@ -137,7 +143,11 @@ async def run_workflow(name: str, args: dict = None) -> dict:
             "token_budget": workflow.token_budget,
         }
 
-    return await engine.run(name=name, args=args)
+    try:
+        return await engine.run(name=name, args=args)
+    except Exception as e:
+        telemetry.log_error(f"Workflow '{name}' failed: {e}", context={"name": name, "args": args})
+        return {"error": str(e), "workflow": name}
 
 
 @mcp.tool()
@@ -359,7 +369,7 @@ async def ping() -> dict:
     return {
         "status": "ok",
         "service": "braindrain",
-        "version": config.get("version", "1.0.0-mvp"),
+        "version": config.get("version", "1.0.1"),
         "timestamp": datetime.now().isoformat(),
     }
 
@@ -409,6 +419,52 @@ def refresh_env_context() -> dict:
         "summary": result["summary"],
         "message": "Environment context refreshed and cached to ~/.braindrain/env_context.json",
     }
+
+
+@mcp.tool()
+async def prime_workspace(
+    path: str = ".",
+    agents: list[str] | None = None,
+    dry_run: bool = False,
+) -> dict:
+    """
+    Prime a project/workspace for AI agent use. Call this once when starting
+    work in a new repo.
+
+    Deploys braindrain Ruler templates into <path>/.ruler/ and runs
+    `ruler apply` to distribute agent rule files and project-local MCP
+    configs to all supported agents.
+
+    Supported agents include: cursor, windsurf, claude, kiro, zed, codex,
+    amp, goose, warp, roo, cline, continue, opencode, gemini, copilot, aider.
+
+    Args:
+        path:    Target project root. Default: current working directory.
+        agents:  Specific agents to target. Default: all detected/enabled agents.
+        dry_run: Preview changes without writing files.
+
+    After priming:
+    - Agents that support project-local MCP configs will have braindrain wired.
+    - All agent rule files will reference the braindrain protocol.
+    - Call get_env_context() to populate the live env block in AGENTS.md.
+    """
+    import asyncio
+    try:
+        result = await asyncio.to_thread(_prime_workspace, path, agents, dry_run)
+        if not result.get("ok"):
+            telemetry.log_error(f"prime_workspace failed: {result.get('error') or result.get('ruler', {}).get('stderr')}", context={"path": path, "agents": agents, "dry_run": dry_run})
+        
+        telemetry.record(
+            tool_name="prime_workspace",
+            raw_text=path,
+            actual_text=str(result.get("templates", {}).get("new_files", 0)) + " files written",
+            module="tool_gate",
+            meta={"target": path, "dry_run": dry_run, "agents": agents},
+        )
+        return result
+    except Exception as e:
+        telemetry.log_error(f"prime_workspace exception: {e}", context={"path": path, "agents": agents, "dry_run": dry_run})
+        return {"ok": False, "error": str(e)}
 
 
 def main():

@@ -1,0 +1,96 @@
+# BRAINDRAIN ruler.toml
+# Distributed by prime_workspace() or manually via: npx @intellectronica/ruler apply
+# BRAINDRAIN_LAUNCHER_PATH is substituted by install.sh / prime_workspace()
+
+[ruler]
+version = "1"
+
+# ── Agent rule files to generate ─────────────────────────────────────────────
+[agents]
+agents_md = { source = "RULES.md" }           # AGENTS.md (Claude Code, OpenCode, Codex)
+claude = { source = "RULES.md" }              # CLAUDE.md
+cursor = { source = "RULES.md" }              # .cursor/rules/braindrain.mdc
+windsurf = { source = "RULES.md" }            # .windsurf/rules/braindrain.md
+copilot = { source = "RULES.md" }             # .github/copilot-instructions.md
+zed = { source = "RULES.md" }                 # .zed/settings.json context_servers entry
+kiro = { source = "RULES.md" }                # .kiro/steering/braindrain.md
+opencode = { source = "RULES.md" }            # .opencode/rules/braindrain.md
+gemini = { source = "RULES.md" }              # .gemini/GEMINI.md
+aider = { source = "RULES.md" }               # .aider/CONVENTIONS.md
+codex = { source = "RULES.md" }               # .codex/AGENTS.md
+amp = { source = "RULES.md" }                 # .amp/rules/braindrain.md
+goose = { source = "RULES.md" }               # .goose/GOOSE.md
+warp = { source = "RULES.md" }                # .warp/AGENTS.md
+roo = { source = "RULES.md" }                 # .roo/rules/braindrain.md
+cline = { source = "RULES.md" }               # (via .vscode/settings.json cline.mcpServers)
+continue = { source = "RULES.md" }            # .continue/rules/braindrain.md
+trae = { source = "RULES.md" }                # .trae/rules/project_rules.md
+pearai = { source = "RULES.md" }              # .pearai/rules/braindrain.md
+void = { source = "RULES.md" }                # .void/rules/braindrain.md
+bolt = { source = "RULES.md" }                # .bolt/rules/braindrain.md
+idx = { source = "RULES.md" }                 # .idx/rules.json
+factory = { source = "RULES.md" }             # .factory/rules/braindrain.md
+augment = { source = "RULES.md" }             # .augment/rules/braindrain.md
+q = { source = "RULES.md" }                   # .amazonq/rules/braindrain.md
+amazonq = { source = "RULES.md" }             # .amazonq/rules/braindrain.md
+qwen = { source = "RULES.md" }                # .qwen/rules/braindrain.md
+firebender = { source = "RULES.md" }          # .firebender/rules/braindrain.md
+mistral = { source = "RULES.md" }             # .mistral/rules/braindrain.md
+pi = { source = "RULES.md" }                  # .pi/rules/braindrain.md
+jetbrains = { source = "RULES.md" }           # .aiassistant/rules/braindrain.md
+junie = { source = "RULES.md" }               # .junie/rules/braindrain.md
+jules = { source = "RULES.md" }               # .jules/rules/braindrain.md
+kilo = { source = "RULES.md" }                # .kilocode/rules/braindrain.md
+crush = { source = "RULES.md" }               # .crush/rules/braindrain.md
+openhands = { source = "RULES.md" }           # .openhands/rules/braindrain.md
+agentsmd = { source = "RULES.md" }            # .agent/rules/braindrain.md
+vibe = { source = "RULES.md" }                # .vibe/rules/braindrain.md
+pear = { source = "RULES.md" }                # .pear/rules/braindrain.md
+codestory = { source = "RULES.md" }           # .codestory/rules/braindrain.md
+aider_conf = { source = "RULES.md" }          # .aider.conf.yml
+cline_rules = { source = "RULES.md" }         # .clinerules
+idx_airules = { source = "RULES.md" }         # .idx/airules.md
+idx_mcp = { source = "RULES.md" }             # .idx/mcp.json
+junie_guidelines = { source = "RULES.md" }    # .junie/guidelines.md
+junie_mcp = { source = "RULES.md" }           # .junie/mcp/mcp.json
+openhands_micro = { source = "RULES.md" }     # .openhands/microagents/repo.md
+qwen_settings = { source = "RULES.md" }       # .qwen/settings.json
+vibe_toml = { source = "RULES.md" }           # .vibe/config.toml
+vscode_mcp = { source = "RULES.md" }          # .vscode/mcp.json
+windsurf_mcp = { source = "RULES.md" }        # .windsurf/mcp_config.json
+zed_settings = { source = "RULES.md" }        # .zed/settings.json
+crush_json = { source = "RULES.md" }          # .crush.json
+opencode_json = { source = "RULES.md" }       # opencode.json
+firebender_json = { source = "RULES.md" }     # firebender.json
+config_toml = { source = "RULES.md" }         # config.toml
+warpmd = { source = "RULES.md" }              # WARP.md
+crushmd = { source = "RULES.md" }             # CRUSH.md
+ruler_md = { source = "RULES.md" }            # /.agent/rules/ruler.md
+aiassistant_md = { source = "RULES.md" }      # /.aiassistant/rules/AGENTS.md
+amazonq_mcp = { source = "RULES.md" }         # /.amazonq/mcp.json
+amazonq_rules = { source = "RULES.md" }       # /.amazonq/rules/ruler_q_rules.md
+augment_rules = { source = "RULES.md" }       # /.augment/rules/ruler_augment_instructions.md
+factory_mcp = { source = "RULES.md" }         # /.factory/mcp.json
+kilocode_mcp = { source = "RULES.md" }        # /.kilocode/mcp.json
+kiro_mcp = { source = "RULES.md" }            # /.kiro/settings/mcp.json
+kiro_steering = { source = "RULES.md" }       # /.kiro/steering/ruler_kiro_instructions.md
+roo_mcp = { source = "RULES.md" }             # /.roo/mcp.json
+
+# ── MCP server config propagation ────────────────────────────────────────────
+# Ruler writes project-local MCP config for each agent below.
+# BRAINDRAIN_LAUNCHER_PATH is replaced at deploy time.
+[mcp_servers.braindrain]
+command = "BRAINDRAIN_LAUNCHER_PATH"
+args = []
+env = {}
+
+# ── Agents that accept project-local MCP config ──────────────────────────────
+[mcp_targets]
+claude = {}       # .mcp.json
+cursor = {}       # .cursor/mcp.json
+windsurf = {}     # .windsurf/mcp.json
+kiro = {}         # .kiro/settings/mcp.json
+codex = {}        # .codex/config.toml  [mcp_servers.braindrain]
+amp = {}          # .amp/mcp.json
+warp = {}         # .warp/mcp.json
+trae = {}         # .trae/mcp.json

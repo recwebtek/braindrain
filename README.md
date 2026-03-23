@@ -1,5 +1,8 @@
 # braindrain
 
+**Version:** V1.0.1  
+**Last Updated:** 2026-03-23
+
 An MCP server that keeps AI agents lean. It stops context windows bloating with redundant tool definitions, large raw outputs, and repeated environment discovery — and gives agents the right information at the right time instead.
 
 Built on [FastMCP](https://gofastmcp.com). Works with Cursor, Zed, Windsurf, OpenCode, Antigravity, Codex, and any MCP-compatible client.
@@ -56,6 +59,7 @@ OS environment data is probed once, cached locally, and served instantly on ever
 | Tool | When to use |
 |---|---|
 | `list_workflows()` | See what multi-step workflows are available. |
+| `prime_workspace(path, agents, dry_run)` | Deploy braindrain rules and MCP configs into a project for all supported agents. Call once per new repo. |
 | `plan_workflow(name, args)` | Generate a markdown execution plan and review it before committing to a run. Use before any destructive or long-running workflow. |
 | `run_workflow(name, args)` | Execute a workflow. Intermediate output is routed through the sandbox — only the final summary returns to the agent. |
 
@@ -268,6 +272,7 @@ Environment variables (copy `.env.example` to `.env.dev` to start):
 | Variable | Purpose |
 |---|---|
 | `BRAINDRAIN_CONFIG` | Override config file path |
+| `BRAINDRAIN_LAUNCHER_PATH` | Absolute path to the `config/braindrain` launcher. Set automatically by `install.sh`. Required by `prime_workspace()` and `configure_mcp.py`. |
 | `GITHUB_TOKEN` | Enables the deferred GitHub MCP tool |
 | `LMSTUDIO_BASE_URL` | LM Studio endpoint (default: `http://localhost:1234/v1`) |
 | `OLLAMA_HOST` | Ollama endpoint (default: `http://localhost:11434`) |
