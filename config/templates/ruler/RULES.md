@@ -20,6 +20,46 @@
 
 ---
 
+## BRAINDRAIN token-saving workflow (most important)
+
+Use this sequence to avoid wasting context tokens on environment probing and large dumps:
+
+1. **Start**: `get_env_context()` before any shell commands, installs, or tool assumptions.
+2. **Find tools before reading/searching**: `search_tools()` to discover the right capability.
+3. **Don’t paste big blobs into chat**: `route_output()` for large text; retrieve later with `search_index()`.
+4. **Checkpoint**: `get_token_dashboard()` at milestones to track savings.
+
+### BRAINDRAIN hot tools (cheat sheet)
+
+| Tool | Purpose |
+|---|---|
+| `get_env_context(refresh=False)` | Cached OS fingerprint — call this first |
+| `search_tools(query, top_k=5)` | Discover deferred tools by capability |
+| `route_output(text, source, ...)` | Index large text into context-mode |
+| `search_index(query, limit=5)` | Retrieve from FTS5 index |
+| `list_workflows()` | List available workflows |
+| `run_workflow(name, args)` | Execute workflow in sandbox |
+| `plan_workflow(name, args)` | Review plan before running |
+| `init_project_memory(path, dry_run=False)` | Initialize project memory artifacts |
+| `get_token_dashboard()` | Token savings snapshot |
+| `get_token_stats()` | Full session cost breakdown |
+| `get_available_tools()` | Show hot vs deferred tools |
+| `ping()` | Health check |
+| `refresh_env_context()` | Re-probe OS environment (deferred) |
+
+### Ops/docs to keep current (when behaviour/run paths/tools change)
+
+- `.devdocs/SESSION_PROGRESS.md`
+- `.devdocs/OPS.md`
+- `.devdocs/AGENT_MEMORY.md`
+- `README.md`
+
+### Ownership boundaries (important)
+
+- `AGENTS.md` is generated protocol and environment context only.
+- High-signal project memory belongs in `.devdocs/AGENT_MEMORY.md`.
+- Use `prime_workspace()` for full project onboarding and `init_project_memory()` for memory-only initialization.
+
 ## Environment Context Protocol
 
 Before running any shell commands, installing packages, or assuming tool

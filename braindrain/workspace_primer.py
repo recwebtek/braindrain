@@ -1,7 +1,8 @@
-"""Workspace primer — deploys braindrain Ruler templates and runs ruler apply."""
+"""Workspace primer — deploy rules, apply Ruler, initialize project memory."""
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -10,6 +11,8 @@ from typing import Optional
 
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "config" / "templates" / "ruler"
+DEFAULT_MEMORY_FILE = ".devdocs/AGENT_MEMORY.md"
+DEFAULT_INDEX_FILE = ".cursor/hooks/state/continual-learning-index.json"
 
 
 def _get_launcher_path() -> str:
@@ -110,13 +113,83 @@ def run_ruler_apply(
         }
 
 
+def initialize_project_memory(target_dir: Path, dry_run: bool = False) -> dict:
+    """
+    Initialize durable project memory artifacts used by continual learning.
+
+    Artifacts:
+    - .devdocs/AGENT_MEMORY.md (high-signal durable memory, not generated rules)
+    - .cursor/hooks/state/continual-learning-index.json (incremental transcript index)
+    """
+    memory_file = target_dir / DEFAULT_MEMORY_FILE
+    index_file = target_dir / DEFAULT_INDEX_FILE
+
+    memory_template = """# Agent Memory
+
+This file stores high-signal, durable project memory extracted from repeated user corrections
+and stable workspace facts. Do not store secrets or one-off transient notes here.
+
+## Learned User Preferences
+- (add recurring preferences only)
+
+## Learned Workspace Facts
+- (add stable, long-lived facts only)
+"""
+
+    results: dict[str, dict[str, str | bool]] = {
+        "memory_file": {
+            "path": str(memory_file),
+            "created": False,
+            "exists": memory_file.exists(),
+        },
+        "index_file": {
+            "path": str(index_file),
+            "created": False,
+            "exists": index_file.exists(),
+        },
+    }
+
+    if dry_run:
+        if not memory_file.exists():
+            results["memory_file"]["would_create"] = True
+        if not index_file.exists():
+            results["index_file"]["would_create"] = True
+        return {"ok": True, "dry_run": True, "artifacts": results}
+
+    if not memory_file.exists():
+        memory_file.parent.mkdir(parents=True, exist_ok=True)
+        memory_file.write_text(memory_template, encoding="utf-8")
+        results["memory_file"]["created"] = True
+        results["memory_file"]["exists"] = True
+
+    if not index_file.exists():
+        index_file.parent.mkdir(parents=True, exist_ok=True)
+        index_file.write_text("{}\n", encoding="utf-8")
+        results["index_file"]["created"] = True
+        results["index_file"]["exists"] = True
+    else:
+        # Validate index JSON and preserve existing content.
+        try:
+            json.loads(index_file.read_text(encoding="utf-8"))
+            results["index_file"]["valid_json"] = True
+        except json.JSONDecodeError:
+            results["index_file"]["valid_json"] = False
+            return {
+                "ok": False,
+                "error": f"Invalid JSON in index file: {index_file}",
+                "artifacts": results,
+            }
+
+    return {"ok": True, "dry_run": False, "artifacts": results}
+
+
 def prime(
     path: str = ".",
     agents: Optional[list[str]] = None,
     dry_run: bool = False,
 ) -> dict:
     """
-    Full prime flow: deploy templates + run ruler apply.
+    Full prime flow: deploy templates + run ruler apply + initialize memory.
     Returns structured result for MCP tool response.
     """
     target_dir = Path(path).expanduser().resolve()
@@ -159,9 +232,11 @@ def prime(
 
     # Step 2: run ruler apply
     ruler_result = run_ruler_apply(target_dir, agents=agents, dry_run=dry_run)
+    # Step 3: initialize memory artifacts
+    memory_init = initialize_project_memory(target_dir, dry_run=dry_run)
 
     return {
-        "ok": ruler_result["ok"],
+        "ok": bool(ruler_result["ok"] and memory_init.get("ok", False)),
         "target": str(target_dir),
         "launcher_path": launcher_path,
         "dry_run": dry_run,
@@ -172,8 +247,14 @@ def prime(
             "skipped_existing": sum(1 for v in template_results.values() if v is False),
         },
         "ruler": ruler_result,
+        "memory_init": memory_init,
         "next_steps": (
-            [] if ruler_result["ok"] else
-            ["Check Node.js is installed", "Run: npx @intellectronica/ruler apply"]
+            []
+            if ruler_result["ok"] and memory_init.get("ok", False)
+            else [
+                "Check Node.js is installed",
+                "Run: npx @intellectronica/ruler apply",
+                "Run init_project_memory() to initialize project memory artifacts",
+            ]
         ),
     }
