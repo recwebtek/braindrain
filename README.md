@@ -59,7 +59,7 @@ OS environment data is probed once, cached locally, and served instantly on ever
 | Tool | When to use |
 |---|---|
 | `list_workflows()` | See what multi-step workflows are available. |
-| `prime_workspace(path, agents, dry_run)` | Deploy braindrain rules and MCP configs into a project for all supported agents, then initialize project memory artifacts. Call once per new repo. |
+| `prime_workspace(path, agents, dry_run, sync_templates)` | Deploy braindrain rules and MCP configs into a project for all supported agents, then initialize project memory artifacts. Set `sync_templates=true` to safely refresh existing `.ruler/*` template files (with timestamped backups) before running Ruler. |
 | `init_project_memory(path, dry_run)` | Initialize project memory artifacts only (`.devdocs/AGENT_MEMORY.md` and `.cursor/hooks/state/continual-learning-index.json`) without re-running full Ruler deployment. |
 | `plan_workflow(name, args)` | Generate a markdown execution plan and review it before committing to a run. Use before any destructive or long-running workflow. |
 | `run_workflow(name, args)` | Execute a workflow. Intermediate output is routed through the sandbox — only the final summary returns to the agent. |
@@ -325,6 +325,7 @@ braindrain/
 - **Ruler-generated dotfiles**: `./install.sh` (and the `prime_workspace()` tool) deploys `config/templates/ruler/` → `.ruler/` and runs `npx @intellectronica/ruler apply` to generate project-local agent rule files like `.cursor/rules/braindrain.mdc`, `.mcp.json`, `CLAUDE.md`, `.agent/rules/ruler.md`, etc.
   - Source-of-truth for those generated rule files is `config/templates/ruler/RULES.md` (and `.ruler/ruler.toml`).
   - **Important**: files like `CLAUDE.md` are **generated artifacts** (gitignored) and should be treated as **disposable**. Edit the templates instead, then re-run Ruler.
+  - If a project already has older `.ruler/*` files, call `prime_workspace(..., sync_templates=true)` to refresh those templates safely and propagate new guidance without manual cleanup.
 - **Project memory artifacts**: initialized by `prime_workspace()` (or `init_project_memory()`) and kept separate from generated protocol files:
   - `.devdocs/AGENT_MEMORY.md` for high-signal durable memory
   - `.cursor/hooks/state/continual-learning-index.json` for incremental transcript indexing

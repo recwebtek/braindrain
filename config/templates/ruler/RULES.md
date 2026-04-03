@@ -34,6 +34,7 @@ Use this sequence to avoid wasting context tokens on environment probing and lar
 | Tool | Purpose |
 |---|---|
 | `get_env_context(refresh=False)` | Cached OS fingerprint — call this first |
+| `prime_workspace(path=".", agents=None, dry_run=False, sync_templates=False)` | Prime project and optionally sync `.ruler` templates |
 | `search_tools(query, top_k=5)` | Discover deferred tools by capability |
 | `route_output(text, source, ...)` | Index large text into context-mode |
 | `search_index(query, limit=5)` | Retrieve from FTS5 index |

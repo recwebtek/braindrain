@@ -454,6 +454,7 @@ async def prime_workspace(
     path: str = ".",
     agents: list[str] | None = None,
     dry_run: bool = False,
+    sync_templates: bool = False,
 ) -> dict:
     """
     Prime a project/workspace for AI agent use. Call this once when starting
@@ -470,6 +471,7 @@ async def prime_workspace(
         path:    Target project root. Default: current working directory.
         agents:  Specific agents to target. Default: all detected/enabled agents.
         dry_run: Preview changes without writing files.
+        sync_templates: If True, update existing .ruler template files with backups.
 
     After priming:
     - Agents that support project-local MCP configs will have braindrain wired.
@@ -479,20 +481,45 @@ async def prime_workspace(
     """
     import asyncio
     try:
-        result = await asyncio.to_thread(_prime_workspace, path, agents, dry_run)
+        result = await asyncio.to_thread(
+            _prime_workspace,
+            path,
+            agents,
+            dry_run,
+            sync_templates,
+        )
         if not result.get("ok"):
             telemetry.log_error(f"prime_workspace failed: {result.get('error') or result.get('ruler', {}).get('stderr')}", context={"path": path, "agents": agents, "dry_run": dry_run})
         
         telemetry.record(
             tool_name="prime_workspace",
             raw_text=path,
-            actual_text=str(result.get("templates", {}).get("new_files", 0)) + " files written",
+            actual_text=json.dumps(
+                {
+                    "new_files": result.get("templates", {}).get("new_files", 0),
+                    "updated_files": result.get("templates", {}).get("updated_files", 0),
+                },
+                ensure_ascii=False,
+            ),
             module="tool_gate",
-            meta={"target": path, "dry_run": dry_run, "agents": agents},
+            meta={
+                "target": path,
+                "dry_run": dry_run,
+                "sync_templates": sync_templates,
+                "agents": agents,
+            },
         )
         return result
     except Exception as e:
-        telemetry.log_error(f"prime_workspace exception: {e}", context={"path": path, "agents": agents, "dry_run": dry_run})
+        telemetry.log_error(
+            f"prime_workspace exception: {e}",
+            context={
+                "path": path,
+                "agents": agents,
+                "dry_run": dry_run,
+                "sync_templates": sync_templates,
+            },
+        )
         return {"ok": False, "error": str(e)}
 
 

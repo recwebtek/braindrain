@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -22,15 +23,22 @@ def _get_launcher_path() -> str:
     )
 
 
-def deploy_templates(target_dir: Path, launcher_path: str) -> dict[str, bool]:
+def deploy_templates(
+    target_dir: Path,
+    launcher_path: str,
+    *,
+    sync_templates: bool = False,
+) -> dict[str, dict[str, str | bool]]:
     """
     Copy Ruler templates into <target_dir>/.ruler/, substituting launcher path.
-    Returns {filename: was_written}.
-    Skips files that already exist (user-managed).
+    Returns {filename: {action, backup}}.
+    Default mode skips existing files (user-managed).
+    If sync_templates=True, existing files are backed up then overwritten.
     """
     ruler_dir = target_dir / ".ruler"
     ruler_dir.mkdir(parents=True, exist_ok=True)
-    written: dict[str, bool] = {}
+    written: dict[str, dict[str, str | bool]] = {}
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
 
     for src in TEMPLATES_DIR.rglob("*"):
         if src.is_dir():
@@ -38,18 +46,24 @@ def deploy_templates(target_dir: Path, launcher_path: str) -> dict[str, bool]:
         rel = src.relative_to(TEMPLATES_DIR)
         dst = ruler_dir / rel
 
-        if dst.exists():
-            written[str(rel)] = False  # exists, not overwritten
-            continue
-
         dst.parent.mkdir(parents=True, exist_ok=True)
         content = src.read_text(encoding="utf-8")
 
         if src.name == "ruler.toml":
             content = content.replace("BRAINDRAIN_LAUNCHER_PATH", launcher_path)
 
+        if dst.exists():
+            if not sync_templates:
+                written[str(rel)] = {"action": "skipped_existing", "backup": ""}
+                continue
+            backup = dst.with_name(f"{dst.name}.bak.{ts}")
+            shutil.copy2(dst, backup)
+            dst.write_text(content, encoding="utf-8")
+            written[str(rel)] = {"action": "updated", "backup": str(backup)}
+            continue
+
         dst.write_text(content, encoding="utf-8")
-        written[str(rel)] = True
+        written[str(rel)] = {"action": "created", "backup": ""}
 
     return written
 
@@ -187,6 +201,7 @@ def prime(
     path: str = ".",
     agents: Optional[list[str]] = None,
     dry_run: bool = False,
+    sync_templates: bool = False,
 ) -> dict:
     """
     Full prime flow: deploy templates + run ruler apply + initialize memory.
@@ -223,10 +238,14 @@ def prime(
 
     # Step 1: deploy templates
     if not dry_run:
-        template_results = deploy_templates(target_dir, launcher_path)
+        template_results = deploy_templates(
+            target_dir,
+            launcher_path,
+            sync_templates=sync_templates,
+        )
     else:
         template_results = {
-            str(f.relative_to(TEMPLATES_DIR)): "(dry-run)"
+            str(f.relative_to(TEMPLATES_DIR)): {"action": "dry_run", "backup": ""}
             for f in TEMPLATES_DIR.rglob("*") if f.is_file()
         }
 
@@ -240,11 +259,13 @@ def prime(
         "target": str(target_dir),
         "launcher_path": launcher_path,
         "dry_run": dry_run,
+        "sync_templates": sync_templates,
         "templates": {
             "source": str(TEMPLATES_DIR),
             "deployed": template_results,
-            "new_files": sum(1 for v in template_results.values() if v is True),
-            "skipped_existing": sum(1 for v in template_results.values() if v is False),
+            "new_files": sum(1 for v in template_results.values() if v["action"] == "created"),
+            "updated_files": sum(1 for v in template_results.values() if v["action"] == "updated"),
+            "skipped_existing": sum(1 for v in template_results.values() if v["action"] == "skipped_existing"),
         },
         "ruler": ruler_result,
         "memory_init": memory_init,
