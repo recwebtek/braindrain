@@ -185,7 +185,8 @@ async def plan_workflow(name: str, args: dict = None) -> dict:
             },
             "notes": [
                 "Idempotent memory bootstrap.",
-                "Creates .devdocs/AGENT_MEMORY.md and .cursor/hooks/state/continual-learning-index.json when missing.",
+                "Creates .braindrain/AGENT_MEMORY.md and .cursor/hooks/state/continual-learning-index.json when missing.",
+                "Migrates .devdocs/AGENT_MEMORY.md to .braindrain/ if the legacy path exists.",
             ],
         }
 
@@ -455,29 +456,34 @@ async def prime_workspace(
     agents: list[str] | None = None,
     dry_run: bool = False,
     sync_templates: bool = False,
+    all_agents: bool = False,
+    local_only: bool = True,
 ) -> dict:
     """
-    Prime a project/workspace for AI agent use. Call this once when starting
-    work in a new repo.
+    Prime a project/workspace for AI agent use.
 
-    Deploys braindrain Ruler templates into <path>/.ruler/ and runs
-    `ruler apply` to distribute agent rule files and project-local MCP
-    configs to all supported agents, then initializes project memory artifacts.
+    First run: detects current IDE/CLI, deploys minimal Ruler templates, writes
+    .braindrain/primed.json, initializes project memory under .braindrain/.
+    Subsequent runs: updates templates (if sync_templates=True) and re-applies.
 
-    Supported agents include: cursor, windsurf, claude, kiro, zed, codex,
-    amp, goose, warp, roo, cline, continue, opencode, gemini, copilot, aider.
+    Agent resolution order:
+      1. agents list (explicit override).
+      2. all_agents=True → full template, no --agents filter (all local entries).
+      3. Default: auto-detect from env vars / dotfolders → single best-fit agent.
 
     Args:
-        path:    Target project root. Default: current working directory.
-        agents:  Specific agents to target. Default: all detected/enabled agents.
-        dry_run: Preview changes without writing files.
-        sync_templates: If True, update existing .ruler template files with backups.
+        path:           Target project root. Default: current working directory.
+        agents:         Explicit agent ids (e.g. ["cursor", "claude"]).
+        dry_run:        Preview changes without writing files.
+        sync_templates: Update existing .ruler files with timestamped backups.
+        all_agents:     Deploy full template and apply all configured agents.
+        local_only:     Pass --local-only to ruler apply (default True).
 
     After priming:
     - Agents that support project-local MCP configs will have braindrain wired.
-    - All agent rule files will reference the braindrain protocol.
-    - Project memory files are initialized for continual-learning workflows.
-    - Call get_env_context() to populate the live env block in AGENTS.md.
+    - Agent rule files will reference the braindrain protocol.
+    - Project memory is initialized under .braindrain/ (gitignored).
+    - Call get_env_context() to populate the live env block.
     """
     import asyncio
     try:
@@ -487,10 +493,15 @@ async def prime_workspace(
             agents,
             dry_run,
             sync_templates,
+            all_agents,
+            local_only,
         )
         if not result.get("ok"):
-            telemetry.log_error(f"prime_workspace failed: {result.get('error') or result.get('ruler', {}).get('stderr')}", context={"path": path, "agents": agents, "dry_run": dry_run})
-        
+            telemetry.log_error(
+                f"prime_workspace failed: {result.get('error') or result.get('ruler', {}).get('stderr')}",
+                context={"path": path, "agents": agents, "dry_run": dry_run},
+            )
+
         telemetry.record(
             tool_name="prime_workspace",
             raw_text=path,
@@ -506,7 +517,9 @@ async def prime_workspace(
                 "target": path,
                 "dry_run": dry_run,
                 "sync_templates": sync_templates,
-                "agents": agents,
+                "all_agents": all_agents,
+                "local_only": local_only,
+                "resolved_agents": result.get("resolved_agents"),
             },
         )
         return result
@@ -518,6 +531,7 @@ async def prime_workspace(
                 "agents": agents,
                 "dry_run": dry_run,
                 "sync_templates": sync_templates,
+                "all_agents": all_agents,
             },
         )
         return {"ok": False, "error": str(e)}
@@ -529,10 +543,10 @@ def init_project_memory(path: str = ".", dry_run: bool = False) -> dict:
     Initialize project memory artifacts used by continual-learning workflows.
 
     Creates (if missing):
-    - .devdocs/AGENT_MEMORY.md
+    - .braindrain/AGENT_MEMORY.md  (migrated from .devdocs/ on first run if present)
     - .cursor/hooks/state/continual-learning-index.json
 
-    This tool is idempotent and safe to re-run.
+    Both paths are gitignored. This tool is idempotent and safe to re-run.
     """
     try:
         target = Path(path).expanduser().resolve()
