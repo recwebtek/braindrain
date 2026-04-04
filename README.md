@@ -100,7 +100,7 @@ cd braindrain
 - Runs fresh `get_env_context()` probe and regenerates `AGENTS.md`
 - Creates `.braindrain/` (gitignored, machine-local — never committed)
 - Runs an interactive MCP target checklist (Cursor, Windsurf, Zed, OpenCode, Antigravity, Codex, etc.), previews diffs, creates backups, then applies on confirmation
-- Runs `ruler apply --local-only --agents cursor,claude` (project-scoped, no global config merging)
+- Runs `ruler apply --local-only --no-gitignore --agents cursor,claude` (project-scoped; `.gitignore` policy is **not** owned by Ruler — use `prime_workspace` for the BRAINDRAIN block)
 - Performs MCP handshake self-test and prints a structured final status summary + next steps
 
 ### Manual setup (if you prefer)
@@ -152,7 +152,7 @@ Replace `/path/to/braindrain` with the absolute path to your clone. `install.sh`
 
 ### Cursor
 
-`.cursor/mcp.json` or via **Settings › Features › MCP**:
+`.cursor/mcp.json` (project) or **`~/.cursor/mcp.json`** (global) via **Settings › Features › MCP**:
 
 ```json
 {
@@ -160,11 +160,14 @@ Replace `/path/to/braindrain` with the absolute path to your clone. `install.sh`
     "braindrain": {
       "command": "/path/to/braindrain/config/braindrain",
       "args": [],
-      "env": {}
+      "env": {},
+      "serverName": "braindrain"
     }
   }
 }
 ```
+
+If the MCP log shows **`[MCP Allowlist] No serverName provided for adapter`**, add **`"serverName": "braindrain"`** (or match your JSON key, stripping a `user-` prefix) on that server object. `install.sh` / `configure_mcp.py` and `prime_workspace()` set this for generated configs; UI-created entries may omit it.
 
 #### Multi-agent loop (Cursor)
 This repo includes a 4-tier multi-agent system under `.cursor/`. Run:

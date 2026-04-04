@@ -522,6 +522,8 @@ async def prime_workspace(
                 "resolved_agents": result.get("resolved_agents"),
                 "detect_method": result.get("detect_method"),
                 "cursor_rules": result.get("cursor_rules"),
+                "gitignore_protocol": result.get("gitignore_protocol"),
+                "cursor_mcp_json": result.get("cursor_mcp_json"),
             },
         )
         return result

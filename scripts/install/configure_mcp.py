@@ -106,13 +106,23 @@ def _get_nested(root: dict[str, Any], dotted_key: str) -> Any:
     return cur
 
 
+def _braindrain_stdio_entry(launcher: str, *, server_name: str = "braindrain") -> dict[str, Any]:
+    """Cursor and other IDEs expect ``serverName`` on each MCP server object (avoids adapter warnings)."""
+    return {
+        "command": launcher,
+        "args": [],
+        "env": {},
+        "serverName": server_name,
+    }
+
+
 def _ensure_server_entry(config: dict[str, Any], target: Target, launcher: str) -> dict[str, Any]:
     if target.style == "mcpServers":
         servers = _get_nested(config, "mcpServers")
         if not isinstance(servers, dict):
             servers = {}
             _set_nested(config, "mcpServers", servers)
-        servers["braindrain"] = {"command": launcher, "args": [], "env": {}}
+        servers["braindrain"] = _braindrain_stdio_entry(launcher)
         return config
 
     if target.style == "context_servers":
@@ -120,7 +130,7 @@ def _ensure_server_entry(config: dict[str, Any], target: Target, launcher: str) 
         if not isinstance(servers, dict):
             servers = {}
             _set_nested(config, "context_servers", servers)
-        servers["braindrain"] = {"command": launcher, "args": [], "env": {}}
+        servers["braindrain"] = _braindrain_stdio_entry(launcher)
         return config
 
     if target.style == "mcp":
@@ -136,7 +146,7 @@ def _ensure_server_entry(config: dict[str, Any], target: Target, launcher: str) 
         if not isinstance(block, dict):
             block = {}
             _set_nested(config, "mcp.servers", block)
-        block["braindrain"] = {"command": launcher, "args": [], "env": {}}
+        block["braindrain"] = _braindrain_stdio_entry(launcher)
         return config
 
     if target.style == "goose_yaml":

@@ -326,6 +326,111 @@ def _filter_ruler_toml_agents(toml_content: str, agents: list[str]) -> str:
 _PROJECT_RULES_START = "<!-- braindrain:project-rules:start -->"
 _PROJECT_RULES_END = "<!-- braindrain:project-rules:end -->"
 
+# Appended to .gitignore by prime_workspace (Ruler’s own --gitignore is off by default).
+_GITIGNORE_PROTOCOL_BEGIN = "# BEGIN BRAINDRAIN GITIGNORE PROTOCOL"
+
+_GITIGNORE_PROTOCOL_BLOCK = """# BEGIN BRAINDRAIN GITIGNORE PROTOCOL — do not remove (maintained by prime_workspace)
+# Ruler does NOT own .gitignore here: we pass --gitignore false to ruler apply and maintain this block instead.
+# Root-level dotfiles/dotdirs are local-only (IDE, MCP, secrets). Add ! exceptions only for paths that must ship.
+/.*
+!/.github/
+!/.gitignore
+!/.gitattributes
+!/.gitmodules
+!/.env.example
+# If your team commits other root dotdirs (e.g. .husky), add: !/.husky/
+# END BRAINDRAIN GITIGNORE PROTOCOL
+"""
+
+
+def ensure_gitignore_braindrain_protocol(
+    target_dir: Path,
+    *,
+    dry_run: bool = False,
+) -> dict[str, str | bool]:
+    """
+    Append the BRAINDRAIN root dotfile gitignore block if missing.
+
+    This is the supported way to keep local dotfiles out of git; Ruler’s
+    built-in --gitignore updates are disabled in run_ruler_apply by default
+    so we are not fighting two writers.
+    """
+    gi = target_dir / ".gitignore"
+    result: dict[str, str | bool] = {"ok": True, "path": str(gi)}
+    if dry_run:
+        exists = gi.is_file()
+        has_block = exists and _GITIGNORE_PROTOCOL_BEGIN in gi.read_text(encoding="utf-8", errors="ignore")
+        result["dry_run"] = True
+        result["would_append"] = not has_block
+        return result
+
+    text = gi.read_text(encoding="utf-8", errors="ignore") if gi.is_file() else ""
+    if _GITIGNORE_PROTOCOL_BEGIN in text:
+        result["action"] = "skipped_already_present"
+        return result
+
+    sep = "\n\n" if text.strip() else ""
+    gi.write_text(text.rstrip() + sep + _GITIGNORE_PROTOCOL_BLOCK + "\n", encoding="utf-8")
+    result["action"] = "appended"
+    return result
+
+
+def ensure_cursor_mcp_json_server_name(
+    target_dir: Path,
+    *,
+    dry_run: bool = False,
+) -> dict[str, str | bool]:
+    """
+    Set ``serverName`` on each entry under mcpServers in ``.cursor/mcp.json`` when missing.
+
+    Cursor’s MCP adapter logs a warning when ``serverName`` is absent (identifier
+    falls back to the JSON key, e.g. ``user-braindrain``).  We set ``serverName``
+    to the key with the ``user-`` prefix stripped so the adapter has a stable name.
+    """
+    path = target_dir / ".cursor" / "mcp.json"
+    result: dict[str, str | bool] = {"ok": True, "path": str(path)}
+    if not path.is_file():
+        result["skipped"] = "no_file"
+        return result
+
+    raw = path.read_text(encoding="utf-8", errors="ignore")
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        result["ok"] = False
+        result["error"] = "invalid_json"
+        return result
+
+    servers = data.get("mcpServers")
+    if not isinstance(servers, dict):
+        result["skipped"] = "no_mcpServers"
+        return result
+
+    changed = False
+    for key, entry in servers.items():
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("serverName"):
+            continue
+        if "command" not in entry and "url" not in entry:
+            continue
+        name = str(key).removeprefix("user-")
+        entry["serverName"] = name
+        changed = True
+
+    if dry_run:
+        result["dry_run"] = True
+        result["would_patch"] = changed
+        return result
+
+    if changed:
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        result["action"] = "patched"
+    else:
+        result["action"] = "skipped_all_had_serverName"
+
+    return result
+
 
 def sync_cursor_rules_from_ruler(
     target_dir: Path,
@@ -413,6 +518,7 @@ def run_ruler_apply(
     agents: Optional[list[str]] = None,
     dry_run: bool = False,
     local_only: bool = True,
+    ruler_updates_gitignore: bool = False,
 ) -> dict:
     """
     Run `npx @intellectronica/ruler apply` in target_dir.
@@ -422,6 +528,9 @@ def run_ruler_apply(
                     --agents so Ruler applies every agent in the local file.
         local_only: When True (default), passes --local-only to skip global
                     XDG config merging and keep changes project-scoped.
+        ruler_updates_gitignore: When False (default), passes ``--no-gitignore``
+            so Ruler does not append its own block; use
+            ``ensure_gitignore_braindrain_protocol()`` for a single policy.
 
     Returns {"ok": bool, "stdout": str, "stderr": str, "command": str}.
     """
@@ -440,6 +549,8 @@ def run_ruler_apply(
         cmd.append("--dry-run")
     if local_only:
         cmd.append("--local-only")
+    if not ruler_updates_gitignore:
+        cmd.append("--no-gitignore")
     if agents:
         cmd += ["--agents", ",".join(agents)]
 
@@ -619,7 +730,7 @@ def prime(
             for f in TEMPLATES_DIR.rglob("*") if f.is_file()
         }
 
-    # Step 2: run ruler apply.
+    # Step 2: run ruler apply (Ruler does not touch .gitignore unless ruler_updates_gitignore).
     ruler_result = run_ruler_apply(
         target_dir,
         agents=apply_agents,
@@ -627,7 +738,12 @@ def prime(
         local_only=local_only,
     )
 
-    # Step 3: Cursor project rules from .ruler/RULES.md (Ruler may omit or differ).
+    # Step 3: .gitignore protocol (braindrain-owned; Ruler --gitignore off by default).
+    gitignore_protocol = ensure_gitignore_braindrain_protocol(
+        target_dir, dry_run=dry_run
+    )
+
+    # Step 4: Cursor project rules from .ruler/RULES.md (Ruler may omit or differ).
     cursor_in_scope = bool(
         all_agents or apply_agents is None or "cursor" in (apply_agents or [])
     )
@@ -641,10 +757,21 @@ def prime(
             target_dir, dry_run=True, include_cursor=True
         )
 
-    # Step 4: initialize memory artifacts (includes one-time .devdocs migration).
+    # Step 5: Cursor MCP JSON — serverName for adapter (fixes MCP Allowlist warning).
+    cursor_mcp_json: dict[str, str | bool] = {"skipped": True}
+    if cursor_in_scope and not dry_run:
+        cursor_mcp_json = ensure_cursor_mcp_json_server_name(
+            target_dir, dry_run=False
+        )
+    elif cursor_in_scope and dry_run:
+        cursor_mcp_json = ensure_cursor_mcp_json_server_name(
+            target_dir, dry_run=True
+        )
+
+    # Step 6: initialize memory artifacts (includes one-time .devdocs migration).
     memory_init = initialize_project_memory(target_dir, dry_run=dry_run)
 
-    # Step 5: persist primed marker (skip on dry_run).
+    # Step 7: persist primed marker (skip on dry_run).
     if not dry_run and ruler_result.get("ok"):
         _write_primed_state(target_dir, apply_agents or ["all"])
 
@@ -661,7 +788,9 @@ def prime(
         "is_first_prime": is_first_prime,
         "resolved_agents": apply_agents,
         "detect_method": detect_method,
+        "gitignore_protocol": gitignore_protocol,
         "cursor_rules": cursor_rules,
+        "cursor_mcp_json": cursor_mcp_json,
         "templates": {
             "source": str(TEMPLATES_DIR),
             "deployed": template_results,
@@ -678,7 +807,7 @@ def prime(
             if ok
             else [
                 "Check Node.js is installed (npx must be on PATH)",
-                "Run: npx @intellectronica/ruler apply --config .ruler/ruler.toml --local-only",
+                "Run: npx @intellectronica/ruler apply --config .ruler/ruler.toml --local-only --no-gitignore",
                 "Run init_project_memory() to initialize project memory artifacts",
             ]
         ),

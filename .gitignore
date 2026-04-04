@@ -107,14 +107,20 @@ tests/
 
 
 # START Ruler Generated Files
-/.clinerules
-/.clinerules.bak
 /.cursor/mcp.json
 /.cursor/mcp.json.bak
-/.trae/rules/project_rules.md
-/.trae/rules/project_rules.md.bak
-/.windsurf/mcp_config.json
-/.windsurf/mcp_config.json.bak
 /AGENTS.md
 /AGENTS.md.bak
 # END Ruler Generated Files
+
+# BEGIN BRAINDRAIN GITIGNORE PROTOCOL — do not remove (maintained by prime_workspace)
+# Ruler does NOT own .gitignore here: we pass --gitignore false to ruler apply and maintain this block instead.
+# Root-level dotfiles/dotdirs are local-only (IDE, MCP, secrets). Add ! exceptions only for paths that must ship.
+/.*
+!/.github/
+!/.gitignore
+!/.gitattributes
+!/.gitmodules
+!/.env.example
+# If your team commits other root dotdirs (e.g. .husky), add: !/.husky/
+# END BRAINDRAIN GITIGNORE PROTOCOL

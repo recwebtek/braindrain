@@ -62,6 +62,11 @@ Use this sequence to avoid wasting context tokens on environment probing and lar
 - Use `prime_workspace()` for full project onboarding and `init_project_memory()` for memory-only initialization.
 - `.braindrain/` is **never** committed — it is machine-local and gitignored.
 
+### Git / secrets (do not leak local state)
+
+- `prime_workspace()` runs `ruler apply` with **`--no-gitignore`** so Ruler does not own `.gitignore`. Braindrain appends a **BRAINDRAIN GITIGNORE PROTOCOL** block that ignores **root-level** dotfiles (`/.*`) with explicit `!` exceptions for paths that must ship (e.g. `/.github/`, `/.gitignore`, `/.env.example`). Extend `!` lines only when your team commits another root dotdir.
+- Never commit env files, MCP tokens, or IDE-only config.
+
 ## Environment Context Protocol
 
 Before running any shell commands, installing packages, or assuming tool
