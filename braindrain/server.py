@@ -594,9 +594,10 @@ def main():
     transport = sys.argv[1] if len(sys.argv) > 1 else "stdio"
 
     if transport == "stdio":
-        mcp.run(transport="stdio")
+        # No banner: FastMCP prints ASCII + update notice to stderr; Cursor MCP logs stderr as [error].
+        mcp.run(transport="stdio", show_banner=False)
     else:
-        mcp.run(transport="sse", port=int(os.environ.get("PORT", "8000")))
+        mcp.run(transport="sse", port=int(os.environ.get("PORT", "8000")), show_banner=False)
 
 
 if __name__ == "__main__":
