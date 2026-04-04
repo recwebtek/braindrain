@@ -49,6 +49,14 @@ _ENV_AGENT_PROBES: list[tuple[str, str]] = [
     ("ZED_TERM", "zed"),
 ]
 
+# Cursor sets TERM_PROGRAM when the integrated terminal runs; the MCP server
+# subprocess often does NOT inherit CURSOR_TRACE_ID — use this as a fallback.
+_TERM_PROGRAM_AGENTS: dict[str, str] = {
+    "cursor": "cursor",
+    "Cursor": "cursor",
+    "vscode": "cursor",  # Cursor is Electron-based; terminal may report vscode
+}
+
 # Ordered list of (relative_path, ruler_agent_id) filesystem probes.
 _FS_AGENT_PROBES: list[tuple[str, str]] = [
     (".cursor", "cursor"),
@@ -62,14 +70,16 @@ _FS_AGENT_PROBES: list[tuple[str, str]] = [
 ]
 
 
-def detect_prime_agents(target_dir: Optional[Path] = None) -> list[str]:
+def detect_prime_agents(target_dir: Optional[Path] = None) -> tuple[list[str], str]:
     """
-    Return the best single Ruler agent id for this environment.
+    Return the best single Ruler agent id for this environment and a short
+    label describing how it was chosen (for telemetry / debugging).
 
     Detection order:
       1. Environment variables (IDE-injected, most reliable).
-      2. Presence of project-local dotfolders (e.g. .cursor/, .windsurf/).
-      3. Fallback: "cursor" (safe default — most common IDE in this codebase).
+      2. TERM_PROGRAM (Cursor/VS Code family when MCP child lacks CURSOR_*).
+      3. Presence of project-local dotfolders (e.g. .cursor/, .windsurf/).
+      4. Fallback: "cursor" (safe default — most common IDE in this codebase).
 
     Always returns a list with exactly one element for deterministic defaults.
     Call prime() with agents=[...] for explicit multi-agent targeting.
@@ -77,16 +87,20 @@ def detect_prime_agents(target_dir: Optional[Path] = None) -> list[str]:
     # 1. Env-based detection (no filesystem access required).
     for env_var, agent_id in _ENV_AGENT_PROBES:
         if os.environ.get(env_var):
-            return [agent_id]
+            return [agent_id], f"env:{env_var}"
+
+    tp = os.environ.get("TERM_PROGRAM", "").strip()
+    if tp in _TERM_PROGRAM_AGENTS:
+        return [_TERM_PROGRAM_AGENTS[tp]], f"env:TERM_PROGRAM={tp}"
 
     # 2. Filesystem-based detection (project-specific).
     if target_dir is not None:
         for rel_path, agent_id in _FS_AGENT_PROBES:
             if (target_dir / rel_path).exists():
-                return [agent_id]
+                return [agent_id], f"fs:{rel_path}"
 
     # 3. Fallback.
-    return ["cursor"]
+    return ["cursor"], "fallback:cursor"
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +173,20 @@ def _migrate_devdocs(target_dir: Path) -> dict[str, str]:
 # Template deployment
 # ---------------------------------------------------------------------------
 
+def _materialize_ruler_toml_text(
+    launcher_path: str,
+    *,
+    agents: Optional[list[str]],
+    all_agents: bool,
+) -> str:
+    """Build the ruler.toml body that should live on disk for this prime."""
+    raw = (TEMPLATES_DIR / "ruler.toml").read_text(encoding="utf-8")
+    content = raw.replace("BRAINDRAIN_LAUNCHER_PATH", launcher_path)
+    if not all_agents and agents:
+        content = _filter_ruler_toml_agents(content, agents)
+    return content
+
+
 def deploy_templates(
     target_dir: Path,
     launcher_path: str,
@@ -175,8 +203,15 @@ def deploy_templates(
     full mcp_servers/mcp_targets sections.  When all_agents=True, the full
     template is copied unchanged (all agent entries).
 
+    **Important:** If `.ruler/ruler.toml` already exists, it is still **replaced**
+    when in minimal mode whenever the on-disk content would differ from the
+    filtered template. Otherwise Ruler's `--gitignore` and config merge would
+    still reflect the old bloated `[agents]` table even though `--agents cursor`
+    was passed.
+
     Returns {filename: {action, backup}}.
-    Default mode skips existing files (user-managed).
+    Default mode skips existing files (user-managed) except the minimal-ruler
+    refresh path above.
     If sync_templates=True, existing files are backed up then overwritten.
     """
     ruler_dir = target_dir / ".ruler"
@@ -184,34 +219,66 @@ def deploy_templates(
     written: dict[str, dict[str, str | bool]] = {}
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
 
-    for src in TEMPLATES_DIR.rglob("*"):
-        if src.is_dir():
-            continue
-        rel = src.relative_to(TEMPLATES_DIR)
-        dst = ruler_dir / rel
+    force_minimal = not all_agents and bool(agents)
+    minimal_ruler_updated = False
 
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        content = src.read_text(encoding="utf-8")
-
-        if src.name == "ruler.toml":
-            content = content.replace("BRAINDRAIN_LAUNCHER_PATH", launcher_path)
-            # When not deploying all agents, filter the [agents] table to only
-            # the resolved agent(s) so the file accurately reflects intent.
-            if not all_agents and agents:
-                content = _filter_ruler_toml_agents(content, agents)
-
-        if dst.exists():
+    # Phase 1 — ruler.toml first (ordering-independent).
+    ruler_dst = ruler_dir / "ruler.toml"
+    ruler_dst.parent.mkdir(parents=True, exist_ok=True)
+    ruler_content = _materialize_ruler_toml_text(
+        launcher_path, agents=agents, all_agents=all_agents
+    )
+    if force_minimal:
+        if not ruler_dst.exists():
+            ruler_dst.write_text(ruler_content, encoding="utf-8")
+            written["ruler.toml"] = {"action": "created", "backup": ""}
+            minimal_ruler_updated = True
+        elif ruler_dst.read_text(encoding="utf-8") != ruler_content:
+            backup = ruler_dst.with_name(f"{ruler_dst.name}.bak.{ts}")
+            shutil.copy2(ruler_dst, backup)
+            ruler_dst.write_text(ruler_content, encoding="utf-8")
+            written["ruler.toml"] = {
+                "action": "updated_minimal_agents",
+                "backup": str(backup),
+            }
+            minimal_ruler_updated = True
+        else:
+            written["ruler.toml"] = {"action": "skipped_existing", "backup": ""}
+    else:
+        # Full template: same behaviour as before (skip unless sync).
+        if ruler_dst.exists():
             if not sync_templates:
-                written[str(rel)] = {"action": "skipped_existing", "backup": ""}
+                written["ruler.toml"] = {"action": "skipped_existing", "backup": ""}
+            else:
+                backup = ruler_dst.with_name(f"{ruler_dst.name}.bak.{ts}")
+                shutil.copy2(ruler_dst, backup)
+                ruler_dst.write_text(ruler_content, encoding="utf-8")
+                written["ruler.toml"] = {"action": "updated", "backup": str(backup)}
+        else:
+            ruler_dst.write_text(ruler_content, encoding="utf-8")
+            written["ruler.toml"] = {"action": "created", "backup": ""}
+
+    refresh_sources = sync_templates or (force_minimal and minimal_ruler_updated)
+
+    # Phase 2 — RULES.md and AGENTS.md (depend on minimal_ruler_updated).
+    for name in ("RULES.md", "AGENTS.md"):
+        src = TEMPLATES_DIR / name
+        if not src.is_file():
+            continue
+        dst = ruler_dir / name
+        content = src.read_text(encoding="utf-8")
+        if dst.exists():
+            if not refresh_sources:
+                written[name] = {"action": "skipped_existing", "backup": ""}
                 continue
             backup = dst.with_name(f"{dst.name}.bak.{ts}")
             shutil.copy2(dst, backup)
             dst.write_text(content, encoding="utf-8")
-            written[str(rel)] = {"action": "updated", "backup": str(backup)}
-            continue
-
-        dst.write_text(content, encoding="utf-8")
-        written[str(rel)] = {"action": "created", "backup": ""}
+            action = "updated" if sync_templates else "updated_with_minimal_ruler"
+            written[name] = {"action": action, "backup": str(backup)}
+        else:
+            dst.write_text(content, encoding="utf-8")
+            written[name] = {"action": "created", "backup": ""}
 
     return written
 
@@ -253,6 +320,87 @@ def _filter_ruler_toml_agents(toml_content: str, agents: list[str]) -> str:
             result.append(line)
 
     return "".join(result)
+
+
+# Cursor: managed region inside project-rules.mdc (user text outside is preserved).
+_PROJECT_RULES_START = "<!-- braindrain:project-rules:start -->"
+_PROJECT_RULES_END = "<!-- braindrain:project-rules:end -->"
+
+
+def sync_cursor_rules_from_ruler(
+    target_dir: Path,
+    *,
+    dry_run: bool = False,
+    include_cursor: bool = True,
+) -> dict[str, str | bool]:
+    """
+    Ensure Cursor always has project rules derived from `.ruler/RULES.md`.
+
+    Writes:
+      - `.cursor/rules/braindrain.mdc` — full protocol (alwaysApply).
+      - `.cursor/rules/project-rules.mdc` — same body inside a fenced managed
+        region so prime can refresh without destroying user additions outside
+        the markers.
+
+    Ruler may also emit `braindrain.mdc`; we overwrite with template-driven
+    content so behaviour is predictable after prime.
+    """
+    result: dict[str, str | bool] = {"ok": True, "dry_run": dry_run}
+    if not include_cursor:
+        result["skipped"] = "include_cursor=False"
+        return result
+
+    rules_path = target_dir / ".ruler" / "RULES.md"
+    if not rules_path.is_file():
+        result["ok"] = False
+        result["error"] = f"Missing {rules_path}"
+        return result
+
+    body = rules_path.read_text(encoding="utf-8").strip()
+    frontmatter = (
+        "---\n"
+        "description: BRAINDRAIN protocol (synced from .ruler/RULES.md by prime_workspace)\n"
+        "alwaysApply: true\n"
+        "---\n\n"
+    )
+    mdc_full = frontmatter + body + "\n"
+
+    rules_dir = target_dir / ".cursor" / "rules"
+    bd_path = rules_dir / "braindrain.mdc"
+    pr_path = rules_dir / "project-rules.mdc"
+
+    if dry_run:
+        result["would_write"] = [str(bd_path), str(pr_path)]
+        return result
+
+    rules_dir.mkdir(parents=True, exist_ok=True)
+
+    # Always mirror full RULES.md into braindrain.mdc.
+    bd_path.write_text(mdc_full, encoding="utf-8")
+    result["braindrain.mdc"] = "written"
+
+    managed_block = (
+        f"{_PROJECT_RULES_START}\n{body}\n{_PROJECT_RULES_END}\n"
+    )
+    if not pr_path.exists():
+        pr_path.write_text(frontmatter + managed_block, encoding="utf-8")
+        result["project-rules.mdc"] = "created"
+        return result
+
+    existing = pr_path.read_text(encoding="utf-8")
+    if _PROJECT_RULES_START in existing and _PROJECT_RULES_END in existing:
+        before, _, rest = existing.partition(_PROJECT_RULES_START)
+        _, _, after = rest.partition(_PROJECT_RULES_END)
+        new_text = before + _PROJECT_RULES_START + "\n" + body + "\n" + _PROJECT_RULES_END + after
+        pr_path.write_text(new_text, encoding="utf-8")
+        result["project-rules.mdc"] = "updated_managed_region"
+    else:
+        # No markers: append managed section so user file is not wiped.
+        sep = "\n\n" if existing.strip() else ""
+        pr_path.write_text(existing.rstrip() + sep + frontmatter + managed_block, encoding="utf-8")
+        result["project-rules.mdc"] = "appended_managed_section"
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -444,12 +592,15 @@ def prime(
 
     # Resolve agents according to priority order.
     apply_agents: Optional[list[str]]
+    detect_method: Optional[str] = None
     if agents is not None:
         apply_agents = agents
+        detect_method = "explicit:agents_parameter"
     elif all_agents:
         apply_agents = None  # Let Ruler enumerate all entries in local file.
+        detect_method = "all_agents:true"
     else:
-        apply_agents = detect_prime_agents(target_dir)
+        apply_agents, detect_method = detect_prime_agents(target_dir)
 
     launcher_path = _get_launcher_path()
 
@@ -476,10 +627,24 @@ def prime(
         local_only=local_only,
     )
 
-    # Step 3: initialize memory artifacts (includes one-time .devdocs migration).
+    # Step 3: Cursor project rules from .ruler/RULES.md (Ruler may omit or differ).
+    cursor_in_scope = bool(
+        all_agents or apply_agents is None or "cursor" in (apply_agents or [])
+    )
+    cursor_rules: dict[str, str | bool] = {"skipped": True}
+    if cursor_in_scope and not dry_run:
+        cursor_rules = sync_cursor_rules_from_ruler(
+            target_dir, dry_run=False, include_cursor=True
+        )
+    elif cursor_in_scope and dry_run:
+        cursor_rules = sync_cursor_rules_from_ruler(
+            target_dir, dry_run=True, include_cursor=True
+        )
+
+    # Step 4: initialize memory artifacts (includes one-time .devdocs migration).
     memory_init = initialize_project_memory(target_dir, dry_run=dry_run)
 
-    # Step 4: persist primed marker (skip on dry_run).
+    # Step 5: persist primed marker (skip on dry_run).
     if not dry_run and ruler_result.get("ok"):
         _write_primed_state(target_dir, apply_agents or ["all"])
 
@@ -495,6 +660,8 @@ def prime(
         "local_only": local_only,
         "is_first_prime": is_first_prime,
         "resolved_agents": apply_agents,
+        "detect_method": detect_method,
+        "cursor_rules": cursor_rules,
         "templates": {
             "source": str(TEMPLATES_DIR),
             "deployed": template_results,

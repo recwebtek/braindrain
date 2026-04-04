@@ -520,6 +520,8 @@ async def prime_workspace(
                 "all_agents": all_agents,
                 "local_only": local_only,
                 "resolved_agents": result.get("resolved_agents"),
+                "detect_method": result.get("detect_method"),
+                "cursor_rules": result.get("cursor_rules"),
             },
         )
         return result
