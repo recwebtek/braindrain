@@ -73,9 +73,17 @@ def run_ruler_apply(
     *,
     agents: Optional[list[str]] = None,
     dry_run: bool = False,
+    local_only: bool = True,
 ) -> dict:
     """
     Run `npx @intellectronica/ruler apply` in target_dir.
+
+    Args:
+        agents:     Explicit agent list. When None and not all_agents mode,
+                    omit --agents so Ruler applies every agent in the local file.
+        local_only: When True (default), passes --local-only to skip global
+                    XDG config merging and keep changes project-scoped.
+
     Returns {"ok": bool, "stdout": str, "stderr": str, "command": str}.
     """
     ruler_config = target_dir / ".ruler" / "ruler.toml"
@@ -91,6 +99,8 @@ def run_ruler_apply(
            "--config", str(ruler_config)]
     if dry_run:
         cmd.append("--dry-run")
+    if local_only:
+        cmd.append("--local-only")
     if agents:
         cmd += ["--agents", ",".join(agents)]
 
@@ -250,7 +260,7 @@ def prime(
         }
 
     # Step 2: run ruler apply
-    ruler_result = run_ruler_apply(target_dir, agents=agents, dry_run=dry_run)
+    ruler_result = run_ruler_apply(target_dir, agents=agents, dry_run=dry_run, local_only=True)
     # Step 3: initialize memory artifacts
     memory_init = initialize_project_memory(target_dir, dry_run=dry_run)
 
