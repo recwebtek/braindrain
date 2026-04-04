@@ -193,6 +193,15 @@ else
     warn "Skipping AGENTS.md generation (template missing or dependencies failed)."
 fi
 
+header "5b. Initialize .braindrain/ project-local directory"
+BRAINDRAIN_LOCAL_DIR="$REPO/.braindrain"
+if [[ ! -d "$BRAINDRAIN_LOCAL_DIR" ]]; then
+    mkdir -p "$BRAINDRAIN_LOCAL_DIR"
+    ok ".braindrain/ created (gitignored, machine-local — never committed)"
+else
+    ok ".braindrain/ already exists"
+fi
+
 header "6. Launcher permissions"
 chmod +x "$REPO/config/braindrain"
 ok "config/braindrain is executable"
@@ -282,15 +291,20 @@ else
         info ".ruler/ already exists — skipping template copy (user-managed)"
     fi
 
-    # Run ruler apply
+    # Run ruler apply.
+    # --local-only: prevents global XDG config from merging in unintended agents.
+    # --agents cursor,claude: safe conservative default for this repo's self-prime;
+    #   covers the two IDEs most commonly used with BRAINDRAIN during development.
     if npx --yes @intellectronica/ruler apply \
-        --config "$RULER_DEST/ruler.toml" 2>>"$LOG_FILE"; then
+        --config "$RULER_DEST/ruler.toml" \
+        --local-only \
+        --agents cursor,claude 2>>"$LOG_FILE"; then
         RULER_STATUS="ok"
         ok "ruler apply — agent rule files distributed"
     else
         RULER_STATUS="failed"
         warn "ruler apply failed (non-fatal). Run manually:"
-        warn "  npx @intellectronica/ruler apply --config $RULER_DEST/ruler.toml"
+        warn "  npx @intellectronica/ruler apply --config $RULER_DEST/ruler.toml --local-only --agents cursor,claude"
     fi
 fi
 

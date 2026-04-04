@@ -59,8 +59,8 @@ OS environment data is probed once, cached locally, and served instantly on ever
 | Tool | When to use |
 |---|---|
 | `list_workflows()` | See what multi-step workflows are available. |
-| `prime_workspace(path, agents, dry_run, sync_templates)` | Deploy braindrain rules and MCP configs into a project for all supported agents, then initialize project memory artifacts. Set `sync_templates=true` to safely refresh existing `.ruler/*` template files (with timestamped backups) before running Ruler. |
-| `init_project_memory(path, dry_run)` | Initialize project memory artifacts only (`.devdocs/AGENT_MEMORY.md` and `.cursor/hooks/state/continual-learning-index.json`) without re-running full Ruler deployment. |
+| `prime_workspace(path, agents, dry_run, sync_templates, all_agents, local_only)` | Prime a project for AI agent use. **First run**: auto-detects current IDE/CLI (env vars → dotfolders → fallback `cursor`), deploys a minimal `ruler.toml`, runs `ruler apply --local-only`, and writes `.braindrain/primed.json`. **Subsequent runs**: re-applies with the same or updated agent list. Set `all_agents=True` for the full template. Set `sync_templates=True` to refresh `.ruler/*` with backups. |
+| `init_project_memory(path, dry_run)` | Initialize project memory artifacts only (`.braindrain/AGENT_MEMORY.md` and `.cursor/hooks/state/continual-learning-index.json`). Migrates legacy `.devdocs/` on first call. Idempotent. |
 | `plan_workflow(name, args)` | Generate a markdown execution plan and review it before committing to a run. Use before any destructive or long-running workflow. |
 | `run_workflow(name, args)` | Execute a workflow. Intermediate output is routed through the sandbox — only the final summary returns to the agent. |
 
@@ -98,7 +98,9 @@ cd braindrain
 - Installs full dependencies with visible progress, retries, and install logging to `.gstack/install-logs/`
 - On Linux CPU-only machines, prefers PyTorch CPU wheels to avoid accidental CUDA downloads
 - Runs fresh `get_env_context()` probe and regenerates `AGENTS.md`
+- Creates `.braindrain/` (gitignored, machine-local — never committed)
 - Runs an interactive MCP target checklist (Cursor, Windsurf, Zed, OpenCode, Antigravity, Codex, etc.), previews diffs, creates backups, then applies on confirmation
+- Runs `ruler apply --local-only --agents cursor,claude` (project-scoped, no global config merging)
 - Performs MCP handshake self-test and prints a structured final status summary + next steps
 
 ### Manual setup (if you prefer)
