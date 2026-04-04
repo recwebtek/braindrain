@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from datetime import datetime, timezone
@@ -323,8 +324,171 @@ def _filter_ruler_toml_agents(toml_content: str, agents: list[str]) -> str:
 
 
 # Cursor: managed region inside project-rules.mdc (user text outside is preserved).
-_PROJECT_RULES_START = "<!-- braindrain:project-rules:start -->"
-_PROJECT_RULES_END = "<!-- braindrain:project-rules:end -->"
+_PROJECT_CONTEXT_START = "<!-- braindrain:project-context:start -->"
+_PROJECT_CONTEXT_END = "<!-- braindrain:project-context:end -->"
+# Legacy primes duplicated .ruler/RULES.md here — migrate to project-context on next prime.
+_PROJECT_RULES_LEGACY_START = "<!-- braindrain:project-rules:start -->"
+_PROJECT_RULES_LEGACY_END = "<!-- braindrain:project-rules:end -->"
+
+
+def _read_braindrain_sidecar_md(target_dir: Path, name: str) -> str | None:
+    """Read ``name`` from ``.braindrain/`` or legacy ``.devdocs/``."""
+    for sub in (BRAINDRAIN_DIR, _LEGACY_DEVDOCS_DIR):
+        p = target_dir / sub / name
+        if p.is_file():
+            return p.read_text(encoding="utf-8", errors="ignore")
+    return None
+
+
+def _extract_markdown_h2_sections(text: str, titles: tuple[str, ...], max_per: int) -> str:
+    """Take full ``## Title`` sections until the next ``## `` heading."""
+    chunks: list[str] = []
+    for title in titles:
+        if title not in text:
+            continue
+        start = text.index(title)
+        rest = text[start:]
+        lines: list[str] = []
+        first = True
+        for line in rest.splitlines():
+            if first:
+                lines.append(line)
+                first = False
+                continue
+            if line.startswith("## ") and line.strip() != title.strip():
+                break
+            lines.append(line)
+        chunk = "\n".join(lines).strip()
+        if len(chunk) > max_per:
+            chunk = chunk[: max_per - 24].rstrip() + "\n\n… (truncated)"
+        chunks.append(chunk)
+    return "\n\n".join(chunks)
+
+
+def _first_non_empty_lines(text: str, max_lines: int, skip_all_header_lines: bool = False) -> str:
+    """First ``max_lines`` substantive lines (light trim; keeps bullets)."""
+    lines_out: list[str] = []
+    for line in text.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if skip_all_header_lines and s.startswith("#"):
+            continue
+        lines_out.append(line.rstrip())
+        if len(lines_out) >= max_lines:
+            break
+    return "\n".join(lines_out)
+
+
+def _last_dated_or_section_block(text: str, max_chars: int) -> str | None:
+    """Prefer last ``### `` subsection; else last ``## `` section."""
+    t = text.strip()
+    if not t:
+        return None
+    parts = re.split(r"\n(?=### )", t)
+    if len(parts) > 1:
+        block = parts[-1].strip()
+        return block[:max_chars] if block else None
+    parts2 = re.split(r"\n(?=## )", t)
+    if len(parts2) > 1:
+        block = parts2[-1].strip()
+        return block[:max_chars] if block else None
+    return t[:max_chars]
+
+
+def synthesize_project_rules_body(target_dir: Path, *, max_chars: int = 6000) -> str:
+    """
+    Build markdown for ``project-rules.mdc`` from workspace memory/ops/session docs.
+
+    Conservative and deterministic: no secrets heuristic beyond normal file trust;
+    callers store secrets outside these files.
+    """
+    parts: list[str] = []
+
+    mem = _read_braindrain_sidecar_md(target_dir, "AGENT_MEMORY.md")
+    if mem:
+        learned = _extract_markdown_h2_sections(
+            mem,
+            ("## Learned User Preferences", "## Learned Workspace Facts"),
+            max_per=2800,
+        )
+        if learned:
+            parts.append("## From AGENT_MEMORY.md\n\n" + learned)
+
+    ops = _read_braindrain_sidecar_md(target_dir, "OPS.md")
+    if ops:
+        op_lines = _first_non_empty_lines(ops, 45, skip_all_header_lines=True)
+        if op_lines:
+            parts.append("## From OPS.md (summary)\n\n" + op_lines)
+
+    sess = _read_braindrain_sidecar_md(target_dir, "SESSION_PROGRESS.md")
+    if sess:
+        block = _last_dated_or_section_block(sess, max_chars=3800)
+        if block:
+            parts.append("## Recent session / progress\n\n" + block)
+
+    body = "\n\n".join(parts).strip()
+    if not body:
+        body = (
+            "_No project-specific excerpts yet._ Add durable facts to `.braindrain/AGENT_MEMORY.md`, "
+            "operational notes to `.braindrain/OPS.md`, and progress to `.braindrain/SESSION_PROGRESS.md` "
+            "(legacy `.devdocs/` is read if `.braindrain/` is missing). "
+            "Re-run `prime_workspace()` to refresh this block; agents may refine `project-rules.mdc` over time."
+        )
+    if len(body) > max_chars:
+        body = body[: max_chars - 24].rstrip() + "\n\n… (truncated)"
+    return body
+
+
+def _project_rules_mdc_frontmatter() -> str:
+    return (
+        "---\n"
+        "description: Project-specific Cursor rules (from .braindrain; maintained by prime_workspace)\n"
+        "alwaysApply: true\n"
+        "---\n\n"
+    )
+
+
+def _project_rules_static_intro() -> str:
+    return (
+        "# Project context\n\n"
+        "Do **not** duplicate the BRAINDRAIN protocol here; it lives in `braindrain.mdc`. "
+        "The managed block below is refreshed from `.braindrain/` (or legacy `.devdocs/`) when you run "
+        "`prime_workspace()`.\n\n"
+    )
+
+
+def merge_project_rules_mdc(
+    existing: str | None,
+    synthesized: str,
+) -> str:
+    """
+    Insert or replace the managed project-context region, preserving user suffix text.
+
+    Migrates legacy ``project-rules`` markers that duplicated ``RULES.md``.
+    """
+    intro = _project_rules_static_intro()
+    fm = _project_rules_mdc_frontmatter()
+    managed = (
+        f"{_PROJECT_CONTEXT_START}\n{synthesized}\n{_PROJECT_CONTEXT_END}\n"
+    )
+
+    ex_raw = existing or ""
+    if not ex_raw.strip():
+        return fm + intro + managed
+
+    if _PROJECT_CONTEXT_START in ex_raw and _PROJECT_CONTEXT_END in ex_raw:
+        before, _, rest = ex_raw.partition(_PROJECT_CONTEXT_START)
+        _, _, after = rest.partition(_PROJECT_CONTEXT_END)
+        return before + _PROJECT_CONTEXT_START + "\n" + synthesized + "\n" + _PROJECT_CONTEXT_END + after
+
+    if _PROJECT_RULES_LEGACY_START in ex_raw and _PROJECT_RULES_LEGACY_END in ex_raw:
+        _, _, rest = ex_raw.partition(_PROJECT_RULES_LEGACY_START)
+        _, _, after_old = rest.partition(_PROJECT_RULES_LEGACY_END)
+        return fm + intro + managed + after_old.lstrip("\n")
+
+    sep = "\n\n"
+    return ex_raw.rstrip() + sep + "## Project context (managed)\n\n" + managed
 
 # Appended to .gitignore by prime_workspace (Ruler’s own --gitignore is off by default).
 _GITIGNORE_PROTOCOL_BEGIN = "# BEGIN BRAINDRAIN GITIGNORE PROTOCOL"
@@ -504,13 +668,16 @@ def sync_cursor_rules_from_ruler(
     include_cursor: bool = True,
 ) -> dict[str, str | bool]:
     """
-    Ensure Cursor always has project rules derived from `.ruler/RULES.md`.
+    Ensure Cursor has BRAINDRAIN protocol rules and separate project-context rules.
 
     Writes:
-      - `.cursor/rules/braindrain.mdc` — full protocol (alwaysApply).
-      - `.cursor/rules/project-rules.mdc` — same body inside a fenced managed
-        region so prime can refresh without destroying user additions outside
-        the markers.
+      - `.cursor/rules/braindrain.mdc` — full protocol from `.ruler/RULES.md` (alwaysApply).
+      - `.cursor/rules/project-rules.mdc` — **project-only** excerpts from
+        `.braindrain/` (``AGENT_MEMORY.md``, ``OPS.md``, ``SESSION_PROGRESS.md``),
+        with legacy `.devdocs/` as fallback. Managed between
+        ``<!-- braindrain:project-context:start/end -->``; does **not** duplicate
+        ``RULES.md``. Legacy ``project-rules`` markers that mirrored the protocol
+        are migrated on the next prime.
 
     Ruler may also emit `braindrain.mdc`; we overwrite with template-driven
     content so behaviour is predictable after prime.
@@ -535,12 +702,15 @@ def sync_cursor_rules_from_ruler(
     )
     mdc_full = frontmatter + body + "\n"
 
+    synthesized = synthesize_project_rules_body(target_dir)
+
     rules_dir = target_dir / ".cursor" / "rules"
     bd_path = rules_dir / "braindrain.mdc"
     pr_path = rules_dir / "project-rules.mdc"
 
     if dry_run:
         result["would_write"] = [str(bd_path), str(pr_path)]
+        result["project_rules_synthesized_chars"] = len(synthesized)
         return result
 
     rules_dir.mkdir(parents=True, exist_ok=True)
@@ -549,26 +719,23 @@ def sync_cursor_rules_from_ruler(
     bd_path.write_text(mdc_full, encoding="utf-8")
     result["braindrain.mdc"] = "written"
 
-    managed_block = (
-        f"{_PROJECT_RULES_START}\n{body}\n{_PROJECT_RULES_END}\n"
-    )
-    if not pr_path.exists():
-        pr_path.write_text(frontmatter + managed_block, encoding="utf-8")
-        result["project-rules.mdc"] = "created"
+    existing_pr = pr_path.read_text(encoding="utf-8") if pr_path.is_file() else None
+    new_pr = merge_project_rules_mdc(existing_pr, synthesized)
+
+    if new_pr == (existing_pr or ""):
+        result["project-rules.mdc"] = "unchanged"
         return result
 
-    existing = pr_path.read_text(encoding="utf-8")
-    if _PROJECT_RULES_START in existing and _PROJECT_RULES_END in existing:
-        before, _, rest = existing.partition(_PROJECT_RULES_START)
-        _, _, after = rest.partition(_PROJECT_RULES_END)
-        new_text = before + _PROJECT_RULES_START + "\n" + body + "\n" + _PROJECT_RULES_END + after
-        pr_path.write_text(new_text, encoding="utf-8")
+    pr_path.write_text(new_pr, encoding="utf-8")
+
+    if existing_pr is None:
+        result["project-rules.mdc"] = "created"
+    elif _PROJECT_CONTEXT_START in (existing_pr or "") and _PROJECT_CONTEXT_END in (existing_pr or ""):
         result["project-rules.mdc"] = "updated_managed_region"
+    elif _PROJECT_RULES_LEGACY_START in (existing_pr or "") and _PROJECT_RULES_LEGACY_END in (existing_pr or ""):
+        result["project-rules.mdc"] = "migrated_legacy_markers"
     else:
-        # No markers: append managed section so user file is not wiped.
-        sep = "\n\n" if existing.strip() else ""
-        pr_path.write_text(existing.rstrip() + sep + frontmatter + managed_block, encoding="utf-8")
-        result["project-rules.mdc"] = "appended_managed_section"
+        result["project-rules.mdc"] = "updated"
 
     return result
 
