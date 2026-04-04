@@ -375,19 +375,18 @@ def ensure_gitignore_braindrain_protocol(
     return result
 
 
-def ensure_cursor_mcp_json_server_name(
-    target_dir: Path,
+def ensure_cursor_mcp_json_server_name_at(
+    path: Path,
     *,
     dry_run: bool = False,
 ) -> dict[str, str | bool]:
     """
-    Set ``serverName`` on each entry under mcpServers in ``.cursor/mcp.json`` when missing.
+    Set ``serverName`` on each entry under ``mcpServers`` in the given ``mcp.json`` path.
 
     Cursor’s MCP adapter logs a warning when ``serverName`` is absent (identifier
     falls back to the JSON key, e.g. ``user-braindrain``).  We set ``serverName``
     to the key with the ``user-`` prefix stripped so the adapter has a stable name.
     """
-    path = target_dir / ".cursor" / "mcp.json"
     result: dict[str, str | bool] = {"ok": True, "path": str(path)}
     if not path.is_file():
         result["skipped"] = "no_file"
@@ -430,6 +429,72 @@ def ensure_cursor_mcp_json_server_name(
         result["action"] = "skipped_all_had_serverName"
 
     return result
+
+
+def ensure_cursor_mcp_json_server_name(
+    target_dir: Path,
+    *,
+    dry_run: bool = False,
+) -> dict[str, str | bool]:
+    """Patch ``<target_dir>/.cursor/mcp.json`` (project-local Cursor MCP config)."""
+    return ensure_cursor_mcp_json_server_name_at(
+        target_dir / ".cursor" / "mcp.json",
+        dry_run=dry_run,
+    )
+
+
+def compact_prime_result_for_mcp(
+    result: dict,
+    *,
+    max_ruler_text: int = 8000,
+) -> dict:
+    """
+    Shrink ``prime()`` output for MCP JSON-RPC responses.
+
+    Large payloads (full ``templates.deployed``, long Ruler stdout) can exceed
+    client buffers or timing, causing ``ClosedResourceError`` when the host
+    closes the stdio stream before the full tool result is written.
+    """
+    if not isinstance(result, dict):
+        return result
+    out = {k: v for k, v in result.items() if k not in ("templates", "ruler", "memory_init")}
+    tpl = result.get("templates") or {}
+    deployed = tpl.get("deployed") or {}
+    out["templates"] = {
+        "source": tpl.get("source"),
+        "new_files": tpl.get("new_files"),
+        "updated_files": tpl.get("updated_files"),
+        "skipped_existing": tpl.get("skipped_existing"),
+        "deployed_summary": [
+            {"file": k, "action": (v or {}).get("action")}
+            for k, v in deployed.items()
+        ],
+    }
+    r = dict(result.get("ruler") or {})
+    for key in ("stdout", "stderr"):
+        val = r.get(key)
+        if isinstance(val, str) and len(val) > max_ruler_text:
+            extra = len(val) - max_ruler_text
+            r[key] = val[:max_ruler_text] + f"\n… [{extra} chars truncated]"
+            r[f"{key}_truncated"] = True
+    out["ruler"] = r
+    mem = dict(result.get("memory_init") or {})
+    arts = mem.get("artifacts")
+    if isinstance(arts, dict):
+        slim: dict[str, dict[str, str | bool]] = {}
+        for k, v in arts.items():
+            if isinstance(v, dict):
+                slim[k] = {
+                    kk: vv
+                    for kk, vv in v.items()
+                    if kk in ("created", "exists", "valid_json", "would_create")
+                }
+            else:
+                slim[k] = v  # type: ignore[assignment]
+        mem["artifacts"] = slim
+    out["memory_init"] = mem
+    out["_mcp_response_compact"] = True
+    return out
 
 
 def sync_cursor_rules_from_ruler(
@@ -677,6 +742,7 @@ def prime(
     sync_templates: bool = False,
     all_agents: bool = False,
     local_only: bool = True,
+    patch_user_cursor_mcp: bool = False,
 ) -> dict:
     """
     Full prime flow: deploy templates + run ruler apply + initialize memory.
@@ -758,15 +824,27 @@ def prime(
         )
 
     # Step 5: Cursor MCP JSON — serverName for adapter (fixes MCP Allowlist warning).
-    cursor_mcp_json: dict[str, str | bool] = {"skipped": True}
+    cursor_mcp_json: dict[str, str | bool | dict] = {"skipped": True}
     if cursor_in_scope and not dry_run:
-        cursor_mcp_json = ensure_cursor_mcp_json_server_name(
-            target_dir, dry_run=False
-        )
+        proj_mcp = ensure_cursor_mcp_json_server_name(target_dir, dry_run=False)
+        if patch_user_cursor_mcp:
+            user_mcp = ensure_cursor_mcp_json_server_name_at(
+                Path.home() / ".cursor" / "mcp.json",
+                dry_run=False,
+            )
+            cursor_mcp_json = {"project": proj_mcp, "user_global": user_mcp}
+        else:
+            cursor_mcp_json = proj_mcp
     elif cursor_in_scope and dry_run:
-        cursor_mcp_json = ensure_cursor_mcp_json_server_name(
-            target_dir, dry_run=True
-        )
+        proj_mcp = ensure_cursor_mcp_json_server_name(target_dir, dry_run=True)
+        if patch_user_cursor_mcp:
+            user_mcp = ensure_cursor_mcp_json_server_name_at(
+                Path.home() / ".cursor" / "mcp.json",
+                dry_run=True,
+            )
+            cursor_mcp_json = {"project": proj_mcp, "user_global": user_mcp}
+        else:
+            cursor_mcp_json = proj_mcp
 
     # Step 6: initialize memory artifacts (includes one-time .devdocs migration).
     memory_init = initialize_project_memory(target_dir, dry_run=dry_run)

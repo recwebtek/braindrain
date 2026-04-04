@@ -25,6 +25,7 @@ from braindrain.workflow_engine import WorkflowEngine
 from braindrain.workspace_primer import (
     initialize_project_memory as _initialize_project_memory,
 )
+from braindrain.workspace_primer import compact_prime_result_for_mcp
 from braindrain.workspace_primer import prime as _prime_workspace
 
 mcp = FastMCP("braindrain")
@@ -458,6 +459,8 @@ async def prime_workspace(
     sync_templates: bool = False,
     all_agents: bool = False,
     local_only: bool = True,
+    patch_user_cursor_mcp: bool = False,
+    compact_mcp_response: bool = True,
 ) -> dict:
     """
     Prime a project/workspace for AI agent use.
@@ -478,6 +481,10 @@ async def prime_workspace(
         sync_templates: Update existing .ruler files with timestamped backups.
         all_agents:     Deploy full template and apply all configured agents.
         local_only:     Pass --local-only to ruler apply (default True).
+        patch_user_cursor_mcp: If True, also patch ~/.cursor/mcp.json with
+            serverName entries (fixes Cursor allowlist warning for user-braindrain).
+        compact_mcp_response: If True (default), return a smaller dict so the MCP
+            client is less likely to hit ClosedResourceError on large tool results.
 
     After priming:
     - Agents that support project-local MCP configs will have braindrain wired.
@@ -495,7 +502,10 @@ async def prime_workspace(
             sync_templates,
             all_agents,
             local_only,
+            patch_user_cursor_mcp,
         )
+        if compact_mcp_response and isinstance(result, dict):
+            result = compact_prime_result_for_mcp(result)
         if not result.get("ok"):
             telemetry.log_error(
                 f"prime_workspace failed: {result.get('error') or result.get('ruler', {}).get('stderr')}",
@@ -524,6 +534,8 @@ async def prime_workspace(
                 "cursor_rules": result.get("cursor_rules"),
                 "gitignore_protocol": result.get("gitignore_protocol"),
                 "cursor_mcp_json": result.get("cursor_mcp_json"),
+                "patch_user_cursor_mcp": patch_user_cursor_mcp,
+                "compact_mcp_response": compact_mcp_response,
             },
         )
         return result
@@ -536,6 +548,7 @@ async def prime_workspace(
                 "dry_run": dry_run,
                 "sync_templates": sync_templates,
                 "all_agents": all_agents,
+                "patch_user_cursor_mcp": patch_user_cursor_mcp,
             },
         )
         return {"ok": False, "error": str(e)}

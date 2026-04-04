@@ -167,7 +167,9 @@ Replace `/path/to/braindrain` with the absolute path to your clone. `install.sh`
 }
 ```
 
-If the MCP log shows **`[MCP Allowlist] No serverName provided for adapter`**, add **`"serverName": "braindrain"`** (or match your JSON key, stripping a `user-` prefix) on that server object. `install.sh` / `configure_mcp.py` and `prime_workspace()` set this for generated configs; UI-created entries may omit it.
+If the MCP log shows **`[MCP Allowlist] No serverName provided for adapter`**, either add **`"serverName": "braindrain"`** on that server object in **`~/.cursor/mcp.json`**, or run **`prime_workspace(..., patch_user_cursor_mcp=true)`** once so braindrain patches the global file. `install.sh` / `configure_mcp.py` and project-level `prime_workspace` set this for generated configs; UI-created entries may omit it.
+
+**Large `prime_workspace` results:** the MCP tool defaults to **`compact_mcp_response=true`** (smaller JSON) to avoid **ClosedResourceError** / connection closed while returning the tool result. Set **`compact_mcp_response=false`** only if you need the full `templates.deployed` map and untruncated Ruler logs.
 
 #### Multi-agent loop (Cursor)
 This repo includes a 4-tier multi-agent system under `.cursor/`. Run:
