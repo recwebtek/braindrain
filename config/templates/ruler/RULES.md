@@ -34,7 +34,7 @@ Use this sequence to avoid wasting context tokens on environment probing and lar
 | Tool | Purpose |
 |---|---|
 | `get_env_context(refresh=False)` | Cached OS fingerprint — call this first |
-| `prime_workspace(path=".", agents=None, dry_run=False, sync_templates=False)` | Prime project and optionally sync `.ruler` templates |
+| `prime_workspace(path=".", agents=None, dry_run=False, sync_templates=False, all_agents=False, local_only=True)` | Prime project; auto-detects IDE, writes `.braindrain/primed.json` |
 | `search_tools(query, top_k=5)` | Discover deferred tools by capability |
 | `route_output(text, source, ...)` | Index large text into context-mode |
 | `search_index(query, limit=5)` | Retrieve from FTS5 index |
@@ -50,16 +50,22 @@ Use this sequence to avoid wasting context tokens on environment probing and lar
 
 ### Ops/docs to keep current (when behaviour/run paths/tools change)
 
-- `.devdocs/SESSION_PROGRESS.md`
-- `.devdocs/OPS.md`
-- `.devdocs/AGENT_MEMORY.md`
+- `.braindrain/SESSION_PROGRESS.md`
+- `.braindrain/OPS.md`
+- `.braindrain/AGENT_MEMORY.md`
 - `README.md`
 
 ### Ownership boundaries (important)
 
 - `AGENTS.md` is generated protocol and environment context only.
-- High-signal project memory belongs in `.devdocs/AGENT_MEMORY.md`.
+- High-signal project memory belongs in `.braindrain/AGENT_MEMORY.md` (gitignored, never committed).
 - Use `prime_workspace()` for full project onboarding and `init_project_memory()` for memory-only initialization.
+- `.braindrain/` is **never** committed — it is machine-local and gitignored.
+
+### Git / secrets (do not leak local state)
+
+- `prime_workspace()` runs `ruler apply` with **`--no-gitignore`** so Ruler does not own `.gitignore`. Braindrain appends a **BRAINDRAIN GITIGNORE PROTOCOL** block that ignores **root-level** dotfiles (`/.*`) with explicit `!` exceptions for paths that must ship (e.g. `/.github/`, `/.gitignore`, `/.env.example`). Extend `!` lines only when your team commits another root dotdir.
+- Never commit env files, MCP tokens, or IDE-only config.
 
 ## Environment Context Protocol
 

@@ -7,7 +7,6 @@ version = "1"
 
 # ── Agent rule files to generate ─────────────────────────────────────────────
 [agents]
-agents_md = { source = "RULES.md" }           # AGENTS.md (Claude Code, OpenCode, Codex)
 claude = { source = "RULES.md" }              # CLAUDE.md
 cursor = { source = "RULES.md" }              # .cursor/rules/braindrain.mdc
 windsurf = { source = "RULES.md" }            # .windsurf/rules/braindrain.md

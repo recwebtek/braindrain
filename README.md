@@ -59,8 +59,8 @@ OS environment data is probed once, cached locally, and served instantly on ever
 | Tool | When to use |
 |---|---|
 | `list_workflows()` | See what multi-step workflows are available. |
-| `prime_workspace(path, agents, dry_run, sync_templates)` | Deploy braindrain rules and MCP configs into a project for all supported agents, then initialize project memory artifacts. Set `sync_templates=true` to safely refresh existing `.ruler/*` template files (with timestamped backups) before running Ruler. |
-| `init_project_memory(path, dry_run)` | Initialize project memory artifacts only (`.devdocs/AGENT_MEMORY.md` and `.cursor/hooks/state/continual-learning-index.json`) without re-running full Ruler deployment. |
+| `prime_workspace(path, agents, dry_run, sync_templates, all_agents, local_only)` | Prime a project for AI agent use. **First run**: auto-detects current IDE/CLI (`CURSOR_*` → `TERM_PROGRAM` → dotfolders → fallback `cursor`); response includes **`detect_method`**. Always rewrites **minimal `.ruler/ruler.toml`** when targeting specific agents (even if `.ruler/` already existed) so Ruler’s `.gitignore` and config match the agent list. After apply, syncs **`.cursor/rules/braindrain.mdc`** and **`project-rules.mdc`** (managed fenced region) from `.ruler/RULES.md` — see **`cursor_rules`** in the result. Set `all_agents=True` for the full template. Set `sync_templates=True` to force-refresh all `.ruler/*` sources. |
+| `init_project_memory(path, dry_run)` | Initialize project memory artifacts only (`.braindrain/AGENT_MEMORY.md` and `.cursor/hooks/state/continual-learning-index.json`). Migrates legacy `.devdocs/` on first call. Idempotent. |
 | `plan_workflow(name, args)` | Generate a markdown execution plan and review it before committing to a run. Use before any destructive or long-running workflow. |
 | `run_workflow(name, args)` | Execute a workflow. Intermediate output is routed through the sandbox — only the final summary returns to the agent. |
 
@@ -98,7 +98,9 @@ cd braindrain
 - Installs full dependencies with visible progress, retries, and install logging to `.gstack/install-logs/`
 - On Linux CPU-only machines, prefers PyTorch CPU wheels to avoid accidental CUDA downloads
 - Runs fresh `get_env_context()` probe and regenerates `AGENTS.md`
+- Creates `.braindrain/` (gitignored, machine-local — never committed)
 - Runs an interactive MCP target checklist (Cursor, Windsurf, Zed, OpenCode, Antigravity, Codex, etc.), previews diffs, creates backups, then applies on confirmation
+- Runs `ruler apply --local-only --no-gitignore --agents cursor,claude` (project-scoped; `.gitignore` policy is **not** owned by Ruler — use `prime_workspace` for the BRAINDRAIN block)
 - Performs MCP handshake self-test and prints a structured final status summary + next steps
 
 ### Manual setup (if you prefer)
@@ -150,7 +152,7 @@ Replace `/path/to/braindrain` with the absolute path to your clone. `install.sh`
 
 ### Cursor
 
-`.cursor/mcp.json` or via **Settings › Features › MCP**:
+`.cursor/mcp.json` (project) or **`~/.cursor/mcp.json`** (global) via **Settings › Features › MCP**:
 
 ```json
 {
@@ -158,11 +160,16 @@ Replace `/path/to/braindrain` with the absolute path to your clone. `install.sh`
     "braindrain": {
       "command": "/path/to/braindrain/config/braindrain",
       "args": [],
-      "env": {}
+      "env": {},
+      "serverName": "braindrain"
     }
   }
 }
 ```
+
+If the MCP log shows **`[MCP Allowlist] No serverName provided for adapter`**, either add **`"serverName": "braindrain"`** on that server object in **`~/.cursor/mcp.json`**, or run **`prime_workspace(..., patch_user_cursor_mcp=true)`** once so braindrain patches the global file. `install.sh` / `configure_mcp.py` and project-level `prime_workspace` set this for generated configs; UI-created entries may omit it.
+
+**Large `prime_workspace` results:** the MCP tool defaults to **`compact_mcp_response=true`** (smaller JSON) to avoid **ClosedResourceError** / connection closed while returning the tool result. Set **`compact_mcp_response=false`** only if you need the full `templates.deployed` map and untruncated Ruler logs.
 
 #### Multi-agent loop (Cursor)
 This repo includes a 4-tier multi-agent system under `.cursor/`. Run:
