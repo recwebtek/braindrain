@@ -22,6 +22,9 @@ from braindrain.output_router import build_routed_output, should_route
 from braindrain.telemetry import telemetry_from_config
 from braindrain.tool_registry import ToolRegistry
 from braindrain.workflow_engine import WorkflowEngine
+from braindrain.workspace_primer import (
+    initialize_project_memory as _initialize_project_memory,
+)
 from braindrain.workspace_primer import prime as _prime_workspace
 
 mcp = FastMCP("braindrain")
@@ -127,6 +130,12 @@ async def run_workflow(name: str, args: dict = None) -> dict:
     if args is None:
         args = {}
 
+    if name == "init_project_memory":
+        return init_project_memory(
+            path=args.get("path", "."),
+            dry_run=bool(args.get("dry_run", False)),
+        )
+
     workflow = config.get_workflow(name)
     if not workflow:
         return {
@@ -160,6 +169,25 @@ async def plan_workflow(name: str, args: dict = None) -> dict:
     """
     if args is None:
         args = {}
+
+    if name == "init_project_memory":
+        return {
+            "workflow": name,
+            "status": "plan_ready",
+            "plan": {
+                "workflow": name,
+                "token_budget": 500,
+                "steps": ["braindrain.init_project_memory"],
+                "args": {
+                    "path": args.get("path", "."),
+                    "dry_run": bool(args.get("dry_run", False)),
+                },
+            },
+            "notes": [
+                "Idempotent memory bootstrap.",
+                "Creates .devdocs/AGENT_MEMORY.md and .cursor/hooks/state/continual-learning-index.json when missing.",
+            ],
+        }
 
     workflow = config.get_workflow(name)
     if not workflow:
@@ -426,6 +454,7 @@ async def prime_workspace(
     path: str = ".",
     agents: list[str] | None = None,
     dry_run: bool = False,
+    sync_templates: bool = False,
 ) -> dict:
     """
     Prime a project/workspace for AI agent use. Call this once when starting
@@ -433,7 +462,7 @@ async def prime_workspace(
 
     Deploys braindrain Ruler templates into <path>/.ruler/ and runs
     `ruler apply` to distribute agent rule files and project-local MCP
-    configs to all supported agents.
+    configs to all supported agents, then initializes project memory artifacts.
 
     Supported agents include: cursor, windsurf, claude, kiro, zed, codex,
     amp, goose, warp, roo, cline, continue, opencode, gemini, copilot, aider.
@@ -442,28 +471,88 @@ async def prime_workspace(
         path:    Target project root. Default: current working directory.
         agents:  Specific agents to target. Default: all detected/enabled agents.
         dry_run: Preview changes without writing files.
+        sync_templates: If True, update existing .ruler template files with backups.
 
     After priming:
     - Agents that support project-local MCP configs will have braindrain wired.
     - All agent rule files will reference the braindrain protocol.
+    - Project memory files are initialized for continual-learning workflows.
     - Call get_env_context() to populate the live env block in AGENTS.md.
     """
     import asyncio
     try:
-        result = await asyncio.to_thread(_prime_workspace, path, agents, dry_run)
+        result = await asyncio.to_thread(
+            _prime_workspace,
+            path,
+            agents,
+            dry_run,
+            sync_templates,
+        )
         if not result.get("ok"):
             telemetry.log_error(f"prime_workspace failed: {result.get('error') or result.get('ruler', {}).get('stderr')}", context={"path": path, "agents": agents, "dry_run": dry_run})
         
         telemetry.record(
             tool_name="prime_workspace",
             raw_text=path,
-            actual_text=str(result.get("templates", {}).get("new_files", 0)) + " files written",
+            actual_text=json.dumps(
+                {
+                    "new_files": result.get("templates", {}).get("new_files", 0),
+                    "updated_files": result.get("templates", {}).get("updated_files", 0),
+                },
+                ensure_ascii=False,
+            ),
             module="tool_gate",
-            meta={"target": path, "dry_run": dry_run, "agents": agents},
+            meta={
+                "target": path,
+                "dry_run": dry_run,
+                "sync_templates": sync_templates,
+                "agents": agents,
+            },
         )
         return result
     except Exception as e:
-        telemetry.log_error(f"prime_workspace exception: {e}", context={"path": path, "agents": agents, "dry_run": dry_run})
+        telemetry.log_error(
+            f"prime_workspace exception: {e}",
+            context={
+                "path": path,
+                "agents": agents,
+                "dry_run": dry_run,
+                "sync_templates": sync_templates,
+            },
+        )
+        return {"ok": False, "error": str(e)}
+
+
+@mcp.tool()
+def init_project_memory(path: str = ".", dry_run: bool = False) -> dict:
+    """
+    Initialize project memory artifacts used by continual-learning workflows.
+
+    Creates (if missing):
+    - .devdocs/AGENT_MEMORY.md
+    - .cursor/hooks/state/continual-learning-index.json
+
+    This tool is idempotent and safe to re-run.
+    """
+    try:
+        target = Path(path).expanduser().resolve()
+        if not target.exists():
+            return {"ok": False, "error": f"Path does not exist: {target}"}
+
+        result = _initialize_project_memory(target, dry_run=dry_run)
+        telemetry.record(
+            tool_name="init_project_memory",
+            raw_text=path,
+            actual_text=json.dumps(result, ensure_ascii=False),
+            module="tool_gate",
+            meta={"target": str(target), "dry_run": dry_run},
+        )
+        return result
+    except Exception as e:
+        telemetry.log_error(
+            f"init_project_memory exception: {e}",
+            context={"path": path, "dry_run": dry_run},
+        )
         return {"ok": False, "error": str(e)}
 
 

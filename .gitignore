@@ -104,3 +104,17 @@ CRUSH.md
 
 # Tests are dev-only (not needed on consumer installs)
 tests/
+
+
+# START Ruler Generated Files
+/.clinerules
+/.clinerules.bak
+/.cursor/mcp.json
+/.cursor/mcp.json.bak
+/.trae/rules/project_rules.md
+/.trae/rules/project_rules.md.bak
+/.windsurf/mcp_config.json
+/.windsurf/mcp_config.json.bak
+/AGENTS.md
+/AGENTS.md.bak
+# END Ruler Generated Files
