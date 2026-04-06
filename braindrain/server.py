@@ -22,6 +22,10 @@ from braindrain.output_router import build_routed_output, should_route
 from braindrain.telemetry import telemetry_from_config
 from braindrain.tool_registry import ToolRegistry
 from braindrain.workflow_engine import WorkflowEngine
+from braindrain.workspace_primer import (
+    initialize_project_memory as _initialize_project_memory,
+)
+from braindrain.workspace_primer import compact_prime_result_for_mcp
 from braindrain.workspace_primer import prime as _prime_workspace
 
 mcp = FastMCP("braindrain")
@@ -127,6 +131,12 @@ async def run_workflow(name: str, args: dict = None) -> dict:
     if args is None:
         args = {}
 
+    if name == "init_project_memory":
+        return init_project_memory(
+            path=args.get("path", "."),
+            dry_run=bool(args.get("dry_run", False)),
+        )
+
     workflow = config.get_workflow(name)
     if not workflow:
         return {
@@ -160,6 +170,26 @@ async def plan_workflow(name: str, args: dict = None) -> dict:
     """
     if args is None:
         args = {}
+
+    if name == "init_project_memory":
+        return {
+            "workflow": name,
+            "status": "plan_ready",
+            "plan": {
+                "workflow": name,
+                "token_budget": 500,
+                "steps": ["braindrain.init_project_memory"],
+                "args": {
+                    "path": args.get("path", "."),
+                    "dry_run": bool(args.get("dry_run", False)),
+                },
+            },
+            "notes": [
+                "Idempotent memory bootstrap.",
+                "Creates .braindrain/AGENT_MEMORY.md and .cursor/hooks/state/continual-learning-index.json when missing.",
+                "Migrates .devdocs/AGENT_MEMORY.md to .braindrain/ if the legacy path exists.",
+            ],
+        }
 
     workflow = config.get_workflow(name)
     if not workflow:
@@ -369,7 +399,7 @@ async def ping() -> dict:
     return {
         "status": "ok",
         "service": "braindrain",
-        "version": config.get("version", "1.0.1"),
+        "version": config.get("version", "1.0.2"),
         "timestamp": datetime.now().isoformat(),
     }
 
@@ -426,44 +456,134 @@ async def prime_workspace(
     path: str = ".",
     agents: list[str] | None = None,
     dry_run: bool = False,
+    sync_templates: bool = False,
+    all_agents: bool = False,
+    local_only: bool = True,
+    patch_user_cursor_mcp: bool = False,
+    compact_mcp_response: bool = True,
 ) -> dict:
     """
-    Prime a project/workspace for AI agent use. Call this once when starting
-    work in a new repo.
+    Prime a project/workspace for AI agent use.
 
-    Deploys braindrain Ruler templates into <path>/.ruler/ and runs
-    `ruler apply` to distribute agent rule files and project-local MCP
-    configs to all supported agents.
+    First run: detects current IDE/CLI, deploys minimal Ruler templates, writes
+    .braindrain/primed.json, initializes project memory under .braindrain/.
+    Subsequent runs: updates templates (if sync_templates=True) and re-applies.
 
-    Supported agents include: cursor, windsurf, claude, kiro, zed, codex,
-    amp, goose, warp, roo, cline, continue, opencode, gemini, copilot, aider.
+    Agent resolution order:
+      1. agents list (explicit override).
+      2. all_agents=True → full template, no --agents filter (all local entries).
+      3. Default: auto-detect from env vars / dotfolders → single best-fit agent.
 
     Args:
-        path:    Target project root. Default: current working directory.
-        agents:  Specific agents to target. Default: all detected/enabled agents.
-        dry_run: Preview changes without writing files.
+        path:           Target project root. Default: current working directory.
+        agents:         Explicit agent ids (e.g. ["cursor", "claude"]).
+        dry_run:        Preview changes without writing files.
+        sync_templates: Update existing .ruler files with timestamped backups.
+        all_agents:     Deploy full template and apply all configured agents.
+        local_only:     Pass --local-only to ruler apply (default True).
+        patch_user_cursor_mcp: If True, also patch ~/.cursor/mcp.json with
+            serverName entries (fixes Cursor allowlist warning for user-braindrain).
+        compact_mcp_response: If True (default), return a smaller dict so the MCP
+            client is less likely to hit ClosedResourceError on large tool results.
 
     After priming:
     - Agents that support project-local MCP configs will have braindrain wired.
-    - All agent rule files will reference the braindrain protocol.
-    - Call get_env_context() to populate the live env block in AGENTS.md.
+    - Agent rule files will reference the braindrain protocol.
+    - Project memory is initialized under .braindrain/ (gitignored).
+    - Call get_env_context() to populate the live env block.
     """
     import asyncio
     try:
-        result = await asyncio.to_thread(_prime_workspace, path, agents, dry_run)
+        result = await asyncio.to_thread(
+            _prime_workspace,
+            path,
+            agents,
+            dry_run,
+            sync_templates,
+            all_agents,
+            local_only,
+            patch_user_cursor_mcp,
+        )
+        if compact_mcp_response and isinstance(result, dict):
+            result = compact_prime_result_for_mcp(result)
         if not result.get("ok"):
-            telemetry.log_error(f"prime_workspace failed: {result.get('error') or result.get('ruler', {}).get('stderr')}", context={"path": path, "agents": agents, "dry_run": dry_run})
-        
+            telemetry.log_error(
+                f"prime_workspace failed: {result.get('error') or result.get('ruler', {}).get('stderr')}",
+                context={"path": path, "agents": agents, "dry_run": dry_run},
+            )
+
         telemetry.record(
             tool_name="prime_workspace",
             raw_text=path,
-            actual_text=str(result.get("templates", {}).get("new_files", 0)) + " files written",
+            actual_text=json.dumps(
+                {
+                    "new_files": result.get("templates", {}).get("new_files", 0),
+                    "updated_files": result.get("templates", {}).get("updated_files", 0),
+                },
+                ensure_ascii=False,
+            ),
             module="tool_gate",
-            meta={"target": path, "dry_run": dry_run, "agents": agents},
+            meta={
+                "target": path,
+                "dry_run": dry_run,
+                "sync_templates": sync_templates,
+                "all_agents": all_agents,
+                "local_only": local_only,
+                "resolved_agents": result.get("resolved_agents"),
+                "detect_method": result.get("detect_method"),
+                "cursor_rules": result.get("cursor_rules"),
+                "gitignore_protocol": result.get("gitignore_protocol"),
+                "cursor_mcp_json": result.get("cursor_mcp_json"),
+                "patch_user_cursor_mcp": patch_user_cursor_mcp,
+                "compact_mcp_response": compact_mcp_response,
+            },
         )
         return result
     except Exception as e:
-        telemetry.log_error(f"prime_workspace exception: {e}", context={"path": path, "agents": agents, "dry_run": dry_run})
+        telemetry.log_error(
+            f"prime_workspace exception: {e}",
+            context={
+                "path": path,
+                "agents": agents,
+                "dry_run": dry_run,
+                "sync_templates": sync_templates,
+                "all_agents": all_agents,
+                "patch_user_cursor_mcp": patch_user_cursor_mcp,
+            },
+        )
+        return {"ok": False, "error": str(e)}
+
+
+@mcp.tool()
+def init_project_memory(path: str = ".", dry_run: bool = False) -> dict:
+    """
+    Initialize project memory artifacts used by continual-learning workflows.
+
+    Creates (if missing):
+    - .braindrain/AGENT_MEMORY.md  (migrated from .devdocs/ on first run if present)
+    - .cursor/hooks/state/continual-learning-index.json
+
+    Both paths are gitignored. This tool is idempotent and safe to re-run.
+    """
+    try:
+        target = Path(path).expanduser().resolve()
+        if not target.exists():
+            return {"ok": False, "error": f"Path does not exist: {target}"}
+
+        result = _initialize_project_memory(target, dry_run=dry_run)
+        telemetry.record(
+            tool_name="init_project_memory",
+            raw_text=path,
+            actual_text=json.dumps(result, ensure_ascii=False),
+            module="tool_gate",
+            meta={"target": str(target), "dry_run": dry_run},
+        )
+        return result
+    except Exception as e:
+        telemetry.log_error(
+            f"init_project_memory exception: {e}",
+            context={"path": path, "dry_run": dry_run},
+        )
         return {"ok": False, "error": str(e)}
 
 
@@ -474,9 +594,10 @@ def main():
     transport = sys.argv[1] if len(sys.argv) > 1 else "stdio"
 
     if transport == "stdio":
-        mcp.run(transport="stdio")
+        # No banner: FastMCP prints ASCII + update notice to stderr; Cursor MCP logs stderr as [error].
+        mcp.run(transport="stdio", show_banner=False)
     else:
-        mcp.run(transport="sse", port=int(os.environ.get("PORT", "8000")))
+        mcp.run(transport="sse", port=int(os.environ.get("PORT", "8000")), show_banner=False)
 
 
 if __name__ == "__main__":

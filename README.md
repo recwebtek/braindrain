@@ -1,6 +1,6 @@
 # braindrain
 
-**Version:** V1.0.1  
+**Version:** V1.0.2  
 **Last Updated:** 2026-03-23
 
 An MCP server that keeps AI agents lean. It stops context windows bloating with redundant tool definitions, large raw outputs, and repeated environment discovery — and gives agents the right information at the right time instead.
@@ -59,9 +59,12 @@ OS environment data is probed once, cached locally, and served instantly on ever
 | Tool | When to use |
 |---|---|
 | `list_workflows()` | See what multi-step workflows are available. |
-| `prime_workspace(path, agents, dry_run)` | Deploy braindrain rules and MCP configs into a project for all supported agents. Call once per new repo. |
+| `prime_workspace(path, agents, dry_run, sync_templates, all_agents, local_only)` | Prime a project for AI agent use. **First run**: auto-detects current IDE/CLI (`CURSOR_*` → `TERM_PROGRAM` → dotfolders → fallback `cursor`); response includes **`detect_method`**. Always rewrites **minimal `.ruler/ruler.toml`** when targeting specific agents (even if `.ruler/` already existed) so Ruler’s `.gitignore` and config match the agent list. After apply, syncs **`.cursor/rules/braindrain.mdc`** and **`project-rules.mdc`** (managed fenced region) from `.ruler/RULES.md` — see **`cursor_rules`** in the result. Set `all_agents=True` for the full template. Set `sync_templates=True` to force-refresh all `.ruler/*` sources. |
+| `init_project_memory(path, dry_run)` | Initialize project memory artifacts only (`.braindrain/AGENT_MEMORY.md` and `.cursor/hooks/state/continual-learning-index.json`). Migrates legacy `.devdocs/` on first call. Idempotent. |
 | `plan_workflow(name, args)` | Generate a markdown execution plan and review it before committing to a run. Use before any destructive or long-running workflow. |
 | `run_workflow(name, args)` | Execute a workflow. Intermediate output is routed through the sandbox — only the final summary returns to the agent. |
+
+`list_workflows()` now includes `init_project_memory`, so agents can discover memory bootstrap as a first-class onboarding workflow.
 
 ### Telemetry
 
@@ -95,7 +98,9 @@ cd braindrain
 - Installs full dependencies with visible progress, retries, and install logging to `.gstack/install-logs/`
 - On Linux CPU-only machines, prefers PyTorch CPU wheels to avoid accidental CUDA downloads
 - Runs fresh `get_env_context()` probe and regenerates `AGENTS.md`
+- Creates `.braindrain/` (gitignored, machine-local — never committed)
 - Runs an interactive MCP target checklist (Cursor, Windsurf, Zed, OpenCode, Antigravity, Codex, etc.), previews diffs, creates backups, then applies on confirmation
+- Runs `ruler apply --local-only --no-gitignore --agents cursor,claude` (project-scoped; `.gitignore` policy is **not** owned by Ruler — use `prime_workspace` for the BRAINDRAIN block)
 - Performs MCP handshake self-test and prints a structured final status summary + next steps
 
 ### Manual setup (if you prefer)
@@ -147,7 +152,7 @@ Replace `/path/to/braindrain` with the absolute path to your clone. `install.sh`
 
 ### Cursor
 
-`.cursor/mcp.json` or via **Settings › Features › MCP**:
+`.cursor/mcp.json` (project) or **`~/.cursor/mcp.json`** (global) via **Settings › Features › MCP**:
 
 ```json
 {
@@ -155,11 +160,22 @@ Replace `/path/to/braindrain` with the absolute path to your clone. `install.sh`
     "braindrain": {
       "command": "/path/to/braindrain/config/braindrain",
       "args": [],
-      "env": {}
+      "env": {},
+      "serverName": "braindrain"
     }
   }
 }
 ```
+
+If the MCP log shows **`[MCP Allowlist] No serverName provided for adapter`**, either add **`"serverName": "braindrain"`** on that server object in **`~/.cursor/mcp.json`**, or run **`prime_workspace(..., patch_user_cursor_mcp=true)`** once so braindrain patches the global file. `install.sh` / `configure_mcp.py` and project-level `prime_workspace` set this for generated configs; UI-created entries may omit it.
+
+**Large `prime_workspace` results:** the MCP tool defaults to **`compact_mcp_response=true`** (smaller JSON) to avoid **ClosedResourceError** / connection closed while returning the tool result. Set **`compact_mcp_response=false`** only if you need the full `templates.deployed` map and untruncated Ruler logs.
+
+#### Multi-agent loop (Cursor)
+This repo includes a 4-tier multi-agent system under `.cursor/`. Run:
+- `/intake` (once per project) to generate `project-context.json`
+- `/architect` to generate `PRD.md`, `TASK-GRAPH.md`, and `COORDINATOR-BRIEF.md`
+- `/coordinate` to execute stages (Tier 3 `coordinator` uses `composer-2`)
 
 ### Windsurf
 
@@ -309,6 +325,18 @@ braindrain/
 ├── requirements.txt
 └── pyproject.toml
 ```
+
+### Rule generation (AGENTS.md vs Ruler)
+
+- **`AGENTS.md`**: generated locally by `./install.sh` from `AGENTS.md.template` (and includes a machine-specific env block between `<!-- ENV_CONTEXT_START -->` / `<!-- ENV_CONTEXT_END -->`).
+- **Ruler-generated dotfiles**: `./install.sh` (and the `prime_workspace()` tool) deploys `config/templates/ruler/` → `.ruler/` and runs `npx @intellectronica/ruler apply` to generate project-local agent rule files like `.cursor/rules/braindrain.mdc`, `.mcp.json`, `CLAUDE.md`, `.agent/rules/ruler.md`, etc.
+  - Source-of-truth for those generated rule files is `config/templates/ruler/RULES.md` (and `.ruler/ruler.toml`).
+  - **Important**: files like `CLAUDE.md` are **generated artifacts** (gitignored) and should be treated as **disposable**. Edit the templates instead, then re-run Ruler.
+  - If a project already has older `.ruler/*` files, call `prime_workspace(..., sync_templates=true)` to refresh those templates safely and propagate new guidance without manual cleanup.
+- **Project memory artifacts**: initialized by `prime_workspace()` (or `init_project_memory()`) and kept separate from generated protocol files:
+  - `.devdocs/AGENT_MEMORY.md` for high-signal durable memory
+  - `.cursor/hooks/state/continual-learning-index.json` for incremental transcript indexing
+  - `AGENTS.md` remains generator-owned protocol text and should not be used as memory storage.
 
 ---
 
