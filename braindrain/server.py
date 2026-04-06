@@ -399,7 +399,7 @@ async def ping() -> dict:
     return {
         "status": "ok",
         "service": "braindrain",
-        "version": config.get("version", "1.0.1"),
+        "version": config.get("version", "1.0.2"),
         "timestamp": datetime.now().isoformat(),
     }
 

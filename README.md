@@ -1,6 +1,6 @@
 # braindrain
 
-**Version:** V1.0.1  
+**Version:** V1.0.2  
 **Last Updated:** 2026-03-23
 
 An MCP server that keeps AI agents lean. It stops context windows bloating with redundant tool definitions, large raw outputs, and repeated environment discovery — and gives agents the right information at the right time instead.
