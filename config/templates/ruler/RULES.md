@@ -29,6 +29,46 @@ Use this sequence to avoid wasting context tokens on environment probing and lar
 3. **Don’t paste big blobs into chat**: `route_output()` for large text; retrieve later with `search_index()`.
 4. **Checkpoint**: `get_token_dashboard()` at milestones to track savings.
 
+### Token Checkpoint Protocol (required)
+
+Use this protocol when capturing token observability data:
+
+| Trigger | Required | Tooling | Notes |
+|---|---|---|---|
+| Task start | Yes | `get_token_dashboard()` | Baseline snapshot before meaningful work begins |
+| Before high-cost operation | Yes | `get_token_dashboard()` | High-cost = broad searches, large-output reads, subagent batches, long-running commands |
+| After high-cost operation | Yes | `get_token_dashboard()` | Capture immediate delta and annotate operation type |
+| Milestone/phase close | Yes | `get_token_stats()` | Full attribution and per-tool breakdown |
+| Task end | Yes | `get_token_dashboard()` + `get_token_stats()` | Final summary plus detailed closing stats |
+| Trivial/no-op action | Optional skip | None | Skip only when no meaningful token movement is expected |
+
+### Token Metrics Schema (versioned)
+
+When persisting records to `.braindrain/token-metrics.jsonl`, each JSONL row must include:
+
+- `schema_version` (string, current: `1.0`)
+- `timestamp` (ISO-8601 UTC)
+- `task` (short task identifier)
+- `phase` (`start|pre_high_cost|post_high_cost|milestone_close|end`)
+- `tool` (`get_token_dashboard|get_token_stats`)
+- `totals` object with:
+  - `estimated_raw_tokens` (number)
+  - `actual_context_tokens` (number)
+  - `saved_tokens` (number)
+- `context_tags` (string array, e.g. `["search","docs","subagent"]`)
+- `note` (short human-readable summary)
+
+Example JSONL row:
+`{"schema_version":"1.0","timestamp":"2026-04-06T12:00:00Z","task":"token-stats-rule-system","phase":"post_high_cost","tool":"get_token_dashboard","totals":{"estimated_raw_tokens":6400,"actual_context_tokens":2100,"saved_tokens":4300},"context_tags":["docs","search"],"note":"Captured after cross-file wording audit."}`
+
+### Token Protocol Validation Gates
+
+- PASS only if all policy surfaces use the same cadence semantics.
+- PASS only if `get_token_dashboard()` is documented as quick snapshot and `get_token_stats()` as detailed attribution.
+- PASS only if large-output handling is documented as `route_output() -> search_index()`.
+- FAIL if `.braindrain/token-metrics.jsonl` is presented as a replacement for `~/.braindrain/costs/session.jsonl`.
+- FAIL if `schema_version` is missing from JSONL checkpoint documentation.
+
 ### BRAINDRAIN hot tools (cheat sheet)
 
 | Tool | Purpose |
@@ -54,6 +94,8 @@ Use this sequence to avoid wasting context tokens on environment probing and lar
 - `.braindrain/OPS.md`
 - `.braindrain/AGENT_MEMORY.md`
 - `README.md`
+- `.devdocs/SESSION_PROGRESS.md` (if repo-local collaboration logs are in use)
+- `.braindrain/token-metrics.jsonl` (optional machine-local checkpoint stream)
 
 ### Ownership boundaries (important)
 
@@ -61,6 +103,7 @@ Use this sequence to avoid wasting context tokens on environment probing and lar
 - High-signal project memory belongs in `.braindrain/AGENT_MEMORY.md` (gitignored, never committed).
 - Use `prime_workspace()` for full project onboarding and `init_project_memory()` for memory-only initialization.
 - `.braindrain/` is **never** committed — it is machine-local and gitignored.
+- Token telemetry source-of-truth remains machine-local (`~/.braindrain/costs/session.jsonl`); `.braindrain/token-metrics.jsonl` is an optional machine-local checkpoint artifact.
 
 ### Git / secrets (do not leak local state)
 

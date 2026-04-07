@@ -73,6 +73,52 @@ OS environment data is probed once, cached locally, and served instantly on ever
 | `get_token_dashboard()` | Quick snapshot of estimated tokens saved vs raw in this session. |
 | `get_token_stats()` | Full breakdown: per-tool savings, cache hits, cost avoided. |
 
+### Token Checkpoint Protocol
+
+Use this cadence for consistent token observability:
+
+| Trigger | Required | Call |
+|---|---|---|
+| Task start | Yes | `get_token_dashboard()` |
+| Before high-cost operation | Yes | `get_token_dashboard()` |
+| After high-cost operation | Yes | `get_token_dashboard()` |
+| Milestone or phase close | Yes | `get_token_stats()` |
+| Task end | Yes | `get_token_dashboard()` then `get_token_stats()` |
+| Trivial/no-op action | Optional skip | none |
+
+High-cost operations include broad searches, large-output reads, subagent batches, and long-running commands.
+
+For large outputs, always use:
+`route_output() -> search_index()`
+
+Bad vs good large-output handling:
+- Bad: paste a long tool dump directly into chat and then ask for analysis.
+- Good: call `route_output()` on the dump, then query targeted chunks with `search_index()`.
+
+### Token Metrics Contract (schema `1.0`)
+
+Use `.braindrain/token-metrics.jsonl` as an optional machine-local checkpoint stream for checkpoint records. Required fields per line:
+
+- `schema_version` (`1.0`)
+- `timestamp` (ISO-8601 UTC)
+- `task`
+- `phase` (`start|pre_high_cost|post_high_cost|milestone_close|end`)
+- `tool` (`get_token_dashboard|get_token_stats`)
+- `totals.estimated_raw_tokens`
+- `totals.actual_context_tokens`
+- `totals.saved_tokens`
+- `context_tags` (string array)
+- `note`
+
+Example line:
+`{"schema_version":"1.0","timestamp":"2026-04-06T12:00:00Z","task":"token-stats-rule-system","phase":"post_high_cost","tool":"get_token_dashboard","totals":{"estimated_raw_tokens":6400,"actual_context_tokens":2100,"saved_tokens":4300},"context_tags":["docs","search"],"note":"Captured after cross-file wording audit."}`
+
+Validation gates:
+- PASS only if checkpoint cadence is consistent across `RULES.md`, `AGENTS.md.template`, and `.cursor/rules/agent-system.mdc`.
+- PASS only if `route_output() -> search_index()` appears as the large-output path.
+- FAIL if `schema_version` is omitted in JSONL examples.
+- FAIL if `.braindrain/token-metrics.jsonl` is treated as runtime telemetry source-of-truth.
+
 ### Utility
 
 | Tool | When to use |
@@ -337,6 +383,17 @@ braindrain/
   - `.devdocs/AGENT_MEMORY.md` for high-signal durable memory
   - `.cursor/hooks/state/continual-learning-index.json` for incremental transcript indexing
   - `AGENTS.md` remains generator-owned protocol text and should not be used as memory storage.
+
+### Docs ownership map (token observability)
+
+| File/path | Ownership | Purpose |
+|---|---|---|
+| `config/templates/ruler/RULES.md` | Source-of-truth template | Canonical protocol language and trigger matrix |
+| `AGENTS.md.template` | Source template | Generated `AGENTS.md` content for protocol distribution |
+| `AGENTS.md` | Generated artifact | Do not edit directly |
+| `.cursor/rules/agent-system.mdc` | Cursor local enforcement | Immediate IDE-specific guardrails |
+| `~/.braindrain/costs/session.jsonl` | Machine-local telemetry | Runtime token telemetry source-of-truth |
+| `.braindrain/token-metrics.jsonl` | Optional machine-local artifact | Local checkpoint stream using schema `1.0` |
 
 ---
 
