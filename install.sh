@@ -16,7 +16,7 @@ header(){ echo -e "\n${BOLD}$*${RESET}"; }
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV="$REPO/.venv"
-LOG_DIR="$REPO/.gstack/install-logs"
+LOG_DIR="$REPO/.braindrain/install-logs"
 LOG_FILE="$LOG_DIR/install-$(date +%Y%m%d-%H%M%S).log"
 mkdir -p "$LOG_DIR"
 touch "$LOG_FILE"

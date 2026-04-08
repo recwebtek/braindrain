@@ -1,7 +1,7 @@
 # braindrain
 
 **Version:** V1.0.2  
-**Last Updated:** 2026-03-23
+**Last Updated:** 2026-04-07
 
 An MCP server that keeps AI agents lean. It stops context windows bloating with redundant tool definitions, large raw outputs, and repeated environment discovery — and gives agents the right information at the right time instead.
 
@@ -73,6 +73,52 @@ OS environment data is probed once, cached locally, and served instantly on ever
 | `get_token_dashboard()` | Quick snapshot of estimated tokens saved vs raw in this session. |
 | `get_token_stats()` | Full breakdown: per-tool savings, cache hits, cost avoided. |
 
+### Token Checkpoint Protocol
+
+Use this cadence for consistent token observability:
+
+| Trigger | Required | Call |
+|---|---|---|
+| Task start | Yes | `get_token_dashboard()` |
+| Before high-cost operation | Yes | `get_token_dashboard()` |
+| After high-cost operation | Yes | `get_token_dashboard()` |
+| Milestone or phase close | Yes | `get_token_stats()` |
+| Task end | Yes | `get_token_dashboard()` then `get_token_stats()` |
+| Trivial/no-op action | Optional skip | none |
+
+High-cost operations include broad searches, large-output reads, subagent batches, and long-running commands.
+
+For large outputs, always use:
+`route_output() -> search_index()`
+
+Bad vs good large-output handling:
+- Bad: paste a long tool dump directly into chat and then ask for analysis.
+- Good: call `route_output()` on the dump, then query targeted chunks with `search_index()`.
+
+### Token Metrics Contract (schema `1.0`)
+
+Use `.braindrain/token-metrics.jsonl` as an optional machine-local checkpoint stream for checkpoint records. Required fields per line:
+
+- `schema_version` (`1.0`)
+- `timestamp` (ISO-8601 UTC)
+- `task`
+- `phase` (`start|pre_high_cost|post_high_cost|milestone_close|end`)
+- `tool` (`get_token_dashboard|get_token_stats`)
+- `totals.estimated_raw_tokens`
+- `totals.actual_context_tokens`
+- `totals.saved_tokens`
+- `context_tags` (string array)
+- `note`
+
+Example line:
+`{"schema_version":"1.0","timestamp":"2026-04-06T12:00:00Z","task":"token-stats-rule-system","phase":"post_high_cost","tool":"get_token_dashboard","totals":{"estimated_raw_tokens":6400,"actual_context_tokens":2100,"saved_tokens":4300},"context_tags":["docs","search"],"note":"Captured after cross-file wording audit."}`
+
+Validation gates:
+- PASS only if checkpoint cadence is consistent across `RULES.md`, `AGENTS.md.template`, and `.cursor/rules/agent-system.mdc`.
+- PASS only if `route_output() -> search_index()` appears as the large-output path.
+- FAIL if `schema_version` is omitted in JSONL examples.
+- FAIL if `.braindrain/token-metrics.jsonl` is treated as runtime telemetry source-of-truth.
+
 ### Utility
 
 | Tool | When to use |
@@ -95,7 +141,7 @@ cd braindrain
 
 - Validates Python **3.11-3.14** (fails fast on unsupported runtimes like 3.15+)
 - Creates `.env.dev` early (before dependency steps) so env setup never gets skipped
-- Installs full dependencies with visible progress, retries, and install logging to `.gstack/install-logs/`
+- Installs full dependencies with visible progress, retries, and install logging to `.braindrain/install-logs/`
 - On Linux CPU-only machines, prefers PyTorch CPU wheels to avoid accidental CUDA downloads
 - Runs fresh `get_env_context()` probe and regenerates `AGENTS.md`
 - Creates `.braindrain/` (gitignored, machine-local — never committed)
@@ -118,7 +164,7 @@ PYTHON=python3.14 ./install.sh   # force interpreter
 SKIP_TEST=1 ./install.sh         # skip MCP initialize handshake
 ```
 
-Install logs are written to `.gstack/install-logs/install-<timestamp>.log`.
+Install logs are written to `.braindrain/install-logs/install-<timestamp>.log`.
 
 ### Requirements
 
@@ -140,7 +186,7 @@ cd braindrain
 ./install.sh
 ```
 
-is expected to succeed; if it doesn’t, capture the full log from `.gstack/install-logs/` and append a new section to `QA-Logs/bdqadebug.md` (Lenovo/Arch debug log) before iterating.
+is expected to succeed; if it doesn’t, capture the full log from `.braindrain/install-logs/` and append a new section to `QA-Logs/bdqadebug.md` (Lenovo/Arch debug log) before iterating.
 
 ---
 
@@ -334,9 +380,43 @@ braindrain/
   - **Important**: files like `CLAUDE.md` are **generated artifacts** (gitignored) and should be treated as **disposable**. Edit the templates instead, then re-run Ruler.
   - If a project already has older `.ruler/*` files, call `prime_workspace(..., sync_templates=true)` to refresh those templates safely and propagate new guidance without manual cleanup.
 - **Project memory artifacts**: initialized by `prime_workspace()` (or `init_project_memory()`) and kept separate from generated protocol files:
-  - `.devdocs/AGENT_MEMORY.md` for high-signal durable memory
+  - `.braindrain/AGENT_MEMORY.md` for high-signal durable memory (legacy `.devdocs/AGENT_MEMORY.md` may be migrated on first run)
   - `.cursor/hooks/state/continual-learning-index.json` for incremental transcript indexing
   - `AGENTS.md` remains generator-owned protocol text and should not be used as memory storage.
+
+### Docs ownership map (token observability)
+
+| File/path | Ownership | Purpose |
+|---|---|---|
+| `config/templates/ruler/RULES.md` | Source-of-truth template | Canonical protocol language and trigger matrix |
+| `AGENTS.md.template` | Source template | Generated `AGENTS.md` content for protocol distribution |
+| `AGENTS.md` | Generated artifact | Do not edit directly |
+| `.cursor/rules/agent-system.mdc` | Cursor local enforcement | Immediate IDE-specific guardrails |
+| `~/.braindrain/costs/session.jsonl` | Machine-local telemetry | Runtime token telemetry source-of-truth |
+| `.braindrain/token-metrics.jsonl` | Optional machine-local artifact | Local checkpoint stream using schema `1.0` |
+
+---
+
+## Memory state and roadmap TODOs
+
+Current implemented memory behavior:
+
+- Durable project memory path is `.braindrain/AGENT_MEMORY.md` (machine-local, gitignored).
+- Incremental transcript index path is `.cursor/hooks/state/continual-learning-index.json`.
+- `init_project_memory(path, dry_run)` bootstraps memory artifacts and is idempotent.
+- `prime_workspace()` includes memory initialization in onboarding.
+
+L1/L2/L3 roadmap (current-state only, not yet implemented semantics):
+
+- **L1 (project memory hardening)**: finalize retention/cleanup guidelines for project-local memory and transcript index updates.
+- **L2 (tiered memory model)**: define explicit layer semantics and migration policy for tiered memory behavior.
+- **L3 (cross-project memory)**: add optional global memory under `~/.braindrain/memory/` with retrieval and governance controls.
+
+Roadmap notes:
+
+- L1/L2/L3 are planning levels, not active runtime tier enforcement yet.
+- Public telemetry source-of-truth remains `~/.braindrain/costs/session.jsonl`.
+- `.braindrain/token-metrics.jsonl` remains an optional checkpoint stream only.
 
 ---
 
