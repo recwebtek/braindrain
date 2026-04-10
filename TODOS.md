@@ -2,6 +2,8 @@
 
 Synced with **v1.0.3** cut. Move items to **Done** when merged; keep bullets concrete.
 
+**Local-only** drafts belong under **`.devdocs/`** (gitignored). This file is what we ship for public tracking.
+
 ## Done (v1.0.3)
 
 - [x] Scriptlib core + MCP tools + `tests/test_scriptlib.py`
@@ -12,7 +14,7 @@ Synced with **v1.0.3** cut. Move items to **Done** when merged; keep bullets con
 ## Open
 
 - [ ] Run full test suite beyond scriptlib when `tests/` ignore rules are expanded or CI is added for the whole tree
-- [ ] Define L1 retention policy for `.braindrain/` and continual-learning index (document in README + here)
+- [ ] Define L1 retention policy for `.braindrain/` and continual-learning index (document in README + this file)
 - [ ] Implement LLM wiki / admin-ops flows per `.cursor/plans/*` and link implementation PRs here
 - [ ] Verify `gh`/SSH remote for `recwebtek/braindrain` in all contributor environments (document host alias if required)
 

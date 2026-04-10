@@ -75,11 +75,5 @@ tests/*
 /.cursor/skills/scriptlib-librarian/*
 !/.cursor/skills/scriptlib-librarian/SKILL.md
 # If your team commits other root dotdirs (e.g. .husky), add: !/.husky/
+# `.devdocs/` is covered by `/.*` above — local-only; never add ! exceptions for it.
 # END BRAINDRAIN GITIGNORE PROTOCOL
-
-# Ship-tracked developer docs (exception to root /.*)
-!/.devdocs/
-/.devdocs/*
-!/.devdocs/README.md
-!/.devdocs/ROADMAP.md
-!/.devdocs/TODOS.md

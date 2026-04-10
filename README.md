@@ -378,7 +378,8 @@ braindrain/
 ├── AGENTS.md.template          # template used to generate AGENTS.md
 ├── VERSION                     # semver for releases (kept in sync with this README)
 ├── CHANGELOG.md                # release history
-├── .devdocs/                   # ship-tracked roadmap and TODOs (see .devdocs/README.md)
+├── ROADMAP.md                  # public product direction (local scratch: `.devdocs/`, gitignored)
+├── TODOS.md                    # public release-aligned checklist (never commit `.devdocs/`)
 ├── install.sh                  # new device setup script
 ├── requirements.txt
 └── pyproject.toml
@@ -417,7 +418,7 @@ braindrain/
 
 ## Memory state and roadmap TODOs
 
-Ship-tracked **roadmap and release TODOs** live in **`.devdocs/`** (`ROADMAP.md`, `TODOS.md`). This README keeps user-facing behavior; `.devdocs/` tracks what we plan to ship next.
+**Roadmap and release TODOs** ship from the repo root as **`ROADMAP.md`** and **`TODOS.md`**. Use **`.devdocs/`** only on your machine for private drafts (that path is gitignored and must not be committed).
 
 Current implemented memory behavior:
 
