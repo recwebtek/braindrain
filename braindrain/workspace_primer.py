@@ -13,6 +13,12 @@ from typing import Optional
 
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "config" / "templates" / "ruler"
+CURSOR_SUBAGENT_TEMPLATES_DIR = (
+    Path(__file__).parent.parent / "config" / "templates" / "cursor-subagents"
+)
+CODEX_SUBAGENT_TEMPLATES_DIR = (
+    Path(__file__).parent.parent / "config" / "templates" / "codex-subagents"
+)
 
 # Canonical project-local docs directory (gitignored; never committed).
 BRAINDRAIN_DIR = ".braindrain"
@@ -282,6 +288,198 @@ def deploy_templates(
             written[name] = {"action": "created", "backup": ""}
 
     return written
+
+
+def _copy_template_tree(
+    template_dir: Path,
+    destination_dir: Path,
+    *,
+    dry_run: bool,
+    sync_subagents: bool,
+) -> dict[str, dict[str, str | bool]]:
+    """Copy template files under template_dir into destination_dir."""
+    result: dict[str, dict[str, str | bool]] = {}
+    if not template_dir.is_dir():
+        return result
+
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    files = sorted(p for p in template_dir.rglob("*") if p.is_file())
+    for src in files:
+        rel = src.relative_to(template_dir)
+        dst = destination_dir / rel
+        key = str(dst)
+        if dry_run:
+            if not dst.exists():
+                result[key] = {"action": "dry_run_create", "backup": ""}
+            elif sync_subagents:
+                result[key] = {"action": "dry_run_update", "backup": ""}
+            else:
+                result[key] = {"action": "dry_run_skip_existing", "backup": ""}
+            continue
+
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if not dst.exists():
+            shutil.copy2(src, dst)
+            result[key] = {"action": "created", "backup": ""}
+            continue
+
+        src_text = src.read_text(encoding="utf-8")
+        dst_text = dst.read_text(encoding="utf-8")
+        if src_text == dst_text:
+            result[key] = {"action": "skipped_identical", "backup": ""}
+            continue
+
+        if not sync_subagents:
+            result[key] = {"action": "skipped_existing", "backup": ""}
+            continue
+
+        backup = dst.with_name(f"{dst.name}.bak.{ts}")
+        shutil.copy2(dst, backup)
+        dst.write_text(src_text, encoding="utf-8")
+        result[key] = {"action": "updated", "backup": str(backup)}
+
+    return result
+
+
+def _build_codex_subagent_block(codex_agent_targets: list[str]) -> str:
+    """Render managed TOML block for codex subagent path hints."""
+    quoted = ", ".join(f'"{p}"' for p in codex_agent_targets)
+    return (
+        "# BEGIN BRAINDRAIN SUBAGENTS\n"
+        "[braindrain_subagents]\n"
+        f"paths = [{quoted}]\n"
+        "# END BRAINDRAIN SUBAGENTS\n"
+    )
+
+
+def ensure_codex_subagent_config(
+    target_dir: Path,
+    *,
+    codex_agent_targets: list[str],
+    dry_run: bool = False,
+    sync_subagents: bool = False,
+) -> dict[str, str | bool]:
+    """
+    Manage project-local .codex/config.toml subagent path hints safely.
+
+    Policy:
+    - sync_subagents=False: do not mutate existing config; create only if missing.
+    - sync_subagents=True: update/append managed block with backup-first writes.
+    """
+    config_path = target_dir / ".codex" / "config.toml"
+    result: dict[str, str | bool] = {
+        "ok": True,
+        "path": str(config_path),
+        "sync_subagents": sync_subagents,
+    }
+    block = _build_codex_subagent_block(codex_agent_targets)
+    begin_marker = "# BEGIN BRAINDRAIN SUBAGENTS"
+    end_marker = "# END BRAINDRAIN SUBAGENTS"
+
+    if dry_run:
+        if not config_path.exists():
+            result["action"] = "dry_run_create"
+            return result
+        if not sync_subagents:
+            result["action"] = "dry_run_skip_existing_no_sync"
+            return result
+        raw = config_path.read_text(encoding="utf-8", errors="ignore")
+        result["action"] = (
+            "dry_run_update_managed_block"
+            if begin_marker in raw and end_marker in raw
+            else "dry_run_append_managed_block"
+        )
+        return result
+
+    if not config_path.exists():
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(block, encoding="utf-8")
+        result["action"] = "created"
+        return result
+
+    if not sync_subagents:
+        result["action"] = "skipped_existing_no_sync"
+        return result
+
+    raw = config_path.read_text(encoding="utf-8", errors="ignore")
+    managed_re = re.compile(
+        r"# BEGIN BRAINDRAIN SUBAGENTS\n.*?# END BRAINDRAIN SUBAGENTS\n?",
+        flags=re.DOTALL,
+    )
+    if managed_re.search(raw):
+        next_raw = managed_re.sub(block, raw, count=1)
+    else:
+        sep = "\n\n" if raw.strip() else ""
+        next_raw = raw.rstrip("\n") + sep + block
+
+    if next_raw == raw:
+        result["action"] = "skipped_already_up_to_date"
+        return result
+
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup = config_path.with_name(f"{config_path.name}.bak.{ts}")
+    shutil.copy2(config_path, backup)
+    config_path.write_text(
+        next_raw if next_raw.endswith("\n") else next_raw + "\n", encoding="utf-8"
+    )
+    result["action"] = "updated"
+    result["backup"] = str(backup)
+    return result
+
+
+def deploy_subagent_templates(
+    target_dir: Path,
+    *,
+    resolved_agents: Optional[list[str]],
+    all_agents: bool,
+    dry_run: bool = False,
+    sync_subagents: bool = False,
+    codex_agent_targets: Optional[list[str]] = None,
+) -> dict[str, object]:
+    """Deploy Cursor/Codex subagent template files by resolved scope."""
+    codex_targets = codex_agent_targets or [".codex/agents"]
+    cursor_in_scope = bool(
+        all_agents or resolved_agents is None or "cursor" in (resolved_agents or [])
+    )
+    codex_in_scope = bool(
+        all_agents or resolved_agents is None or "codex" in (resolved_agents or [])
+    )
+
+    deployed: dict[str, dict[str, dict[str, dict[str, str | bool]]]] = {}
+    if cursor_in_scope:
+        deployed["cursor"] = {
+            str(target_dir / ".cursor" / "agents"): _copy_template_tree(
+                CURSOR_SUBAGENT_TEMPLATES_DIR,
+                target_dir / ".cursor" / "agents",
+                dry_run=dry_run,
+                sync_subagents=sync_subagents,
+            )
+        }
+    if codex_in_scope:
+        deployed["codex"] = {}
+        for rel_target in codex_targets:
+            dst = target_dir / rel_target
+            deployed["codex"][str(dst)] = _copy_template_tree(
+                CODEX_SUBAGENT_TEMPLATES_DIR,
+                dst,
+                dry_run=dry_run,
+                sync_subagents=sync_subagents,
+            )
+
+    all_actions: list[str] = []
+    for platform_targets in deployed.values():
+        for file_actions in platform_targets.values():
+            all_actions.extend(str(v.get("action")) for v in file_actions.values())
+
+    return {
+        "enabled": {"cursor": cursor_in_scope, "codex": codex_in_scope},
+        "sync_subagents": sync_subagents,
+        "codex_agent_targets": codex_targets,
+        "deployed": deployed,
+        "created": sum(1 for a in all_actions if a == "created"),
+        "updated": sum(1 for a in all_actions if a == "updated"),
+        "skipped": sum(1 for a in all_actions if str(a).startswith("skipped")),
+    }
 
 
 def _filter_ruler_toml_agents(toml_content: str, agents: list[str]) -> str:
@@ -621,7 +819,11 @@ def compact_prime_result_for_mcp(
     """
     if not isinstance(result, dict):
         return result
-    out = {k: v for k, v in result.items() if k not in ("templates", "ruler", "memory_init")}
+    out = {
+        k: v
+        for k, v in result.items()
+        if k not in ("templates", "ruler", "memory_init")
+    }
     tpl = result.get("templates") or {}
     deployed = tpl.get("deployed") or {}
     out["templates"] = {
@@ -657,6 +859,8 @@ def compact_prime_result_for_mcp(
                 slim[k] = v  # type: ignore[assignment]
         mem["artifacts"] = slim
     out["memory_init"] = mem
+    out["subagents"] = result.get("subagents")
+    out["codex_subagent_config"] = result.get("codex_subagent_config")
     out["_mcp_response_compact"] = True
     return out
 
@@ -907,9 +1111,11 @@ def prime(
     agents: Optional[list[str]] = None,
     dry_run: bool = False,
     sync_templates: bool = False,
+    sync_subagents: bool = False,
     all_agents: bool = False,
     local_only: bool = True,
     patch_user_cursor_mcp: bool = False,
+    codex_agent_targets: Optional[list[str]] = None,
 ) -> dict:
     """
     Full prime flow: deploy templates + run ruler apply + initialize memory.
@@ -963,7 +1169,17 @@ def prime(
             for f in TEMPLATES_DIR.rglob("*") if f.is_file()
         }
 
-    # Step 2: run ruler apply (Ruler does not touch .gitignore unless ruler_updates_gitignore).
+    # Step 2: deploy Cursor/Codex subagent templates.
+    subagent_results = deploy_subagent_templates(
+        target_dir,
+        resolved_agents=apply_agents,
+        all_agents=all_agents,
+        dry_run=dry_run,
+        sync_subagents=sync_subagents,
+        codex_agent_targets=codex_agent_targets,
+    )
+
+    # Step 3: run ruler apply (Ruler does not touch .gitignore unless ruler_updates_gitignore).
     ruler_result = run_ruler_apply(
         target_dir,
         agents=apply_agents,
@@ -971,12 +1187,12 @@ def prime(
         local_only=local_only,
     )
 
-    # Step 3: .gitignore protocol (braindrain-owned; Ruler --gitignore off by default).
+    # Step 4: .gitignore protocol (braindrain-owned; Ruler --gitignore off by default).
     gitignore_protocol = ensure_gitignore_braindrain_protocol(
         target_dir, dry_run=dry_run
     )
 
-    # Step 4: Cursor project rules from .ruler/RULES.md (Ruler may omit or differ).
+    # Step 5: Cursor project rules from .ruler/RULES.md (Ruler may omit or differ).
     cursor_in_scope = bool(
         all_agents or apply_agents is None or "cursor" in (apply_agents or [])
     )
@@ -990,7 +1206,7 @@ def prime(
             target_dir, dry_run=True, include_cursor=True
         )
 
-    # Step 5: Cursor MCP JSON — serverName for adapter (fixes MCP Allowlist warning).
+    # Step 6: Cursor MCP JSON — serverName for adapter (fixes MCP Allowlist warning).
     cursor_mcp_json: dict[str, str | bool | dict] = {"skipped": True}
     if cursor_in_scope and not dry_run:
         proj_mcp = ensure_cursor_mcp_json_server_name(target_dir, dry_run=False)
@@ -1013,10 +1229,25 @@ def prime(
         else:
             cursor_mcp_json = proj_mcp
 
-    # Step 6: initialize memory artifacts (includes one-time .devdocs migration).
+    # Step 7: codex subagent config policy (after ruler apply to avoid overwrite).
+    codex_in_scope = bool(
+        all_agents or apply_agents is None or "codex" in (apply_agents or [])
+    )
+    codex_subagent_config: dict[str, str | bool] = {"skipped": True}
+    if codex_in_scope:
+        codex_subagent_config = ensure_codex_subagent_config(
+            target_dir,
+            codex_agent_targets=subagent_results.get(  # type: ignore[arg-type]
+                "codex_agent_targets", [".codex/agents"]
+            ),
+            dry_run=dry_run,
+            sync_subagents=sync_subagents,
+        )
+
+    # Step 8: initialize memory artifacts (includes one-time .devdocs migration).
     memory_init = initialize_project_memory(target_dir, dry_run=dry_run)
 
-    # Step 7: persist primed marker (skip on dry_run).
+    # Step 9: persist primed marker (skip on dry_run).
     if not dry_run and ruler_result.get("ok"):
         _write_primed_state(target_dir, apply_agents or ["all"])
 
@@ -1028,6 +1259,7 @@ def prime(
         "launcher_path": launcher_path,
         "dry_run": dry_run,
         "sync_templates": sync_templates,
+        "sync_subagents": sync_subagents,
         "all_agents": all_agents,
         "local_only": local_only,
         "is_first_prime": is_first_prime,
@@ -1036,6 +1268,8 @@ def prime(
         "gitignore_protocol": gitignore_protocol,
         "cursor_rules": cursor_rules,
         "cursor_mcp_json": cursor_mcp_json,
+        "subagents": subagent_results,
+        "codex_subagent_config": codex_subagent_config,
         "templates": {
             "source": str(TEMPLATES_DIR),
             "deployed": template_results,

@@ -34,7 +34,7 @@ Use this sequence to avoid wasting context tokens on environment probing and lar
 | Tool | Purpose |
 |---|---|
 | `get_env_context(refresh=False)` | Cached OS fingerprint — call this first |
-| `prime_workspace(path=".", agents=None, dry_run=False, sync_templates=False, all_agents=False, local_only=True)` | Prime project; auto-detects IDE, writes `.braindrain/primed.json` |
+| `prime_workspace(path=".", agents=None, dry_run=False, sync_templates=False, sync_subagents=False, all_agents=False, local_only=True, codex_agent_targets=None)` | Prime project; auto-detects IDE, writes `.braindrain/primed.json`, deploys Cursor/Codex subagent files |
 | `search_tools(query, top_k=5)` | Discover deferred tools by capability |
 | `route_output(text, source, ...)` | Index large text into context-mode |
 | `search_index(query, limit=5)` | Retrieve from FTS5 index |
