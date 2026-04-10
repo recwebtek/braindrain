@@ -1,7 +1,7 @@
 # braindrain
 
-**Version:** V1.0.2  
-**Last Updated:** 2026-04-07
+**Version:** V1.0.3  
+**Last Updated:** 2026-04-10
 
 An MCP server that keeps AI agents lean. It stops context windows bloating with redundant tool definitions, large raw outputs, and repeated environment discovery — and gives agents the right information at the right time instead.
 
@@ -376,6 +376,9 @@ braindrain/
 │   └── com.braindrain.mcp.plist  # macOS launchd service template
 ├── AGENTS.md                   # agent protocol — generated per device by install.sh
 ├── AGENTS.md.template          # template used to generate AGENTS.md
+├── VERSION                     # semver for releases (kept in sync with this README)
+├── CHANGELOG.md                # release history
+├── .devdocs/                   # ship-tracked roadmap and TODOs (see .devdocs/README.md)
 ├── install.sh                  # new device setup script
 ├── requirements.txt
 └── pyproject.toml
@@ -413,6 +416,8 @@ braindrain/
 ---
 
 ## Memory state and roadmap TODOs
+
+Ship-tracked **roadmap and release TODOs** live in **`.devdocs/`** (`ROADMAP.md`, `TODOS.md`). This README keeps user-facing behavior; `.devdocs/` tracks what we plan to ship next.
 
 Current implemented memory behavior:
 

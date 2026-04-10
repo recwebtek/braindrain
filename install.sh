@@ -330,7 +330,7 @@ fi
 
 ELAPSED="$(( $(date +%s) - START_TS ))"
 header "=== Installation status ==="
-echo "Version:            V1.0.1"
+echo "Version:            V1.0.3"
 echo "Platform:           $OS/$ARCH"
 echo "Python:             $PYTHON ($PYVER)"
 echo "Dependencies:       $([[ "$PIP_OK" -eq 1 ]] && echo "ok" || echo "failed")"
