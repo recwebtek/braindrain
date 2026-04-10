@@ -88,6 +88,8 @@ Example JSONL row:
 | `ping()` | Health check |
 | `refresh_env_context()` | Re-probe OS environment (deferred) |
 
+<!-- SCRIPTLIB_GUIDANCE -->
+
 ### Ops/docs to keep current (when behaviour/run paths/tools change)
 
 - `.braindrain/SESSION_PROGRESS.md`

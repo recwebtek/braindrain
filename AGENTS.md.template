@@ -89,6 +89,10 @@ Example:
 
 ---
 
+<!-- SCRIPTLIB_GUIDANCE -->
+
+---
+
 ### Ops/docs to keep current (when behaviour/run paths/tools change)
 
 - `.braindrain/SESSION_PROGRESS.md`

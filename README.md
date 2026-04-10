@@ -61,6 +61,14 @@ OS environment data is probed once, cached locally, and served instantly on ever
 | `list_workflows()` | See what multi-step workflows are available. |
 | `prime_workspace(path, agents, dry_run, sync_templates, all_agents, local_only)` | Prime a project for AI agent use. **First run**: auto-detects current IDE/CLI (`CURSOR_*` → `TERM_PROGRAM` → dotfolders → fallback `cursor`); response includes **`detect_method`**. Always rewrites **minimal `.ruler/ruler.toml`** when targeting specific agents (even if `.ruler/` already existed) so Ruler’s `.gitignore` and config match the agent list. After apply, syncs **`.cursor/rules/braindrain.mdc`** and **`project-rules.mdc`** (managed fenced region) from `.ruler/RULES.md` — see **`cursor_rules`** in the result. Set `all_agents=True` for the full template. Set `sync_templates=True` to force-refresh all `.ruler/*` sources. |
 | `init_project_memory(path, dry_run)` | Initialize project memory artifacts only (`.braindrain/AGENT_MEMORY.md` and `.cursor/hooks/state/continual-learning-index.json`). Migrates legacy `.devdocs/` on first call. Idempotent. |
+| `scriptlib_enable(path, scope, harvest, dry_run)` | Hard-opt-in project or global scriptlib. Project enable can immediately harvest reusable workspace scripts into `.scriptlib/`. |
+| `scriptlib_harvest_workspace(path, dry_run)` | Copy scripts from `tests/`, `scripts/`, and supported locations into scriptlib metadata entries and catalog. |
+| `scriptlib_search(query, ...)` | Search scriptlib before writing a new reusable helper script. |
+| `scriptlib_describe(script_id, ...)` | Inspect metadata, score, and run mode for one scriptlib entry. |
+| `scriptlib_run(script_id, ...)` | Execute a script through scriptlib with restored source context when paths are sensitive. |
+| `scriptlib_fork(script_id, new_variant_or_version, ...)` | Fork an existing scriptlib entry into a new version for safe edits. |
+| `scriptlib_record_result(script_id, outcome, ...)` | Update success score, mistakes, and validation state. |
+| `scriptlib_refresh_index(path, scope, dry_run)` | Rebuild project/global scriptlib indexes and generated catalogs. |
 | `plan_workflow(name, args)` | Generate a markdown execution plan and review it before committing to a run. Use before any destructive or long-running workflow. |
 | `run_workflow(name, args)` | Execute a workflow. Intermediate output is routed through the sandbox — only the final summary returns to the agent. |
 
@@ -356,6 +364,7 @@ braindrain/
 │   ├── context_mode_client.py  # context-mode stdio client (output routing)
 │   ├── mcp_stdio_client.py     # generic stdio MCP client (workflow engine)
 │   ├── output_router.py        # route large outputs → FTS5 index
+│   ├── scriptlib.py            # opt-in script library, harvesting, indexing, run wrapper
 │   ├── telemetry.py            # token telemetry + JSONL logging
 │   ├── workflow_engine.py      # multi-step workflow execution + sandbox
 │   ├── tool_registry.py        # BM25 search + defer_loading
@@ -383,6 +392,7 @@ braindrain/
   - `.braindrain/AGENT_MEMORY.md` for high-signal durable memory (legacy `.devdocs/AGENT_MEMORY.md` may be migrated on first run)
   - `.cursor/hooks/state/continual-learning-index.json` for incremental transcript indexing
   - `AGENTS.md` remains generator-owned protocol text and should not be used as memory storage.
+- **Scriptlib**: disabled by default. When enabled for a workspace, braindrain seeds `.scriptlib/`, harvests reusable scripts, and injects scriptlib guidance into generated agent rule surfaces for that workspace only.
 
 ### Docs ownership map (token observability)
 

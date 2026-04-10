@@ -47,6 +47,9 @@ CRUSH.md
 
 # Tests are dev-only (not needed on consumer installs)
 tests/
+!tests/
+tests/*
+!tests/test_scriptlib.py
 
 # Ruler outputs at repo root (no leading dot)
 /AGENTS.md
@@ -61,5 +64,15 @@ tests/
 !/.gitattributes
 !/.gitmodules
 !/.env.example
+!/.cursor/
+/.cursor/*
+!/.cursor/agents/
+/.cursor/agents/*
+!/.cursor/agents/librarian.md
+!/.cursor/skills/
+/.cursor/skills/*
+!/.cursor/skills/scriptlib-librarian/
+/.cursor/skills/scriptlib-librarian/*
+!/.cursor/skills/scriptlib-librarian/SKILL.md
 # If your team commits other root dotdirs (e.g. .husky), add: !/.husky/
 # END BRAINDRAIN GITIGNORE PROTOCOL

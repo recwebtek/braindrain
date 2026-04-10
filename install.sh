@@ -161,10 +161,12 @@ if [[ -f "$AGENTS_TEMPLATE" ]] && [[ "$PIP_OK" -eq 1 ]]; then
 import json, re, sys
 from pathlib import Path
 from braindrain.env_probe import get_env_context
+from braindrain.scriptlib import enabled_for_workspace, render_guidance
 
 repo = Path(".")
 result = get_env_context(refresh=True)
 template = (repo / "AGENTS.md.template").read_text(encoding="utf-8")
+template = render_guidance(template, enabled=enabled_for_workspace(repo))
 block = result["agents_md_block"]
 new_content = re.sub(
     r"<!-- ENV_CONTEXT_START -->.*?<!-- ENV_CONTEXT_END -->",

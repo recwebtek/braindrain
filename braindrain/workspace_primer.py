@@ -11,6 +11,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from braindrain.scriptlib import (
+    enabled_for_workspace,
+    render_guidance as render_scriptlib_guidance,
+    seed_if_enabled,
+)
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "config" / "templates" / "ruler"
 
@@ -222,6 +227,7 @@ def deploy_templates(
 
     force_minimal = not all_agents and bool(agents)
     minimal_ruler_updated = False
+    scriptlib_guidance_enabled = enabled_for_workspace(target_dir)
 
     # Phase 1 — ruler.toml first (ordering-independent).
     ruler_dst = ruler_dir / "ruler.toml"
@@ -268,9 +274,17 @@ def deploy_templates(
             continue
         dst = ruler_dir / name
         content = src.read_text(encoding="utf-8")
+        content = render_scriptlib_guidance(content, enabled=scriptlib_guidance_enabled)
         if dst.exists():
-            if not refresh_sources:
+            existing_content = dst.read_text(encoding="utf-8")
+            if existing_content == content:
                 written[name] = {"action": "skipped_existing", "backup": ""}
+                continue
+            if not refresh_sources:
+                backup = dst.with_name(f"{dst.name}.bak.{ts}")
+                shutil.copy2(dst, backup)
+                dst.write_text(content, encoding="utf-8")
+                written[name] = {"action": "updated_scriptlib_guidance", "backup": str(backup)}
                 continue
             backup = dst.with_name(f"{dst.name}.bak.{ts}")
             shutil.copy2(dst, backup)
@@ -1016,7 +1030,18 @@ def prime(
     # Step 6: initialize memory artifacts (includes one-time .devdocs migration).
     memory_init = initialize_project_memory(target_dir, dry_run=dry_run)
 
-    # Step 7: persist primed marker (skip on dry_run).
+    # Step 7: seed scriptlib only when the workspace has explicitly enabled it.
+    try:
+        scriptlib_result = seed_if_enabled(target_dir, dry_run=dry_run)
+    except Exception as exc:
+        scriptlib_result = {
+            "ok": False,
+            "error": str(exc),
+            "root": str(target_dir / ".scriptlib"),
+            "guidance_enabled": False,
+        }
+
+    # Step 8: persist primed marker (skip on dry_run).
     if not dry_run and ruler_result.get("ok"):
         _write_primed_state(target_dir, apply_agents or ["all"])
 
@@ -1047,6 +1072,7 @@ def prime(
         },
         "ruler": ruler_result,
         "memory_init": memory_init,
+        "scriptlib": scriptlib_result,
         "next_steps": (
             []
             if ok
