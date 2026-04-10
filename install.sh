@@ -296,19 +296,19 @@ else
     # Run ruler apply.
     # --local-only: prevents global XDG config from merging in unintended agents.
     # --no-gitignore: .gitignore policy is owned by prime_workspace (BRAINDRAIN block), not Ruler.
-    # --agents cursor,claude: safe conservative default for this repo's self-prime;
-    #   covers the two IDEs most commonly used with BRAINDRAIN during development.
+    # --agents cursor,codex: default self-prime target for this repository.
+    #   This keeps local Cursor and Codex protocol/assets aligned out of the box.
     if npx --yes @intellectronica/ruler apply \
         --config "$RULER_DEST/ruler.toml" \
         --local-only \
         --no-gitignore \
-        --agents cursor,claude 2>>"$LOG_FILE"; then
+        --agents cursor,codex 2>>"$LOG_FILE"; then
         RULER_STATUS="ok"
         ok "ruler apply — agent rule files distributed"
     else
         RULER_STATUS="failed"
         warn "ruler apply failed (non-fatal). Run manually:"
-        warn "  npx @intellectronica/ruler apply --config $RULER_DEST/ruler.toml --local-only --no-gitignore --agents cursor,claude"
+        warn "  npx @intellectronica/ruler apply --config $RULER_DEST/ruler.toml --local-only --no-gitignore --agents cursor,codex"
     fi
 fi
 

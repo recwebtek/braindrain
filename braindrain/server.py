@@ -703,9 +703,11 @@ async def prime_workspace(
     agents: list[str] | None = None,
     dry_run: bool = False,
     sync_templates: bool = False,
+    sync_subagents: bool = False,
     all_agents: bool = False,
     local_only: bool = True,
     patch_user_cursor_mcp: bool = False,
+    codex_agent_targets: list[str] | None = None,
     compact_mcp_response: bool = True,
 ) -> dict:
     """
@@ -725,10 +727,14 @@ async def prime_workspace(
         agents:         Explicit agent ids (e.g. ["cursor", "claude"]).
         dry_run:        Preview changes without writing files.
         sync_templates: Update existing .ruler files with timestamped backups.
+        sync_subagents: Update existing Cursor/Codex subagent files and codex
+            managed config block with timestamped backups.
         all_agents:     Deploy full template and apply all configured agents.
         local_only:     Pass --local-only to ruler apply (default True).
         patch_user_cursor_mcp: If True, also patch ~/.cursor/mcp.json with
             serverName entries (fixes Cursor allowlist warning for user-braindrain).
+        codex_agent_targets: Optional relative target paths for codex subagent
+            file deployment. Default: [".codex/agents"].
         compact_mcp_response: If True (default), return a smaller dict so the MCP
             client is less likely to hit ClosedResourceError on large tool results.
 
@@ -746,9 +752,11 @@ async def prime_workspace(
             agents,
             dry_run,
             sync_templates,
+            sync_subagents,
             all_agents,
             local_only,
             patch_user_cursor_mcp,
+            codex_agent_targets,
         )
         if compact_mcp_response and isinstance(result, dict):
             result = compact_prime_result_for_mcp(result)
@@ -773,6 +781,7 @@ async def prime_workspace(
                 "target": path,
                 "dry_run": dry_run,
                 "sync_templates": sync_templates,
+                "sync_subagents": sync_subagents,
                 "all_agents": all_agents,
                 "local_only": local_only,
                 "resolved_agents": result.get("resolved_agents"),
@@ -780,6 +789,8 @@ async def prime_workspace(
                 "cursor_rules": result.get("cursor_rules"),
                 "gitignore_protocol": result.get("gitignore_protocol"),
                 "cursor_mcp_json": result.get("cursor_mcp_json"),
+                "subagents": result.get("subagents"),
+                "codex_subagent_config": result.get("codex_subagent_config"),
                 "patch_user_cursor_mcp": patch_user_cursor_mcp,
                 "compact_mcp_response": compact_mcp_response,
             },
@@ -793,8 +804,10 @@ async def prime_workspace(
                 "agents": agents,
                 "dry_run": dry_run,
                 "sync_templates": sync_templates,
+                "sync_subagents": sync_subagents,
                 "all_agents": all_agents,
                 "patch_user_cursor_mcp": patch_user_cursor_mcp,
+                "codex_agent_targets": codex_agent_targets,
             },
         )
         return {"ok": False, "error": str(e)}
