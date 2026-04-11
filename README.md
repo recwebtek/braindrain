@@ -1,7 +1,7 @@
 # braindrain
 
-**Version:** V1.0.2  
-**Last Updated:** 2026-04-07
+**Version:** V1.0.3  
+**Last Updated:** 2026-04-10
 
 An MCP server that keeps AI agents lean. It stops context windows bloating with redundant tool definitions, large raw outputs, and repeated environment discovery — and gives agents the right information at the right time instead.
 
@@ -59,8 +59,16 @@ OS environment data is probed once, cached locally, and served instantly on ever
 | Tool | When to use |
 |---|---|
 | `list_workflows()` | See what multi-step workflows are available. |
-| `prime_workspace(path, agents, dry_run, sync_templates, all_agents, local_only)` | Prime a project for AI agent use. **First run**: auto-detects current IDE/CLI (`CURSOR_*` → `TERM_PROGRAM` → dotfolders → fallback `cursor`); response includes **`detect_method`**. Always rewrites **minimal `.ruler/ruler.toml`** when targeting specific agents (even if `.ruler/` already existed) so Ruler’s `.gitignore` and config match the agent list. After apply, syncs **`.cursor/rules/braindrain.mdc`** and **`project-rules.mdc`** (managed fenced region) from `.ruler/RULES.md` — see **`cursor_rules`** in the result. Set `all_agents=True` for the full template. Set `sync_templates=True` to force-refresh all `.ruler/*` sources. |
+| `prime_workspace(path, agents, dry_run, sync_templates, sync_subagents, all_agents, local_only, codex_agent_targets)` | Prime a project for AI agent use. **First run**: auto-detects current IDE/CLI (`CURSOR_*` → `TERM_PROGRAM` → dotfolders → fallback `cursor`); response includes **`detect_method`**. Always rewrites **minimal `.ruler/ruler.toml`** when targeting specific agents (even if `.ruler/` already existed) so Ruler’s `.gitignore` and config match the agent list. Also deploys Cursor/Codex subagent files from templates and reports summary in **`subagents`**. Codex config policy: create `.codex/config.toml` if missing; if present, only update managed `BRAINDRAIN SUBAGENTS` block when `sync_subagents=true` (backup-first). After apply, syncs **`.cursor/rules/braindrain.mdc`** and **`project-rules.mdc`** (managed fenced region) from `.ruler/RULES.md` — see **`cursor_rules`** in the result. Set `all_agents=True` for the full template. Set `sync_templates=True` to force-refresh `.ruler/*`; set `sync_subagents=True` to refresh existing subagent files/config blocks. |
 | `init_project_memory(path, dry_run)` | Initialize project memory artifacts only (`.braindrain/AGENT_MEMORY.md` and `.cursor/hooks/state/continual-learning-index.json`). Migrates legacy `.devdocs/` on first call. Idempotent. |
+| `scriptlib_enable(path, scope, harvest, dry_run)` | Hard-opt-in project or global scriptlib. Project enable can immediately harvest reusable workspace scripts into `.scriptlib/`. |
+| `scriptlib_harvest_workspace(path, dry_run)` | Copy scripts from `tests/`, `scripts/`, and supported locations into scriptlib metadata entries and catalog. |
+| `scriptlib_search(query, ...)` | Search scriptlib before writing a new reusable helper script. |
+| `scriptlib_describe(script_id, ...)` | Inspect metadata, score, and run mode for one scriptlib entry. |
+| `scriptlib_run(script_id, ...)` | Execute a script through scriptlib with restored source context when paths are sensitive. |
+| `scriptlib_fork(script_id, new_variant_or_version, ...)` | Fork an existing scriptlib entry into a new version for safe edits. |
+| `scriptlib_record_result(script_id, outcome, ...)` | Update success score, mistakes, and validation state. |
+| `scriptlib_refresh_index(path, scope, dry_run)` | Rebuild project/global scriptlib indexes and generated catalogs. |
 | `plan_workflow(name, args)` | Generate a markdown execution plan and review it before committing to a run. Use before any destructive or long-running workflow. |
 | `run_workflow(name, args)` | Execute a workflow. Intermediate output is routed through the sandbox — only the final summary returns to the agent. |
 
@@ -146,7 +154,7 @@ cd braindrain
 - Runs fresh `get_env_context()` probe and regenerates `AGENTS.md`
 - Creates `.braindrain/` (gitignored, machine-local — never committed)
 - Runs an interactive MCP target checklist (Cursor, Windsurf, Zed, OpenCode, Antigravity, Codex, etc.), previews diffs, creates backups, then applies on confirmation
-- Runs `ruler apply --local-only --no-gitignore --agents cursor,claude` (project-scoped; `.gitignore` policy is **not** owned by Ruler — use `prime_workspace` for the BRAINDRAIN block)
+- Runs `ruler apply --local-only --no-gitignore --agents cursor,codex` (project-scoped; `.gitignore` policy is **not** owned by Ruler — use `prime_workspace` for the BRAINDRAIN block)
 - Performs MCP handshake self-test and prints a structured final status summary + next steps
 
 ### Manual setup (if you prefer)
@@ -356,6 +364,7 @@ braindrain/
 │   ├── context_mode_client.py  # context-mode stdio client (output routing)
 │   ├── mcp_stdio_client.py     # generic stdio MCP client (workflow engine)
 │   ├── output_router.py        # route large outputs → FTS5 index
+│   ├── scriptlib.py            # opt-in script library, harvesting, indexing, run wrapper
 │   ├── telemetry.py            # token telemetry + JSONL logging
 │   ├── workflow_engine.py      # multi-step workflow execution + sandbox
 │   ├── tool_registry.py        # BM25 search + defer_loading
@@ -367,6 +376,10 @@ braindrain/
 │   └── com.braindrain.mcp.plist  # macOS launchd service template
 ├── AGENTS.md                   # agent protocol — generated per device by install.sh
 ├── AGENTS.md.template          # template used to generate AGENTS.md
+├── VERSION                     # semver for releases (kept in sync with this README)
+├── CHANGELOG.md                # release history
+├── ROADMAP.md                  # public product direction (local scratch: `.devdocs/`, gitignored)
+├── TODOS.md                    # public release-aligned checklist (never commit `.devdocs/`)
 ├── install.sh                  # new device setup script
 ├── requirements.txt
 └── pyproject.toml
@@ -379,10 +392,17 @@ braindrain/
   - Source-of-truth for those generated rule files is `config/templates/ruler/RULES.md` (and `.ruler/ruler.toml`).
   - **Important**: files like `CLAUDE.md` are **generated artifacts** (gitignored) and should be treated as **disposable**. Edit the templates instead, then re-run Ruler.
   - If a project already has older `.ruler/*` files, call `prime_workspace(..., sync_templates=true)` to refresh those templates safely and propagate new guidance without manual cleanup.
+- **Subagent templates**: `prime_workspace()` deploys:
+  - `config/templates/cursor-subagents/` -> `.cursor/agents/`
+  - `config/templates/cursor-skills/` -> `.cursor/skills/` (e.g. scriptlib-librarian)
+  - `config/templates/codex-subagents/` -> `.codex/agents/` (or `codex_agent_targets`)
+  Existing files are create-only by default; set `sync_subagents=true` to update with backups. `.cursor/` is gitignored at repo root; do not commit generated agent/skill files—edit templates and re-run `prime_workspace`.
+- **Codex config merge**: `prime_workspace()` appends/updates a managed `BRAINDRAIN SUBAGENTS` block in `.codex/config.toml` only when allowed by policy (`sync_subagents=true` for existing files). Existing MCP server entries remain intact.
 - **Project memory artifacts**: initialized by `prime_workspace()` (or `init_project_memory()`) and kept separate from generated protocol files:
   - `.braindrain/AGENT_MEMORY.md` for high-signal durable memory (legacy `.devdocs/AGENT_MEMORY.md` may be migrated on first run)
   - `.cursor/hooks/state/continual-learning-index.json` for incremental transcript indexing
   - `AGENTS.md` remains generator-owned protocol text and should not be used as memory storage.
+- **Scriptlib**: disabled by default. When enabled for a workspace, braindrain seeds `.scriptlib/`, harvests reusable scripts, and injects scriptlib guidance into generated agent rule surfaces for that workspace only.
 
 ### Docs ownership map (token observability)
 
@@ -398,6 +418,8 @@ braindrain/
 ---
 
 ## Memory state and roadmap TODOs
+
+**Roadmap and release TODOs** ship from the repo root as **`ROADMAP.md`** and **`TODOS.md`**. Use **`.devdocs/`** only on your machine for private drafts (that path is gitignored and must not be committed).
 
 Current implemented memory behavior:
 
