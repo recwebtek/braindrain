@@ -21,6 +21,9 @@ TEMPLATES_DIR = Path(__file__).parent.parent / "config" / "templates" / "ruler"
 CURSOR_SUBAGENT_TEMPLATES_DIR = (
     Path(__file__).parent.parent / "config" / "templates" / "cursor-subagents"
 )
+CURSOR_SKILLS_TEMPLATES_DIR = (
+    Path(__file__).parent.parent / "config" / "templates" / "cursor-skills"
+)
 CODEX_SUBAGENT_TEMPLATES_DIR = (
     Path(__file__).parent.parent / "config" / "templates" / "codex-subagents"
 )
@@ -450,7 +453,7 @@ def deploy_subagent_templates(
     sync_subagents: bool = False,
     codex_agent_targets: Optional[list[str]] = None,
 ) -> dict[str, object]:
-    """Deploy Cursor/Codex subagent template files by resolved scope."""
+    """Deploy Cursor/Codex subagent templates and Cursor skills under `.cursor/skills/` by resolved scope."""
     codex_targets = codex_agent_targets or [".codex/agents"]
     cursor_in_scope = bool(
         all_agents or resolved_agents is None or "cursor" in (resolved_agents or [])
@@ -467,7 +470,13 @@ def deploy_subagent_templates(
                 target_dir / ".cursor" / "agents",
                 dry_run=dry_run,
                 sync_subagents=sync_subagents,
-            )
+            ),
+            str(target_dir / ".cursor" / "skills"): _copy_template_tree(
+                CURSOR_SKILLS_TEMPLATES_DIR,
+                target_dir / ".cursor" / "skills",
+                dry_run=dry_run,
+                sync_subagents=sync_subagents,
+            ),
         }
     if codex_in_scope:
         deployed["codex"] = {}
@@ -708,6 +717,7 @@ _GITIGNORE_PROTOCOL_BEGIN = "# BEGIN BRAINDRAIN GITIGNORE PROTOCOL"
 _GITIGNORE_PROTOCOL_BLOCK = """# BEGIN BRAINDRAIN GITIGNORE PROTOCOL — do not remove (maintained by prime_workspace)
 # Ruler does NOT own .gitignore here: we pass --gitignore false to ruler apply and maintain this block instead.
 # Root-level dotfiles/dotdirs are local-only (IDE, MCP, secrets). Add ! exceptions only for paths that must ship.
+# Do NOT add !/.cursor/ — Cursor agents/skills ship from config/templates/cursor-* and deploy via prime_workspace().
 /.*
 !/.github/
 !/.gitignore

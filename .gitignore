@@ -64,16 +64,7 @@ tests/*
 !/.gitattributes
 !/.gitmodules
 !/.env.example
-!/.cursor/
-/.cursor/*
-!/.cursor/agents/
-/.cursor/agents/*
-!/.cursor/agents/librarian.md
-!/.cursor/skills/
-/.cursor/skills/*
-!/.cursor/skills/scriptlib-librarian/
-/.cursor/skills/scriptlib-librarian/*
-!/.cursor/skills/scriptlib-librarian/SKILL.md
+# `.cursor/` stays fully ignored; ship agents/skills via config/templates/cursor-* (deploy: prime_workspace).
 # If your team commits other root dotdirs (e.g. .husky), add: !/.husky/
 # `.devdocs/` is covered by `/.*` above — local-only; never add ! exceptions for it.
 # END BRAINDRAIN GITIGNORE PROTOCOL

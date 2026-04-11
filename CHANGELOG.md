@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 The format is based on keeping a clear, user-facing history. Version in `VERSION` matches the release called out in `README.md`.
 
+## Unreleased
+
+### For contributors
+
+- **Cursor agents/skills**: librarian and `scriptlib-librarian` live under `config/templates/cursor-subagents/` and `config/templates/cursor-skills/`; `prime_workspace()` deploys both to `.cursor/agents/` and `.cursor/skills/`. The repo root gitignore no longer whitelists paths under `.cursor/` (Braindrain protocol: ship via templates only).
+
 ## [1.0.3] — 2026-04-10
 
 ### For users

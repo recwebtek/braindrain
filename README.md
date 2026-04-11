@@ -394,8 +394,9 @@ braindrain/
   - If a project already has older `.ruler/*` files, call `prime_workspace(..., sync_templates=true)` to refresh those templates safely and propagate new guidance without manual cleanup.
 - **Subagent templates**: `prime_workspace()` deploys:
   - `config/templates/cursor-subagents/` -> `.cursor/agents/`
+  - `config/templates/cursor-skills/` -> `.cursor/skills/` (e.g. scriptlib-librarian)
   - `config/templates/codex-subagents/` -> `.codex/agents/` (or `codex_agent_targets`)
-  Existing files are create-only by default; set `sync_subagents=true` to update with backups.
+  Existing files are create-only by default; set `sync_subagents=true` to update with backups. `.cursor/` is gitignored at repo root; do not commit generated agent/skill files—edit templates and re-run `prime_workspace`.
 - **Codex config merge**: `prime_workspace()` appends/updates a managed `BRAINDRAIN SUBAGENTS` block in `.codex/config.toml` only when allowed by policy (`sync_subagents=true` for existing files). Existing MCP server entries remain intact.
 - **Project memory artifacts**: initialized by `prime_workspace()` (or `init_project_memory()`) and kept separate from generated protocol files:
   - `.braindrain/AGENT_MEMORY.md` for high-signal durable memory (legacy `.devdocs/AGENT_MEMORY.md` may be migrated on first run)
