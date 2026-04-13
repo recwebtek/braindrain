@@ -11,10 +11,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from braindrain.scriptlib import (
+    enabled_for_workspace,
+    render_guidance as render_scriptlib_guidance,
+    seed_if_enabled,
+)
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "config" / "templates" / "ruler"
 CURSOR_SUBAGENT_TEMPLATES_DIR = (
     Path(__file__).parent.parent / "config" / "templates" / "cursor-subagents"
+)
+CURSOR_SKILLS_TEMPLATES_DIR = (
+    Path(__file__).parent.parent / "config" / "templates" / "cursor-skills"
 )
 CODEX_SUBAGENT_TEMPLATES_DIR = (
     Path(__file__).parent.parent / "config" / "templates" / "codex-subagents"
@@ -228,6 +236,7 @@ def deploy_templates(
 
     force_minimal = not all_agents and bool(agents)
     minimal_ruler_updated = False
+    scriptlib_guidance_enabled = enabled_for_workspace(target_dir)
 
     # Phase 1 — ruler.toml first (ordering-independent).
     ruler_dst = ruler_dir / "ruler.toml"
@@ -274,9 +283,17 @@ def deploy_templates(
             continue
         dst = ruler_dir / name
         content = src.read_text(encoding="utf-8")
+        content = render_scriptlib_guidance(content, enabled=scriptlib_guidance_enabled)
         if dst.exists():
-            if not refresh_sources:
+            existing_content = dst.read_text(encoding="utf-8")
+            if existing_content == content:
                 written[name] = {"action": "skipped_existing", "backup": ""}
+                continue
+            if not refresh_sources:
+                backup = dst.with_name(f"{dst.name}.bak.{ts}")
+                shutil.copy2(dst, backup)
+                dst.write_text(content, encoding="utf-8")
+                written[name] = {"action": "updated_scriptlib_guidance", "backup": str(backup)}
                 continue
             backup = dst.with_name(f"{dst.name}.bak.{ts}")
             shutil.copy2(dst, backup)
@@ -436,7 +453,7 @@ def deploy_subagent_templates(
     sync_subagents: bool = False,
     codex_agent_targets: Optional[list[str]] = None,
 ) -> dict[str, object]:
-    """Deploy Cursor/Codex subagent template files by resolved scope."""
+    """Deploy Cursor/Codex subagent templates and Cursor skills under `.cursor/skills/` by resolved scope."""
     codex_targets = codex_agent_targets or [".codex/agents"]
     cursor_in_scope = bool(
         all_agents or resolved_agents is None or "cursor" in (resolved_agents or [])
@@ -453,7 +470,13 @@ def deploy_subagent_templates(
                 target_dir / ".cursor" / "agents",
                 dry_run=dry_run,
                 sync_subagents=sync_subagents,
-            )
+            ),
+            str(target_dir / ".cursor" / "skills"): _copy_template_tree(
+                CURSOR_SKILLS_TEMPLATES_DIR,
+                target_dir / ".cursor" / "skills",
+                dry_run=dry_run,
+                sync_subagents=sync_subagents,
+            ),
         }
     if codex_in_scope:
         deployed["codex"] = {}
@@ -694,6 +717,7 @@ _GITIGNORE_PROTOCOL_BEGIN = "# BEGIN BRAINDRAIN GITIGNORE PROTOCOL"
 _GITIGNORE_PROTOCOL_BLOCK = """# BEGIN BRAINDRAIN GITIGNORE PROTOCOL — do not remove (maintained by prime_workspace)
 # Ruler does NOT own .gitignore here: we pass --gitignore false to ruler apply and maintain this block instead.
 # Root-level dotfiles/dotdirs are local-only (IDE, MCP, secrets). Add ! exceptions only for paths that must ship.
+# Do NOT add !/.cursor/ — Cursor agents/skills ship from config/templates/cursor-* and deploy via prime_workspace().
 /.*
 !/.github/
 !/.gitignore
@@ -1247,7 +1271,18 @@ def prime(
     # Step 8: initialize memory artifacts (includes one-time .devdocs migration).
     memory_init = initialize_project_memory(target_dir, dry_run=dry_run)
 
-    # Step 9: persist primed marker (skip on dry_run).
+    # Step 9: seed scriptlib only when the workspace has explicitly enabled it.
+    try:
+        scriptlib_result = seed_if_enabled(target_dir, dry_run=dry_run)
+    except Exception as exc:
+        scriptlib_result = {
+            "ok": False,
+            "error": str(exc),
+            "root": str(target_dir / ".scriptlib"),
+            "guidance_enabled": False,
+        }
+
+    # Step 10: persist primed marker (skip on dry_run).
     if not dry_run and ruler_result.get("ok"):
         _write_primed_state(target_dir, apply_agents or ["all"])
 
@@ -1281,6 +1316,7 @@ def prime(
         },
         "ruler": ruler_result,
         "memory_init": memory_init,
+        "scriptlib": scriptlib_result,
         "next_steps": (
             []
             if ok
