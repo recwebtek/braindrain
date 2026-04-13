@@ -30,6 +30,7 @@ PIP_OK=0
 HANDSHAKE_OK=0
 RULER_STATUS="skipped"
 MCP_CONFIG_STATUS="skipped"
+CURSOR_MATTERMOST_STATUS="skipped"
 
 header "=== BRAINDRAIN installer ==="
 info "Repo: $REPO"
@@ -312,6 +313,78 @@ else
     fi
 fi
 
+header "7c. Ensure project Cursor MCP has Mattermost server"
+CURSOR_PROJECT_MCP="$REPO/.cursor/mcp.json"
+if [[ "$PIP_OK" -eq 1 ]]; then
+    if "$VENV_PYTHON" - <<'PYEOF' "$CURSOR_PROJECT_MCP"
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+path.parent.mkdir(parents=True, exist_ok=True)
+if path.exists():
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        data = {}
+else:
+    data = {}
+
+if not isinstance(data, dict):
+    data = {}
+
+servers = data.get("mcpServers")
+if not isinstance(servers, dict):
+    servers = {}
+    data["mcpServers"] = servers
+
+desired = {
+    "command": "npx",
+    "args": ["-y", "mcp-server-mattermost"],
+    "env": {
+        "endpoint": "${MATTERMOST_ENDPOINT}",
+        "token": "${MATTERMOST_TOKEN}",
+        "team": "${MATTERMOST_TEAM}",
+    },
+    "type": "stdio",
+    "serverName": "mattermost",
+}
+
+if servers.get("mattermost") == desired:
+    print("unchanged")
+else:
+    servers["mattermost"] = desired
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print("updated")
+PYEOF
+    then
+        if [[ "$("$VENV_PYTHON" - <<'PYEOF' "$CURSOR_PROJECT_MCP"
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+if not path.exists():
+    print("missing")
+else:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    server = ((data.get("mcpServers") or {}).get("mattermost"))
+    print("present" if isinstance(server, dict) else "missing")
+PYEOF
+)" == "present" ]]; then
+            CURSOR_MATTERMOST_STATUS="ok"
+            ok "Ensured .cursor/mcp.json includes mattermost MCP server"
+        else
+            CURSOR_MATTERMOST_STATUS="failed"
+            warn "Could not verify mattermost MCP server in .cursor/mcp.json"
+        fi
+    else
+        CURSOR_MATTERMOST_STATUS="failed"
+        warn "Failed to patch .cursor/mcp.json for mattermost MCP server"
+    fi
+else
+    warn "Skipping mattermost MCP patch (dependencies failed)."
+fi
+
 header "8. Self-test (MCP handshake)"
 if [[ "${SKIP_TEST:-0}" == "1" ]]; then
     warn "SKIP_TEST=1 — skipping self-test"
@@ -337,6 +410,7 @@ echo "Dependencies:       $([[ "$PIP_OK" -eq 1 ]] && echo "ok" || echo "failed")
 echo ".env.dev:           $([[ -f "$REPO/.env.dev" ]] && echo "present" || echo "missing")"
 echo "Ruler apply:        $RULER_STATUS"
 echo "MCP config updates: $MCP_CONFIG_STATUS"
+echo "Cursor mattermost:  $CURSOR_MATTERMOST_STATUS"
 echo "Handshake:          $([[ "$HANDSHAKE_OK" -eq 1 ]] && echo "ok" || echo "needs-attention")"
 echo "Install log:        $LOG_FILE"
 echo "Elapsed:            ${ELAPSED}s"
