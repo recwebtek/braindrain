@@ -337,6 +337,9 @@ braindrain/
   - `config/templates/cursor-subagents/` -> `.cursor/agents/`
   - `config/templates/codex-subagents/` -> `.codex/agents/` (or `codex_agent_targets`)
   Existing files are create-only by default; set `sync_subagents=true` to update with backups.
+  - Template contract: every subagent template must include YAML frontmatter with `name`, `description`, `model`, and `readonly`, followed by the prompt body.
+  - Invalid stub markdown (for example only a heading/body with no frontmatter) can break subagent schema parsing during priming/installer flows.
+  - Recovery path: fix templates in `config/templates/cursor-subagents/` and `config/templates/codex-subagents/`, then run `prime_workspace(..., dry_run=true, sync_subagents=true)` to verify before a real sync.
 - **Codex config merge**: `prime_workspace()` appends/updates a managed `BRAINDRAIN SUBAGENTS` block in `.codex/config.toml` only when allowed by policy (`sync_subagents=true` for existing files). Existing MCP server entries remain intact.
 - **Project memory artifacts**: initialized by `prime_workspace()` (or `init_project_memory()`) and kept separate from generated protocol files:
   - `.devdocs/AGENT_MEMORY.md` for high-signal durable memory
