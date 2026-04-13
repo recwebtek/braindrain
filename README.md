@@ -309,7 +309,7 @@ You can give the coordinator read+post communication via an existing Mattermost 
 
 ### 1) Add Mattermost MCP server to Cursor project config
 
-This repo includes a project-level entry in `.cursor/mcp.json`:
+`install.sh` now ensures a project-level Mattermost entry exists in `.cursor/mcp.json`:
 
 ```json
 "mattermost": {
