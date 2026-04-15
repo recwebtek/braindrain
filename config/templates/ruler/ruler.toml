@@ -83,6 +83,11 @@ command = "BRAINDRAIN_LAUNCHER_PATH"
 args = []
 env = {}
 
+[mcp_servers.mattermost]
+command = "npx"
+args = ["-y", "mcp-server-mattermost"]
+env = { endpoint = "${MATTERMOST_ENDPOINT}", token = "${MATTERMOST_TOKEN}", team = "${MATTERMOST_TEAM}" }
+
 # ── Agents that accept project-local MCP config ──────────────────────────────
 [mcp_targets]
 claude = {}       # .mcp.json

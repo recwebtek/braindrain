@@ -294,8 +294,64 @@ Environment variables (copy `.env.example` to `.env.dev` to start):
 | `OLLAMA_HOST` | Ollama endpoint (default: `http://localhost:11434`) |
 | `OPENAI_API_KEY` | Optional — cloud embeddings / semantic search |
 | `BRAINDRAIN_DISABLE_DOCKER_SANDBOX` | Set to `1` to skip the Docker workflow sandbox |
+| `MATTERMOST_ENDPOINT` | Mattermost server base URL for Mattermost MCP integration (example: `http://localhost:8065`) |
+| `MATTERMOST_TOKEN` | Mattermost personal access token used by the Mattermost MCP server |
+| `MATTERMOST_TEAM` | Team identifier/name used by the selected Mattermost MCP server |
+| `COORDINATOR_MATTERMOST_ENABLED` | Set to `1` to allow coordinator subagents to auto-use Mattermost comms protocol |
 
 The server auto-loads `.env.dev` → `.env.prod` → `.env` (first found, non-overriding of existing env vars).
+
+---
+
+## Mattermost coordinator comms
+
+You can give the coordinator read+post communication via an existing Mattermost MCP server.
+
+### 1) Add Mattermost MCP server to Cursor project config
+
+`install.sh` now ensures a project-level Mattermost entry exists in `.cursor/mcp.json`:
+
+```json
+"mattermost": {
+  "command": "npx",
+  "args": ["-y", "mcp-server-mattermost"],
+  "env": {
+    "endpoint": "${MATTERMOST_ENDPOINT}",
+    "token": "${MATTERMOST_TOKEN}",
+    "team": "${MATTERMOST_TEAM}"
+  },
+  "type": "stdio",
+  "serverName": "mattermost"
+}
+```
+
+### 2) Configure env vars locally (do not commit tokens)
+
+Recommended split:
+- `.env.dev` for local testing
+- `.env.prod` for stable daily-driver usage
+
+Add:
+
+```bash
+MATTERMOST_ENDPOINT=http://localhost:8065
+MATTERMOST_TOKEN=your_personal_access_token
+MATTERMOST_TEAM=your_team_name_or_id
+COORDINATOR_MATTERMOST_ENABLED=1
+```
+
+### 3) Verify read/post loop
+
+After reloading MCP servers in Cursor:
+- Verify Mattermost tools are visible (for example `read_channel`, `search_posts`, `create_post`)
+- Read latest channel context
+- Post a heartbeat message
+- Run one full loop: read context -> produce status delta -> create post update
+
+If tool visibility fails:
+- Ensure `npx` is available and can resolve `mcp-server-mattermost`
+- Confirm `MATTERMOST_ENDPOINT` points to the reachable Mattermost host
+- Confirm PAT has permission to read and post in target channels
 
 ---
 
