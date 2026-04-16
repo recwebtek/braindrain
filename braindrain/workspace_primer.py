@@ -7,12 +7,14 @@ import os
 import re
 import shutil
 import subprocess
+import yaml
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "config" / "templates" / "ruler"
+AGENT_TEMPLATES_DIR = Path(__file__).parent.parent / "config" / "templates" / "agents"
 
 # Canonical project-local docs directory (gitignored; never committed).
 BRAINDRAIN_DIR = ".braindrain"
@@ -25,6 +27,8 @@ DEFAULT_INDEX_FILE = ".cursor/hooks/state/continual-learning-index.json"
 
 # Marker file persisted after the first successful prime.
 _PRIMED_MARKER = f"{BRAINDRAIN_DIR}/primed.json"
+BUNDLES_DIR = Path(__file__).parent.parent / "config" / "bundles"
+DEFAULT_BUNDLE = "core"
 
 
 def _get_launcher_path() -> str:
@@ -119,7 +123,13 @@ def _read_primed_state(target_dir: Path) -> Optional[dict]:
         return None
 
 
-def _write_primed_state(target_dir: Path, agents: list[str]) -> None:
+def _write_primed_state(
+    target_dir: Path,
+    agents: list[str],
+    *,
+    bundle: str = DEFAULT_BUNDLE,
+    bundle_version: str = "1",
+) -> None:
     """Persist primed.json with timestamp and resolved agents."""
     marker = target_dir / _PRIMED_MARKER
     marker.parent.mkdir(parents=True, exist_ok=True)
@@ -128,11 +138,33 @@ def _write_primed_state(target_dir: Path, agents: list[str]) -> None:
             {
                 "primed_at": datetime.now(tz=timezone.utc).isoformat(),
                 "agents": agents,
+                "bundle": bundle,
+                "bundle_version": bundle_version,
             },
             indent=2,
         ),
         encoding="utf-8",
     )
+
+
+def _load_bundle_manifest(bundle: str) -> dict:
+    """Load bundle manifest from config/bundles/<bundle>.yaml."""
+    path = BUNDLES_DIR / f"{bundle}.yaml"
+    if not path.exists():
+        raise FileNotFoundError(f"Bundle manifest not found: {path}")
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"Invalid bundle manifest format: {path}")
+    required = ("name", "version", "agents", "rules", "skills", "mcp_servers")
+    missing = [k for k in required if k not in raw]
+    if missing:
+        raise ValueError(f"Bundle manifest missing keys {missing}: {path}")
+    return raw
+
+
+def _resolve_bundle_manifest(bundle: Optional[str]) -> dict:
+    bundle_name = (bundle or DEFAULT_BUNDLE).strip() or DEFAULT_BUNDLE
+    return _load_bundle_manifest(bundle_name)
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +313,52 @@ def deploy_templates(
             dst.write_text(content, encoding="utf-8")
             written[name] = {"action": "created", "backup": ""}
 
+    return written
+
+
+def deploy_subagent_templates(
+    target_dir: Path,
+    *,
+    sync_subagents: bool = False,
+) -> dict[str, dict[str, str | bool]]:
+    """
+    Deploy subagent markdown templates from config/templates/agents -> .cursor/agents.
+
+    Default mode is create-only:
+      - missing files are created
+      - existing non-empty files are preserved
+      - existing empty files are filled
+
+    When sync_subagents=True:
+      - existing files are backed up to .bak.<timestamp> and overwritten
+    """
+    agents_dir = target_dir / ".cursor" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    written: dict[str, dict[str, str | bool]] = {}
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+
+    if not AGENT_TEMPLATES_DIR.exists():
+        return written
+
+    for src in sorted(AGENT_TEMPLATES_DIR.glob("*.md")):
+        dst = agents_dir / src.name
+        content = src.read_text(encoding="utf-8")
+        if dst.exists():
+            if sync_subagents:
+                backup = dst.with_name(f"{dst.name}.bak.{ts}")
+                shutil.copy2(dst, backup)
+                dst.write_text(content, encoding="utf-8")
+                written[src.name] = {"action": "updated", "backup": str(backup)}
+            else:
+                existing = dst.read_text(encoding="utf-8", errors="ignore")
+                if existing.strip():
+                    written[src.name] = {"action": "skipped_existing", "backup": ""}
+                else:
+                    dst.write_text(content, encoding="utf-8")
+                    written[src.name] = {"action": "created_from_empty", "backup": ""}
+        else:
+            dst.write_text(content, encoding="utf-8")
+            written[src.name] = {"action": "created", "backup": ""}
     return written
 
 
@@ -607,6 +685,45 @@ def ensure_cursor_mcp_json_server_name(
     )
 
 
+def create_prime_snapshot(target_dir: Path, *, dry_run: bool = False) -> dict[str, str | bool]:
+    """Create a lightweight rollback snapshot before mutating prime files."""
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    snapshot_dir = target_dir / BRAINDRAIN_DIR / "rollback" / ts
+    tracked = [
+        target_dir / ".ruler" / "ruler.toml",
+        target_dir / ".cursor" / "mcp.json",
+        target_dir / ".cursor" / "rules" / "project-rules.mdc",
+        target_dir / ".cursor" / "rules" / "braindrain.mdc",
+    ]
+    if dry_run:
+        return {"ok": True, "dry_run": True, "snapshot_dir": str(snapshot_dir)}
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    for src in tracked:
+        if not src.exists():
+            continue
+        rel = src.relative_to(target_dir)
+        dst = snapshot_dir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        copied += 1
+    return {"ok": True, "snapshot_dir": str(snapshot_dir), "files_copied": copied}
+
+
+def verify_prime_install(target_dir: Path, bundle_manifest: dict) -> dict:
+    """Run a lightweight verification checklist after prime."""
+    checks = {
+        "bundle_manifest_loaded": bool(bundle_manifest),
+        "ruler_config_exists": (target_dir / ".ruler" / "ruler.toml").exists(),
+        "memory_file_exists": (target_dir / DEFAULT_MEMORY_FILE).exists(),
+        "index_file_exists": (target_dir / DEFAULT_INDEX_FILE).exists(),
+    }
+    return {
+        "ok": all(checks.values()),
+        "checks": checks,
+    }
+
+
 def compact_prime_result_for_mcp(
     result: dict,
     *,
@@ -907,12 +1024,14 @@ def prime(
     agents: Optional[list[str]] = None,
     dry_run: bool = False,
     sync_templates: bool = False,
+    sync_subagents: bool = False,
     all_agents: bool = False,
     local_only: bool = True,
     patch_user_cursor_mcp: bool = False,
+    bundle: str = DEFAULT_BUNDLE,
 ) -> dict:
     """
-    Full prime flow: deploy templates + run ruler apply + initialize memory.
+    Full prime flow: deploy templates + subagents + run ruler apply + initialize memory.
 
     Resolution order for agents:
       1. If agents is provided explicitly → use it.
@@ -921,8 +1040,10 @@ def prime(
       3. Otherwise → detect_prime_agents() → single best-fit agent.
 
     On second+ runs (primed.json marker exists), the marker is updated and
-    the same flow re-runs. Synthesis of project memory / project-rules.mdc
-    is handled in initialize_project_memory().
+    the same flow re-runs. `.cursor/agents/*.md` defaults to create-only unless
+    sync_subagents=True, which overwrites with timestamped backups.
+    Synthesis of project memory / project-rules.mdc is handled in
+    initialize_project_memory().
 
     Returns structured result for MCP tool response.
     """
@@ -947,8 +1068,13 @@ def prime(
         apply_agents, detect_method = detect_prime_agents(target_dir)
 
     launcher_path = _get_launcher_path()
+    try:
+        bundle_manifest = _resolve_bundle_manifest(bundle)
+    except Exception as e:
+        return {"ok": False, "error": str(e), "bundle": bundle}
 
     # Step 1: deploy templates.
+    snapshot = create_prime_snapshot(target_dir, dry_run=dry_run)
     if not dry_run:
         template_results = deploy_templates(
             target_dir,
@@ -957,11 +1083,19 @@ def prime(
             agents=apply_agents,
             all_agents=all_agents,
         )
+        subagent_results = deploy_subagent_templates(
+            target_dir,
+            sync_subagents=sync_subagents,
+        )
     else:
         template_results = {
             str(f.relative_to(TEMPLATES_DIR)): {"action": "dry_run", "backup": ""}
             for f in TEMPLATES_DIR.rglob("*") if f.is_file()
         }
+        subagent_results = {
+            str(f.name): {"action": "dry_run", "backup": ""}
+            for f in AGENT_TEMPLATES_DIR.glob("*.md")
+        } if AGENT_TEMPLATES_DIR.exists() else {}
 
     # Step 2: run ruler apply (Ruler does not touch .gitignore unless ruler_updates_gitignore).
     ruler_result = run_ruler_apply(
@@ -1018,9 +1152,18 @@ def prime(
 
     # Step 7: persist primed marker (skip on dry_run).
     if not dry_run and ruler_result.get("ok"):
-        _write_primed_state(target_dir, apply_agents or ["all"])
+        _write_primed_state(
+            target_dir,
+            apply_agents or ["all"],
+            bundle=bundle_manifest.get("name", bundle),
+            bundle_version=str(bundle_manifest.get("version", "1")),
+        )
 
-    ok = bool(ruler_result["ok"] and memory_init.get("ok", False))
+    verification = verify_prime_install(target_dir, bundle_manifest) if not dry_run else {
+        "ok": True,
+        "checks": {"dry_run": True},
+    }
+    ok = bool(ruler_result["ok"] and memory_init.get("ok", False) and verification.get("ok", False))
 
     return {
         "ok": ok,
@@ -1028,11 +1171,21 @@ def prime(
         "launcher_path": launcher_path,
         "dry_run": dry_run,
         "sync_templates": sync_templates,
+        "sync_subagents": sync_subagents,
         "all_agents": all_agents,
         "local_only": local_only,
         "is_first_prime": is_first_prime,
         "resolved_agents": apply_agents,
+        "bundle": bundle_manifest.get("name", bundle),
+        "bundle_manifest_version": str(bundle_manifest.get("version", "1")),
+        "bundle_manifest": {
+            "agents": bundle_manifest.get("agents", []),
+            "rules": bundle_manifest.get("rules", []),
+            "skills": bundle_manifest.get("skills", []),
+            "mcp_servers": bundle_manifest.get("mcp_servers", []),
+        },
         "detect_method": detect_method,
+        "rollback_snapshot": snapshot,
         "gitignore_protocol": gitignore_protocol,
         "cursor_rules": cursor_rules,
         "cursor_mcp_json": cursor_mcp_json,
@@ -1045,8 +1198,22 @@ def prime(
                 1 for v in template_results.values() if v["action"] == "skipped_existing"
             ),
         },
+        "subagents": {
+            "source": str(AGENT_TEMPLATES_DIR),
+            "deployed": subagent_results,
+            "new_files": sum(
+                1
+                for v in subagent_results.values()
+                if v["action"] in ("created", "created_from_empty")
+            ),
+            "updated_files": sum(1 for v in subagent_results.values() if v["action"] == "updated"),
+            "skipped_existing": sum(
+                1 for v in subagent_results.values() if v["action"] == "skipped_existing"
+            ),
+        },
         "ruler": ruler_result,
         "memory_init": memory_init,
+        "verification": verification,
         "next_steps": (
             []
             if ok
@@ -1054,6 +1221,7 @@ def prime(
                 "Check Node.js is installed (npx must be on PATH)",
                 "Run: npx @intellectronica/ruler apply --config .ruler/ruler.toml --local-only --no-gitignore",
                 "Run init_project_memory() to initialize project memory artifacts",
+                "Inspect result.verification.checks for failing deployment checks",
             ]
         ),
     }
