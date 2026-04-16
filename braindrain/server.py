@@ -17,7 +17,10 @@ from fastmcp import FastMCP
 
 from braindrain.config import Config
 from braindrain.context_mode_client import ContextModeClient, MCPProtocolError
+from braindrain.dream import DreamEngine
 from braindrain.env_probe import get_env_context as _probe_env_context
+from braindrain.memory_learning import can_promote_memory, evaluate_lesson_candidate
+from braindrain.observer import BrainEvent, ObserverStore
 from braindrain.output_router import build_routed_output, should_route
 from braindrain.scriptlib import (
     describe as _scriptlib_describe,
@@ -36,6 +39,8 @@ from braindrain.scriptlib import (
 from braindrain.telemetry import telemetry_from_config
 from braindrain.tool_registry import ToolRegistry
 from braindrain.workflow_engine import WorkflowEngine
+from braindrain.session import EpisodeRecord, SessionStore
+from braindrain.wiki_brain import WikiBrain
 from braindrain.workspace_primer import (
     initialize_project_memory as _initialize_project_memory,
 )
@@ -69,6 +74,10 @@ telemetry = telemetry_from_config(config.get("cost_tracking", {}) or {})
 
 _context_mode_client: Optional[ContextModeClient] = None
 _workflow_engine: Optional[WorkflowEngine] = None
+_observer_store: Optional[ObserverStore] = None
+_session_store: Optional[SessionStore] = None
+_wiki_brain: Optional[WikiBrain] = None
+_dream_engine: Optional[DreamEngine] = None
 
 
 def _get_context_mode_client() -> Optional[ContextModeClient]:
@@ -99,6 +108,85 @@ def _get_workflow_engine() -> Optional[WorkflowEngine]:
         context_mode_client_getter=_get_context_mode_client,
     )
     return _workflow_engine
+
+
+def _resolve_path(path_value: str | None, fallback: str) -> Path:
+    raw = path_value or fallback
+    return Path(raw).expanduser()
+
+
+def _get_observer_store() -> ObserverStore:
+    global _observer_store
+    if _observer_store is not None:
+        return _observer_store
+    observer_cfg = config.get("observer", {}) or {}
+    db_path = _resolve_path(observer_cfg.get("storage_path"), "~/.braindrain/events.db")
+    max_events = int(observer_cfg.get("ring_buffer_max", 10_000) or 10_000)
+    _observer_store = ObserverStore(db_path=db_path, max_events=max_events)
+    return _observer_store
+
+
+def _get_session_store() -> SessionStore:
+    global _session_store
+    if _session_store is not None:
+        return _session_store
+    sessions_cfg = config.get("sessions", {}) or {}
+    db_path = _resolve_path(sessions_cfg.get("storage_path"), "~/.braindrain/sessions.db")
+    inactivity_timeout = int(sessions_cfg.get("inactivity_timeout_minutes", 30) or 30)
+    _session_store = SessionStore(
+        db_path=db_path,
+        inactivity_timeout_minutes=inactivity_timeout,
+    )
+    return _session_store
+
+
+def _get_wiki_brain() -> WikiBrain:
+    global _wiki_brain
+    if _wiki_brain is not None:
+        return _wiki_brain
+    wiki_cfg = config.get("wiki_brain", {}) or {}
+    recall_cfg = wiki_cfg.get("recall", {}) or {}
+    forgetting_cfg = wiki_cfg.get("forgetting", {}) or {}
+    db_path = _resolve_path(wiki_cfg.get("storage_path"), "~/.braindrain/wiki-brain/brain.db")
+    _wiki_brain = WikiBrain(
+        db_path=db_path,
+        similarity_weight=float(recall_cfg.get("similarity_weight", 0.5) or 0.5),
+        recency_weight=float(recall_cfg.get("recency_weight", 0.3) or 0.3),
+        importance_weight=float(recall_cfg.get("importance_weight", 0.2) or 0.2),
+        recency_half_life_days=float(recall_cfg.get("recency_half_life_days", 30.0) or 30.0),
+        decay_half_life_days=float(forgetting_cfg.get("decay_half_life_days", 90.0) or 90.0),
+        prune_threshold=float(forgetting_cfg.get("prune_threshold", 0.05) or 0.05),
+        consolidation_similarity=float(forgetting_cfg.get("consolidation_similarity", 0.92) or 0.92),
+    )
+    return _wiki_brain
+
+
+def _get_dream_engine() -> DreamEngine:
+    global _dream_engine
+    if _dream_engine is not None:
+        return _dream_engine
+    dreaming_cfg = config.get("dreaming", {}) or {}
+    storage_cfg = dreaming_cfg.get("storage", {}) or {}
+    engine_cfg = {
+        "policy_version": dreaming_cfg.get("policy_version", "memory-lessons-v1"),
+        "quiet_minutes": int(dreaming_cfg.get("quiet_minutes", 30) or 30),
+        "lookback_hours": int(dreaming_cfg.get("lookback_hours", 72) or 72),
+        "max_episode_scan": int(dreaming_cfg.get("max_episode_scan", 50) or 50),
+        "max_event_scan": int(dreaming_cfg.get("max_event_scan", 250) or 250),
+        "max_session_scan": int(dreaming_cfg.get("max_session_scan", 20) or 20),
+        "weights": dreaming_cfg.get("weights", {}) or {},
+        "deep": dreaming_cfg.get("deep", {}) or {},
+        "storage_dir": storage_cfg.get("base_dir", "~/.braindrain/dreaming"),
+    }
+    provider_cfg = config.get("provider_context", {}) or {}
+    _dream_engine = DreamEngine(
+        observer_store=_get_observer_store(),
+        session_store=_get_session_store(),
+        wiki_brain=_get_wiki_brain(),
+        config=engine_cfg,
+        provider_context=provider_cfg,
+    )
+    return _dream_engine
 
 
 session_stats = {
@@ -405,6 +493,237 @@ async def search_index(query: str, limit: int = 5) -> dict:
 async def get_token_dashboard() -> dict:
     """Compact token-savings dashboard (estimated tokens, Claude-focused)."""
     return telemetry.snapshot()
+
+
+@mcp.tool()
+def evaluate_memory_candidate(candidate: str) -> dict:
+    """Evaluate whether a memory candidate can be promoted safely."""
+    policy = (config.get("memory_learning", {}) or {}).get("promotion", {}) or {}
+    return can_promote_memory(candidate, policy)
+
+
+@mcp.tool()
+def evaluate_lesson_candidate_tool(
+    problem: str,
+    action: str,
+    outcome: str,
+    local_critique: str = "",
+    global_reflection: str = "",
+    evidence_refs: list[str] | None = None,
+) -> dict:
+    """Evaluate grounded episode content for lesson/playbook promotion."""
+    lessons_cfg = (config.get("lessons", {}) or {}).get("promotion", {}) or {}
+    return evaluate_lesson_candidate(
+        problem=problem,
+        action=action,
+        outcome=outcome,
+        local_critique=local_critique,
+        global_reflection=global_reflection,
+        evidence_refs=evidence_refs or [],
+        policy=lessons_cfg,
+    )
+
+
+@mcp.tool()
+def record_observer_event(
+    session_id: str,
+    event_type: str,
+    tool_name: str | None = None,
+    files_touched: list[str] | None = None,
+    token_cost: int = 0,
+    duration_ms: int = 0,
+    metadata: dict | None = None,
+    timestamp: float | None = None,
+) -> dict:
+    """Record an observer event into the episodic ring buffer."""
+    event = BrainEvent(
+        timestamp=float(timestamp or datetime.now().timestamp()),
+        session_id=session_id,
+        event_type=event_type,
+        tool_name=tool_name,
+        files_touched=files_touched or [],
+        token_cost=token_cost,
+        duration_ms=duration_ms,
+        metadata=metadata or {},
+    )
+    return _get_observer_store().record_event(event)
+
+
+@mcp.tool()
+def get_event_stats(session_id: str | None = None) -> dict:
+    """Get observer event counts and latest activity."""
+    return _get_observer_store().get_event_stats(session_id=session_id)
+
+
+@mcp.tool()
+def touch_session(
+    session_id: str,
+    tool_name: str | None = None,
+    files_modified: list[str] | None = None,
+    key_decision: str | None = None,
+    error: str | None = None,
+    token_delta: int = 0,
+    timestamp: float | None = None,
+) -> dict:
+    """Update session summary telemetry."""
+    summary = _get_session_store().touch_session(
+        session_id=session_id,
+        tool_name=tool_name,
+        files_modified=files_modified,
+        key_decision=key_decision,
+        error=error,
+        token_delta=token_delta,
+        timestamp=timestamp,
+    )
+    return summary.__dict__
+
+
+@mcp.tool()
+def get_session_summary(session_id: str | None = None) -> dict:
+    """Return latest session summary or a specific session."""
+    summary = _get_session_store().get_session_summary(session_id=session_id)
+    return summary.__dict__ if summary else {"status": "not_found", "session_id": session_id}
+
+
+@mcp.tool()
+def record_episode(
+    session_id: str,
+    problem: str,
+    context: str,
+    action: str,
+    outcome: str,
+    evidence_refs: list[str] | None = None,
+    local_critique: str = "",
+    global_reflection: str = "",
+    confidence: float = 0.5,
+    tags: list[str] | None = None,
+    episode_id: str = "",
+) -> dict:
+    """Store a grounded episode candidate for future dream consolidation."""
+    episode = EpisodeRecord(
+        episode_id=episode_id,
+        session_id=session_id,
+        problem=problem,
+        context=context,
+        action=action,
+        outcome=outcome,
+        evidence_refs=evidence_refs or [],
+        local_critique=local_critique,
+        global_reflection=global_reflection,
+        confidence=confidence,
+        tags=tags or [],
+    )
+    return _get_session_store().record_episode(episode)
+
+
+@mcp.tool()
+def list_episodes(session_id: str | None = None, limit: int = 20) -> dict:
+    """List recent episodes (optionally by session)."""
+    episodes = _get_session_store().list_episodes(session_id=session_id, limit=limit)
+    return {"episodes": [episode.__dict__ for episode in episodes], "count": len(episodes)}
+
+
+@mcp.tool()
+def store_fact(
+    content: str,
+    record_class: str = "semantic",
+    title: str | None = None,
+    source: str = "manual",
+    category: str = "general",
+    importance: float = 0.5,
+    confidence: float = 0.5,
+    tags: list[str] | None = None,
+    evidence_refs: list[str] | None = None,
+    metadata: dict | None = None,
+) -> dict:
+    """Store a durable semantic/procedural/lesson record."""
+    return _get_wiki_brain().store_fact(
+        content=content,
+        record_class=record_class,
+        title=title,
+        source=source,
+        category=category,
+        importance=importance,
+        confidence=confidence,
+        tags=tags or [],
+        evidence_refs=evidence_refs or [],
+        metadata=metadata or {},
+    )
+
+
+@mcp.tool()
+def query_facts(
+    query: str = "",
+    record_class: str | None = None,
+    limit: int = 10,
+    include_superseded: bool = False,
+) -> dict:
+    """Query durable records from Wiki-Brain."""
+    records = _get_wiki_brain().query_records(
+        query=query,
+        record_class=record_class,
+        limit=limit,
+        include_superseded=include_superseded,
+    )
+    return {"records": [record.__dict__ for record in records], "count": len(records)}
+
+
+@mcp.tool()
+def cognitive_recall(query: str, record_class: str | None = None, limit: int = 5) -> dict:
+    """Score and rank durable recall candidates."""
+    return {
+        "results": _get_wiki_brain().cognitive_recall(
+            query=query,
+            record_class=record_class,
+            limit=limit,
+        )
+    }
+
+
+@mcp.tool()
+def review_playbook(query: str = "", limit: int = 10) -> dict:
+    """Review active lesson/playbook records."""
+    return {"records": _get_wiki_brain().review_playbook(query=query, limit=limit)}
+
+
+@mcp.tool()
+def record_memory_metric(
+    metric_type: str,
+    value: float = 1.0,
+    source: str = "manual",
+    metadata: dict | None = None,
+) -> dict:
+    """Record durable memory-system metric events."""
+    return _get_wiki_brain().record_metric(
+        metric_type,
+        value=value,
+        source=source,
+        metadata=metadata or {},
+    )
+
+
+@mcp.tool()
+def get_memory_metrics() -> dict:
+    """Get memory metrics and durable record counts."""
+    return _get_wiki_brain().get_metrics_snapshot()
+
+
+@mcp.tool()
+def get_provider_context_policy() -> dict:
+    """Return provider boundary strategy for durable vs ephemeral context."""
+    return config.get("provider_context", {}) or {"strategy": "provider-native-first"}
+
+
+@mcp.tool()
+def run_dream(mode: str = "full", force: bool = False) -> dict:
+    """Run Light/REM/Deep memory consolidation."""
+    return _get_dream_engine().run(mode=mode, force=force)
+
+
+@mcp.tool()
+def get_dream_status() -> dict:
+    """Read latest dream consolidation status."""
+    return _get_dream_engine().get_status()
 
 
 @mcp.tool()
