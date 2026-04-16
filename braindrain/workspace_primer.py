@@ -20,6 +20,7 @@ from braindrain.scriptlib import (
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "config" / "templates" / "ruler"
 AGENT_TEMPLATES_DIR = Path(__file__).parent.parent / "config" / "templates" / "agents"
+CURSOR_HOOK_TEMPLATES_DIR = Path(__file__).parent.parent / "config" / "templates" / "cursor"
 
 # Canonical project-local docs directory (gitignored; never committed).
 BRAINDRAIN_DIR = ".braindrain"
@@ -373,6 +374,78 @@ def deploy_subagent_templates(
         else:
             dst.write_text(content, encoding="utf-8")
             written[src.name] = {"action": "created", "backup": ""}
+    return written
+
+
+def deploy_cursor_hook_templates(
+    target_dir: Path,
+    *,
+    sync_templates: bool = False,
+    dry_run: bool = False,
+) -> dict[str, dict[str, str | bool]]:
+    """
+    Deploy Cursor hooks from ``config/templates/cursor`` → ``.cursor/``.
+
+    Writes:
+
+    - ``.cursor/hooks.json``
+    - ``.cursor/hooks/on-stop-gitops.sh``
+    - ``.cursor/hooks/on-stop-observe.sh``
+
+    Default is create-only (existing files are preserved). When
+    ``sync_templates=True``, existing files are backed up then overwritten —
+    same contract as ``deploy_templates()`` for Ruler sources.
+    """
+    if not CURSOR_HOOK_TEMPLATES_DIR.is_dir():
+        return {}
+
+    written: dict[str, dict[str, str | bool]] = {}
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    cursor_dir = target_dir / ".cursor"
+    hooks_dir = cursor_dir / "hooks"
+
+    def _maybe_chmod_exec(path: Path) -> None:
+        if dry_run or not path.is_file():
+            return
+        try:
+            path.chmod(path.stat().st_mode | 0o111)
+        except OSError:
+            pass
+
+    entries: list[tuple[str, Path, Path, bool]] = []
+    hj = CURSOR_HOOK_TEMPLATES_DIR / "hooks.json"
+    if hj.is_file():
+        entries.append(("hooks.json", hj, cursor_dir / "hooks.json", False))
+    shell_src = CURSOR_HOOK_TEMPLATES_DIR / "hooks"
+    if shell_src.is_dir():
+        for src in sorted(shell_src.glob("*.sh")):
+            entries.append(
+                (f"hooks/{src.name}", src, hooks_dir / src.name, True)
+            )
+
+    for rel, src, dst, executable in entries:
+        if dry_run:
+            written[rel] = {"action": "dry_run", "backup": ""}
+            continue
+
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        content = src.read_text(encoding="utf-8")
+        if dst.exists():
+            if not sync_templates:
+                written[rel] = {"action": "skipped_existing", "backup": ""}
+                continue
+            backup = dst.with_name(f"{dst.name}.bak.{ts}")
+            shutil.copy2(dst, backup)
+            dst.write_text(content, encoding="utf-8")
+            if executable:
+                _maybe_chmod_exec(dst)
+            written[rel] = {"action": "updated", "backup": str(backup)}
+        else:
+            dst.write_text(content, encoding="utf-8")
+            if executable:
+                _maybe_chmod_exec(dst)
+            written[rel] = {"action": "created", "backup": ""}
+
     return written
 
 
@@ -838,7 +911,7 @@ def compact_prime_result_for_mcp(
     """
     if not isinstance(result, dict):
         return result
-    out = {k: v for k, v in result.items() if k not in ("templates", "ruler", "memory_init")}
+    out = {k: v for k, v in result.items() if k not in ("templates", "ruler", "memory_init", "cursor_hooks")}
     tpl = result.get("templates") or {}
     deployed = tpl.get("deployed") or {}
     out["templates"] = {
@@ -874,6 +947,20 @@ def compact_prime_result_for_mcp(
                 slim[k] = v  # type: ignore[assignment]
         mem["artifacts"] = slim
     out["memory_init"] = mem
+    ch = result.get("cursor_hooks") or {}
+    deployed_ch = ch.get("deployed") or {}
+    if isinstance(deployed_ch, dict) and deployed_ch:
+        out["cursor_hooks"] = {
+            "source": ch.get("source"),
+            "skipped": ch.get("skipped"),
+            "new_files": ch.get("new_files"),
+            "updated_files": ch.get("updated_files"),
+            "skipped_existing": ch.get("skipped_existing"),
+            "deployed_summary": [
+                {"file": k, "action": (v or {}).get("action")}
+                for k, v in deployed_ch.items()
+            ],
+        }
     out["subagents"] = result.get("subagents")
     out["codex_subagent_config"] = result.get("codex_subagent_config")
     out["_mcp_response_compact"] = True
@@ -1134,7 +1221,8 @@ def prime(
     codex_agent_targets: Optional[list[str]] = None,
 ) -> dict:
     """
-    Full prime flow: deploy templates + subagents + run ruler apply + initialize memory.
+    Full prime flow: deploy templates + subagents + Cursor hook templates + run ruler apply
+    + initialize memory.
 
     Resolution order for agents:
       1. If agents is provided explicitly → use it.
@@ -1145,6 +1233,9 @@ def prime(
     On second+ runs (primed.json marker exists), the marker is updated and
     the same flow re-runs. `.cursor/agents/*.md` defaults to create-only unless
     sync_subagents=True, which overwrites with timestamped backups.
+    When Cursor is in scope, ``config/templates/cursor`` → ``.cursor/hooks.json``
+    and ``.cursor/hooks/*.sh`` are deployed (create-only; use sync_templates=True
+    to refresh hooks from templates).
     Synthesis of project memory / project-rules.mdc is handled in
     initialize_project_memory().
 
@@ -1170,6 +1261,10 @@ def prime(
     else:
         apply_agents, detect_method = detect_prime_agents(target_dir)
 
+    cursor_in_scope = bool(
+        all_agents or apply_agents is None or "cursor" in (apply_agents or [])
+    )
+
     launcher_path = _get_launcher_path()
     try:
         bundle_manifest = _resolve_bundle_manifest(bundle)
@@ -1192,6 +1287,15 @@ def prime(
             target_dir,
             sync_subagents=sync_subagents,
         )
+        cursor_hook_results = (
+            deploy_cursor_hook_templates(
+                target_dir,
+                sync_templates=sync_templates,
+                dry_run=False,
+            )
+            if cursor_in_scope
+            else {}
+        )
     else:
         template_results = {
             str(f.relative_to(TEMPLATES_DIR)): {"action": "dry_run", "backup": ""}
@@ -1201,6 +1305,15 @@ def prime(
             str(f.name): {"action": "dry_run", "backup": ""}
             for f in AGENT_TEMPLATES_DIR.glob("*.md")
         } if AGENT_TEMPLATES_DIR.exists() else {}
+        cursor_hook_results = (
+            deploy_cursor_hook_templates(
+                target_dir,
+                sync_templates=sync_templates,
+                dry_run=True,
+            )
+            if cursor_in_scope
+            else {}
+        )
 
     # Step 2: run ruler apply (Ruler does not touch .gitignore unless ruler_updates_gitignore).
     ruler_result = run_ruler_apply(
@@ -1216,9 +1329,6 @@ def prime(
     )
 
     # Step 4: Cursor project rules from .ruler/RULES.md (Ruler may omit or differ).
-    cursor_in_scope = bool(
-        all_agents or apply_agents is None or "cursor" in (apply_agents or [])
-    )
     cursor_rules: dict[str, str | bool] = {"skipped": True}
     if cursor_in_scope and not dry_run:
         cursor_rules = sync_cursor_rules_from_ruler(
@@ -1339,6 +1449,20 @@ def prime(
             "updated_files": sum(1 for v in subagent_results.values() if v["action"] == "updated"),
             "skipped_existing": sum(
                 1 for v in subagent_results.values() if v["action"] == "skipped_existing"
+            ),
+        },
+        "cursor_hooks": {
+            "source": str(CURSOR_HOOK_TEMPLATES_DIR),
+            "skipped": not cursor_in_scope,
+            "deployed": cursor_hook_results,
+            "new_files": sum(
+                1 for v in cursor_hook_results.values() if v.get("action") == "created"
+            ),
+            "updated_files": sum(
+                1 for v in cursor_hook_results.values() if v.get("action") == "updated"
+            ),
+            "skipped_existing": sum(
+                1 for v in cursor_hook_results.values() if v.get("action") == "skipped_existing"
             ),
         },
         "ruler": ruler_result,

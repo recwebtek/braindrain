@@ -413,7 +413,7 @@ async def ping() -> dict:
     return {
         "status": "ok",
         "service": "braindrain",
-        "version": config.get("version", "1.0.2"),
+        "version": config.get("version", "1.0.3"),
         "timestamp": datetime.now().isoformat(),
     }
 
@@ -434,28 +434,12 @@ def get_env_context(refresh: bool = False) -> dict:
     installs, file operations, or tool invocations — so you know exactly what's
     available without discovery probing.
     """
-    compact_default = bool(config.get("token_policy.compact_env_context_default", True))
     result = _probe_env_context(refresh=refresh)
-    if compact_default:
-        summary = result["summary"]
-        compact = {
-            "generated_at": summary.get("generated_at"),
-            "identity": summary.get("identity"),
-            "os": summary.get("os"),
-            "shell": summary.get("shell"),
-            "package_managers": summary.get("package_managers"),
-            "runtimes": summary.get("runtimes"),
-            "modern_cli_tools": summary.get("modern_cli_tools"),
-            "agent_hints": summary.get("agent_hints"),
-        }
-    else:
-        compact = result["summary"]
     return {
         "cached": result["cached"],
         "probe_timestamp": result["probe_timestamp"],
         "agents_md_block": result["agents_md_block"],
-        "summary": compact,
-        "compact": compact_default,
+        "summary": result["summary"],
     }
 
 
@@ -761,6 +745,9 @@ async def prime_workspace(
     After priming:
     - Agents that support project-local MCP configs will have braindrain wired.
     - Agent rule files will reference the braindrain protocol.
+    - When Cursor is in the resolved agent set, ``config/templates/cursor/`` is
+      copied to ``.cursor/hooks.json`` and ``.cursor/hooks/*.sh`` (see result
+      ``cursor_hooks``; use sync_templates to refresh existing hook files).
     - Project memory is initialized under .braindrain/ (gitignored).
     - Call get_env_context() to populate the live env block.
     """

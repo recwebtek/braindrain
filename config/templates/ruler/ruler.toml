@@ -3,6 +3,8 @@
 # BRAINDRAIN_LAUNCHER_PATH is substituted by install.sh / prime_workspace()
 # NOTE: `.cursor/agents/` subagent markdown files are deployed by BRAINDRAIN
 # prime_workspace from `config/templates/agents/` and are not managed by Ruler.
+# NOTE: `.cursor/hooks.json` and `.cursor/hooks/*.sh` are deployed from
+# `config/templates/cursor/` when Cursor is in the resolved agent set (not Ruler).
 
 [ruler]
 version = "1"

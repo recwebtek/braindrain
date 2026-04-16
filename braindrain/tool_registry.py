@@ -22,6 +22,8 @@ class ToolReference:
     description: str
     tags: list[str]
     defer_loading: bool
+    roles: list[str]
+    bundles: list[str]
 
 
 class ToolRegistry:
@@ -52,6 +54,8 @@ class ToolRegistry:
                 description=tool.description,
                 tags=tool.tags,
                 defer_loading=tool.defer_loading,
+                roles=tool.roles,
+                bundles=tool.bundles,
             )
             for tool in self._tools.values()
         ]
@@ -67,13 +71,19 @@ class ToolRegistry:
         tokenized_corpus = [doc.lower().split() for doc in corpus]
         self._search_index = BM25Okapi(tokenized_corpus)
 
-    def search(self, query: str, top_k: int = 5) -> list[dict]:
+    def search(
+        self,
+        query: str,
+        top_k: int = 5,
+        role: Optional[str] = None,
+        bundle: Optional[str] = None,
+    ) -> list[dict]:
         """
         Search tools by query using BM25.
         Returns lightweight references (~300 tokens total), not full schemas.
         """
         if not self._search_index:
-            return self._get_all_tools(top_k)
+            return self._get_all_tools(top_k, role=role, bundle=bundle)
 
         query_lower = query.lower()
         query_tokens = query_lower.split()
@@ -94,30 +104,60 @@ class ToolRegistry:
                         "description": ref.description,
                         "tags": ref.tags,
                         "defer_loading": ref.defer_loading,
+                        "roles": ref.roles,
+                        "bundles": ref.bundles,
                         "score": float(scores[idx]),
                     }
                 )
 
+        results = self._filter_results(results, role=role, bundle=bundle)
         if not results:
-            return self._get_all_tools(top_k)
+            return self._get_all_tools(top_k, role=role, bundle=bundle)
 
         return results
 
-    def _get_all_tools(self, top_k: int) -> list[dict]:
+    def _get_all_tools(
+        self, top_k: int, role: Optional[str] = None, bundle: Optional[str] = None
+    ) -> list[dict]:
         """Fallback: return all tools if search fails"""
-        return [
+        results = [
             {
                 "name": ref.name,
                 "description": ref.description,
                 "tags": ref.tags,
                 "defer_loading": ref.defer_loading,
+                "roles": ref.roles,
+                "bundles": ref.bundles,
             }
-            for ref in self._tool_refs[:top_k]
+            for ref in self._tool_refs
         ]
+        filtered = self._filter_results(results, role=role, bundle=bundle)
+        return filtered[:top_k]
 
-    async def search_async(self, query: str, top_k: int = 5) -> list[dict]:
+    def _filter_results(
+        self, results: list[dict], role: Optional[str] = None, bundle: Optional[str] = None
+    ) -> list[dict]:
+        if not role and not bundle:
+            return results
+        out: list[dict] = []
+        for item in results:
+            roles = item.get("roles") or []
+            bundles = item.get("bundles") or []
+            role_ok = True if not role else (not roles or role in roles)
+            bundle_ok = True if not bundle else (not bundles or bundle in bundles)
+            if role_ok and bundle_ok:
+                out.append(item)
+        return out
+
+    async def search_async(
+        self,
+        query: str,
+        top_k: int = 5,
+        role: Optional[str] = None,
+        bundle: Optional[str] = None,
+    ) -> list[dict]:
         """Async version of search"""
-        return await asyncio.to_thread(self.search, query, top_k)
+        return await asyncio.to_thread(self.search, query, top_k, role, bundle)
 
     def count(self) -> int:
         """Return total number of registered tools"""

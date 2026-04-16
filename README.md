@@ -1,7 +1,7 @@
 # braindrain
 
 **Version:** V1.0.3  
-**Last Updated:** 2026-04-10
+**Last Updated:** 2026-04-16
 
 An MCP server that keeps AI agents lean. It stops context windows bloating with redundant tool definitions, large raw outputs, and repeated environment discovery — and gives agents the right information at the right time instead.
 
@@ -59,7 +59,7 @@ OS environment data is probed once, cached locally, and served instantly on ever
 | Tool | When to use |
 |---|---|
 | `list_workflows()` | See what multi-step workflows are available. |
-| `prime_workspace(path, agents, dry_run, sync_templates, sync_subagents, all_agents, local_only, codex_agent_targets)` | Prime a project for AI agent use. **First run**: auto-detects current IDE/CLI (`CURSOR_*` → `TERM_PROGRAM` → dotfolders → fallback `cursor`); response includes **`detect_method`**. Always rewrites **minimal `.ruler/ruler.toml`** when targeting specific agents (even if `.ruler/` already existed) so Ruler’s `.gitignore` and config match the agent list. Also deploys Cursor/Codex subagent files from templates and reports summary in **`subagents`**. Codex config policy: create `.codex/config.toml` if missing; if present, only update managed `BRAINDRAIN SUBAGENTS` block when `sync_subagents=true` (backup-first). After apply, syncs **`.cursor/rules/braindrain.mdc`** and **`project-rules.mdc`** (managed fenced region) from `.ruler/RULES.md` — see **`cursor_rules`** in the result. Set `all_agents=True` for the full template. Set `sync_templates=True` to force-refresh `.ruler/*`; set `sync_subagents=True` to refresh existing subagent files/config blocks. |
+| `prime_workspace(...)` | Prime a project for AI agent use. **Parameters** include `sync_subagents`, `sync_templates`, `bundle` (`core` default), `codex_agent_targets`, `patch_user_cursor_mcp`, `compact_mcp_response`. **First run**: auto-detects current IDE/CLI (`CURSOR_*` → `TERM_PROGRAM` → dotfolders → fallback `cursor`); response includes **`detect_method`**. Uses **`config/bundles/<bundle>.yaml`** for bundle metadata. Always rewrites **minimal `.ruler/ruler.toml`** when targeting specific agents. Deploys Cursor/Codex subagent files from templates (**`subagents`**) and manages Codex **`BRAINDRAIN SUBAGENTS`** in `.codex/config.toml` when allowed (**`codex_subagent_config`**). After apply, syncs **`.cursor/rules/braindrain.mdc`** and **`project-rules.mdc`** from `.ruler/RULES.md` — see **`cursor_rules`**. When Cursor is in scope, copies **`config/templates/cursor/`** → **`.cursor/hooks.json`** and **`.cursor/hooks/*.sh`** — see **`cursor_hooks`** (create-only; **`sync_templates=true`** refreshes Ruler sources and hook templates). **`sync_subagents=true`** updates existing subagent files and managed Codex blocks (backup-first). Set **`all_agents=True`** for the full template. |
 | `init_project_memory(path, dry_run)` | Initialize project memory artifacts only (`.braindrain/AGENT_MEMORY.md` and `.cursor/hooks/state/continual-learning-index.json`). Migrates legacy `.devdocs/` on first call. Idempotent. |
 | `scriptlib_enable(path, scope, harvest, dry_run)` | Hard-opt-in project or global scriptlib. Project enable can immediately harvest reusable workspace scripts into `.scriptlib/`. |
 | `scriptlib_harvest_workspace(path, dry_run)` | Copy scripts from `tests/`, `scripts/`, and supported locations into scriptlib metadata entries and catalog. |
@@ -348,64 +348,8 @@ Environment variables (copy `.env.example` to `.env.dev` to start):
 | `OLLAMA_HOST` | Ollama endpoint (default: `http://localhost:11434`) |
 | `OPENAI_API_KEY` | Optional — cloud embeddings / semantic search |
 | `BRAINDRAIN_DISABLE_DOCKER_SANDBOX` | Set to `1` to skip the Docker workflow sandbox |
-| `MATTERMOST_ENDPOINT` | Mattermost server base URL for Mattermost MCP integration (example: `http://localhost:8065`) |
-| `MATTERMOST_TOKEN` | Mattermost personal access token used by the Mattermost MCP server |
-| `MATTERMOST_TEAM` | Team identifier/name used by the selected Mattermost MCP server |
-| `COORDINATOR_MATTERMOST_ENABLED` | Set to `1` to allow coordinator subagents to auto-use Mattermost comms protocol |
 
 The server auto-loads `.env.dev` → `.env.prod` → `.env` (first found, non-overriding of existing env vars).
-
----
-
-## Mattermost coordinator comms
-
-You can give the coordinator read+post communication via an existing Mattermost MCP server.
-
-### 1) Add Mattermost MCP server to Cursor project config
-
-`install.sh` now ensures a project-level Mattermost entry exists in `.cursor/mcp.json`:
-
-```json
-"mattermost": {
-  "command": "npx",
-  "args": ["-y", "mcp-server-mattermost"],
-  "env": {
-    "endpoint": "${MATTERMOST_ENDPOINT}",
-    "token": "${MATTERMOST_TOKEN}",
-    "team": "${MATTERMOST_TEAM}"
-  },
-  "type": "stdio",
-  "serverName": "mattermost"
-}
-```
-
-### 2) Configure env vars locally (do not commit tokens)
-
-Recommended split:
-- `.env.dev` for local testing
-- `.env.prod` for stable daily-driver usage
-
-Add:
-
-```bash
-MATTERMOST_ENDPOINT=http://localhost:8065
-MATTERMOST_TOKEN=your_personal_access_token
-MATTERMOST_TEAM=your_team_name_or_id
-COORDINATOR_MATTERMOST_ENABLED=1
-```
-
-### 3) Verify read/post loop
-
-After reloading MCP servers in Cursor:
-- Verify Mattermost tools are visible (for example `read_channel`, `search_posts`, `create_post`)
-- Read latest channel context
-- Post a heartbeat message
-- Run one full loop: read context -> produce status delta -> create post update
-
-If tool visibility fails:
-- Ensure `npx` is available and can resolve `mcp-server-mattermost`
-- Confirm `MATTERMOST_ENDPOINT` points to the reachable Mattermost host
-- Confirm PAT has permission to read and post in target channels
 
 ---
 
@@ -415,6 +359,7 @@ If tool visibility fails:
 braindrain/
 ├── braindrain/
 │   ├── server.py               # FastMCP server — all MCP tools registered here
+│   ├── workspace_primer.py     # prime_workspace: Ruler templates, subagents, Cursor hooks
 │   ├── env_probe.py            # OS fingerprint probe, synthesis, and cache
 │   ├── config.py               # YAML config loader
 │   ├── context_mode_client.py  # context-mode stdio client (output routing)
@@ -426,6 +371,11 @@ braindrain/
 │   ├── tool_registry.py        # BM25 search + defer_loading
 │   └── types.py
 ├── config/
+│   ├── bundles/                # bundle manifests (`core`, `comms`, …) for prime_workspace
+│   ├── templates/
+│   │   ├── ruler/              # Ruler sources (RULES.md, ruler.toml) for prime_workspace
+│   │   ├── agents/             # `.cursor/agents/*.md` subagent templates
+│   │   └── cursor/             # Cursor hooks: `hooks.json`, `hooks/*.sh`
 │   ├── hub_config.yaml         # tools, workflows, model tiers, embeddings
 │   ├── braindrain              # launcher script (self-detecting, venv-pinned)
 │   ├── opencode_mcp.jsonc      # OpenCode reference config
@@ -448,6 +398,7 @@ braindrain/
   - Source-of-truth for those generated rule files is `config/templates/ruler/RULES.md` (and `.ruler/ruler.toml`).
   - **Important**: files like `CLAUDE.md` are **generated artifacts** (gitignored) and should be treated as **disposable**. Edit the templates instead, then re-run Ruler.
   - If a project already has older `.ruler/*` files, call `prime_workspace(..., sync_templates=true)` to refresh those templates safely and propagate new guidance without manual cleanup.
+- **Cursor hooks (not Ruler)**: when the resolved agent set includes Cursor, `prime_workspace()` copies `config/templates/cursor/hooks.json` and `config/templates/cursor/hooks/*.sh` into `.cursor/` (create-only by default; `sync_templates=true` overwrites with timestamped backups). Edit templates under `config/templates/cursor/` in this repo, then re-prime consumer projects to roll out hook changes.
 - **Subagent templates**: `prime_workspace()` deploys:
   - `config/templates/cursor-subagents/` -> `.cursor/agents/`
   - `config/templates/cursor-skills/` -> `.cursor/skills/` (e.g. scriptlib-librarian)
@@ -455,9 +406,9 @@ braindrain/
   Existing files are create-only by default; set `sync_subagents=true` to update with backups. `.cursor/` is gitignored at repo root; do not commit generated agent/skill files—edit templates and re-run `prime_workspace`.
 - **Codex config merge**: `prime_workspace()` appends/updates a managed `BRAINDRAIN SUBAGENTS` block in `.codex/config.toml` only when allowed by policy (`sync_subagents=true` for existing files). Existing MCP server entries remain intact.
 - **Project memory artifacts**: initialized by `prime_workspace()` (or `init_project_memory()`) and kept separate from generated protocol files:
-  - `.braindrain/AGENT_MEMORY.md` for high-signal durable memory (legacy `.devdocs/AGENT_MEMORY.md` may be migrated on first run)
+  - `.braindrain/AGENT_MEMORY.md` for high-signal durable memory (legacy `.devdocs/` / `.devdocs/AGENT_MEMORY.md` may be migrated on first run)
   - `.cursor/hooks/state/continual-learning-index.json` for incremental transcript indexing
-  - `AGENTS.md` remains generator-owned protocol text and should not be used as memory storage.
+  - `AGENTS.md` remains generator-owned protocol text and should not be used as memory storage
 - **Scriptlib**: disabled by default. When enabled for a workspace, braindrain seeds `.scriptlib/`, harvests reusable scripts, and injects scriptlib guidance into generated agent rule surfaces for that workspace only.
 
 ### Docs ownership map (token observability)

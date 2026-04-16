@@ -1,0 +1,21 @@
+name: research-orchestration
+version: "1"
+description: Multi-agent research and orchestration bundle.
+agents:
+  - cursor
+rules:
+  - braindrain
+  - project-rules
+skills:
+  - coordinator
+  - testops
+  - research
+mcp_servers:
+  - braindrain
+capability_profiles:
+  default_role: research
+  roles:
+    research:
+      tool_profile: research
+    coordinator:
+      tool_profile: orchestration

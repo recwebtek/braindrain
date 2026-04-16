@@ -1,7 +1,7 @@
 """Type definitions for BRAINDRAIN"""
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 
 @dataclass
@@ -17,18 +17,22 @@ class MCPToolConfig:
     input_examples: list[dict] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
     token_weight: str = "medium"
+    roles: list[str] = field(default_factory=list)
+    bundles: list[str] = field(default_factory=list)
 
 
 @dataclass
 class WorkflowConfig:
     name: str
     description: str
-    steps: list[str]
+    steps: list[Any]
     executes_in: str = "sandbox"
     model: str = "tier_local"
     token_budget: int = 2000
     plan_before_run: bool = False
     input_examples: list[dict] = field(default_factory=list)
+    required_roles: list[str] = field(default_factory=list)
+    output_mode: str = "compact"
 
 
 @dataclass
@@ -53,3 +57,14 @@ class ConfigData:
     complexity_router: dict = field(default_factory=dict)
     cache: dict = field(default_factory=dict)
     cost_tracking: dict = field(default_factory=dict)
+    bundles: dict = field(default_factory=dict)
+    agent_capabilities: dict = field(default_factory=dict)
+    token_policy: dict = field(default_factory=dict)
+    comms: dict = field(default_factory=dict)
+    memory_learning: dict = field(default_factory=dict)
+    observer: dict = field(default_factory=dict)
+    sessions: dict = field(default_factory=dict)
+    wiki_brain: dict = field(default_factory=dict)
+    lessons: dict = field(default_factory=dict)
+    dreaming: dict = field(default_factory=dict)
+    provider_context: dict = field(default_factory=dict)

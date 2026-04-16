@@ -260,12 +260,30 @@ class WorkflowEngine:
 
         steps_out: list[StepResult] = []
 
+        requested_role = str(args.get("role", "")).strip()
+        if wf.required_roles and requested_role and requested_role not in wf.required_roles:
+            return {
+                "workflow": name,
+                "status": "role_not_allowed",
+                "required_roles": wf.required_roles,
+                "provided_role": requested_role,
+            }
+
         # Execute steps sequentially (simple, deterministic)
         for step in wf.steps:
             started = datetime.now().isoformat()
             ok = True
-            tool_name = step.split(".")[0] if "." in step else step
-            method = step.split(".")[1] if "." in step else step
+            step_args = dict(args)
+            if isinstance(step, dict):
+                step_name = str(step.get("name", ""))
+                tool_name = step_name.split(".")[0] if "." in step_name else step_name
+                method = step_name.split(".")[1] if "." in step_name else step_name
+                override_args = step.get("args", {})
+                if isinstance(override_args, dict):
+                    step_args.update(override_args)
+            else:
+                tool_name = step.split(".")[0] if "." in step else step
+                method = step.split(".")[1] if "." in step else step
 
             tool = self._config.get_tool(tool_name)
             if not tool or not tool.command:
@@ -285,7 +303,7 @@ class WorkflowEngine:
 
             try:
                 client = StdioMCPClient(tool.command)
-                output_obj = await client.call_tool(method, args)
+                output_obj = await client.call_tool(method, step_args)
             except Exception as e:  # pragma: no cover
                 ok = False
                 output_obj = None

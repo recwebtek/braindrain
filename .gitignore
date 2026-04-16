@@ -20,6 +20,7 @@ venv/
 QA-Logs/
 .tmp/
 .pytest_cache/
+.pytest_tmp/
 .ruff_cache/
 
 # Generated or tool-managed files (no leading dot — not covered by /.* alone)
@@ -49,6 +50,7 @@ CRUSH.md
 tests/
 !tests/
 tests/*
+!tests/test_workspace_primer_hooks.py
 !tests/test_scriptlib.py
 
 # Ruler outputs at repo root (no leading dot)
