@@ -16,7 +16,7 @@ header(){ echo -e "\n${BOLD}$*${RESET}"; }
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV="$REPO/.venv"
-LOG_DIR="$REPO/.gstack/install-logs"
+LOG_DIR="$REPO/.braindrain/install-logs"
 LOG_FILE="$LOG_DIR/install-$(date +%Y%m%d-%H%M%S).log"
 mkdir -p "$LOG_DIR"
 touch "$LOG_FILE"
@@ -162,10 +162,12 @@ if [[ -f "$AGENTS_TEMPLATE" ]] && [[ "$PIP_OK" -eq 1 ]]; then
 import json, re, sys
 from pathlib import Path
 from braindrain.env_probe import get_env_context
+from braindrain.scriptlib import enabled_for_workspace, render_guidance
 
 repo = Path(".")
 result = get_env_context(refresh=True)
 template = (repo / "AGENTS.md.template").read_text(encoding="utf-8")
+template = render_guidance(template, enabled=enabled_for_workspace(repo))
 block = result["agents_md_block"]
 new_content = re.sub(
     r"<!-- ENV_CONTEXT_START -->.*?<!-- ENV_CONTEXT_END -->",
@@ -295,19 +297,19 @@ else
     # Run ruler apply.
     # --local-only: prevents global XDG config from merging in unintended agents.
     # --no-gitignore: .gitignore policy is owned by prime_workspace (BRAINDRAIN block), not Ruler.
-    # --agents cursor,claude: safe conservative default for this repo's self-prime;
-    #   covers the two IDEs most commonly used with BRAINDRAIN during development.
+    # --agents cursor,codex: default self-prime target for this repository.
+    #   This keeps local Cursor and Codex protocol/assets aligned out of the box.
     if npx --yes @intellectronica/ruler apply \
         --config "$RULER_DEST/ruler.toml" \
         --local-only \
         --no-gitignore \
-        --agents cursor,claude 2>>"$LOG_FILE"; then
+        --agents cursor,codex 2>>"$LOG_FILE"; then
         RULER_STATUS="ok"
         ok "ruler apply — agent rule files distributed"
     else
         RULER_STATUS="failed"
         warn "ruler apply failed (non-fatal). Run manually:"
-        warn "  npx @intellectronica/ruler apply --config $RULER_DEST/ruler.toml --local-only --no-gitignore --agents cursor,claude"
+        warn "  npx @intellectronica/ruler apply --config $RULER_DEST/ruler.toml --local-only --no-gitignore --agents cursor,codex"
     fi
 fi
 
@@ -401,7 +403,7 @@ fi
 
 ELAPSED="$(( $(date +%s) - START_TS ))"
 header "=== Installation status ==="
-echo "Version:            V1.0.1"
+echo "Version:            V1.0.3"
 echo "Platform:           $OS/$ARCH"
 echo "Python:             $PYTHON ($PYVER)"
 echo "Dependencies:       $([[ "$PIP_OK" -eq 1 ]] && echo "ok" || echo "failed")"

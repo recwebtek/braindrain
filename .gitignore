@@ -47,6 +47,9 @@ CRUSH.md
 
 # Tests are dev-only (not needed on consumer installs)
 tests/
+!tests/
+tests/*
+!tests/test_scriptlib.py
 
 # Ruler outputs at repo root (no leading dot)
 /AGENTS.md
@@ -61,5 +64,7 @@ tests/
 !/.gitattributes
 !/.gitmodules
 !/.env.example
+# `.cursor/` stays fully ignored; ship agents/skills via config/templates/cursor-* (deploy: prime_workspace).
 # If your team commits other root dotdirs (e.g. .husky), add: !/.husky/
+# `.devdocs/` is covered by `/.*` above — local-only; never add ! exceptions for it.
 # END BRAINDRAIN GITIGNORE PROTOCOL
