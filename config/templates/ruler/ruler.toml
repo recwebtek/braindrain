@@ -1,6 +1,8 @@
 # BRAINDRAIN ruler.toml
 # Distributed by prime_workspace() or manually via: npx @intellectronica/ruler apply
 # BRAINDRAIN_LAUNCHER_PATH is substituted by install.sh / prime_workspace()
+# NOTE: `.cursor/agents/` subagent markdown files are deployed by BRAINDRAIN
+# prime_workspace from `config/templates/agents/` and are not managed by Ruler.
 
 [ruler]
 version = "1"

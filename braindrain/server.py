@@ -434,12 +434,28 @@ def get_env_context(refresh: bool = False) -> dict:
     installs, file operations, or tool invocations — so you know exactly what's
     available without discovery probing.
     """
+    compact_default = bool(config.get("token_policy.compact_env_context_default", True))
     result = _probe_env_context(refresh=refresh)
+    if compact_default:
+        summary = result["summary"]
+        compact = {
+            "generated_at": summary.get("generated_at"),
+            "identity": summary.get("identity"),
+            "os": summary.get("os"),
+            "shell": summary.get("shell"),
+            "package_managers": summary.get("package_managers"),
+            "runtimes": summary.get("runtimes"),
+            "modern_cli_tools": summary.get("modern_cli_tools"),
+            "agent_hints": summary.get("agent_hints"),
+        }
+    else:
+        compact = result["summary"]
     return {
         "cached": result["cached"],
         "probe_timestamp": result["probe_timestamp"],
         "agents_md_block": result["agents_md_block"],
-        "summary": result["summary"],
+        "summary": compact,
+        "compact": compact_default,
     }
 
 
@@ -709,13 +725,15 @@ async def prime_workspace(
     patch_user_cursor_mcp: bool = False,
     codex_agent_targets: list[str] | None = None,
     compact_mcp_response: bool = True,
+    bundle: str = "core",
 ) -> dict:
     """
     Prime a project/workspace for AI agent use.
 
     First run: detects current IDE/CLI, deploys minimal Ruler templates, writes
     .braindrain/primed.json, initializes project memory under .braindrain/.
-    Subsequent runs: updates templates (if sync_templates=True) and re-applies.
+    Subsequent runs: updates templates (if sync_templates=True), optionally syncs
+    subagent files (if sync_subagents=True), and re-applies.
 
     Agent resolution order:
       1. agents list (explicit override).
@@ -727,8 +745,9 @@ async def prime_workspace(
         agents:         Explicit agent ids (e.g. ["cursor", "claude"]).
         dry_run:        Preview changes without writing files.
         sync_templates: Update existing .ruler files with timestamped backups.
-        sync_subagents: Update existing Cursor/Codex subagent files and codex
-            managed config block with timestamped backups.
+        sync_subagents: Update existing .cursor/agents/*.md from
+            config/templates/agents with timestamped backups (create-only by default);
+            when Codex is in scope, also updates the managed block in .codex/config.toml.
         all_agents:     Deploy full template and apply all configured agents.
         local_only:     Pass --local-only to ruler apply (default True).
         patch_user_cursor_mcp: If True, also patch ~/.cursor/mcp.json with
@@ -737,6 +756,7 @@ async def prime_workspace(
             file deployment. Default: [".codex/agents"].
         compact_mcp_response: If True (default), return a smaller dict so the MCP
             client is less likely to hit ClosedResourceError on large tool results.
+        bundle: Bundle manifest to use from config/bundles/<name>.yaml.
 
     After priming:
     - Agents that support project-local MCP configs will have braindrain wired.
@@ -756,6 +776,7 @@ async def prime_workspace(
             all_agents,
             local_only,
             patch_user_cursor_mcp,
+            bundle,
             codex_agent_targets,
         )
         if compact_mcp_response and isinstance(result, dict):
@@ -793,6 +814,7 @@ async def prime_workspace(
                 "codex_subagent_config": result.get("codex_subagent_config"),
                 "patch_user_cursor_mcp": patch_user_cursor_mcp,
                 "compact_mcp_response": compact_mcp_response,
+                "bundle": bundle,
             },
         )
         return result
@@ -808,6 +830,7 @@ async def prime_workspace(
                 "all_agents": all_agents,
                 "patch_user_cursor_mcp": patch_user_cursor_mcp,
                 "codex_agent_targets": codex_agent_targets,
+                "bundle": bundle,
             },
         )
         return {"ok": False, "error": str(e)}
