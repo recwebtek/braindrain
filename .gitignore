@@ -20,6 +20,7 @@ venv/
 QA-Logs/
 .tmp/
 .pytest_cache/
+.pytest_tmp/
 .ruff_cache/
 
 # Generated or tool-managed files (no leading dot — not covered by /.* alone)
@@ -46,7 +47,8 @@ config.toml.bak
 CRUSH.md
 
 # Tests are dev-only (not needed on consumer installs)
-tests/
+tests/*
+!tests/test_workspace_primer_hooks.py
 
 # Ruler outputs at repo root (no leading dot)
 /AGENTS.md

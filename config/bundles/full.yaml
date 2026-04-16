@@ -1,0 +1,28 @@
+name: full
+version: "1"
+description: Full platform bundle including comms and orchestration profiles.
+agents:
+  - cursor
+  - codex
+rules:
+  - braindrain
+  - project-rules
+skills:
+  - coordinator
+  - gitops
+  - testops
+  - research
+  - embedding
+  - toolcall
+mcp_servers:
+  - braindrain
+  - mattermost
+capability_profiles:
+  default_role: coordinator
+  roles:
+    project-comms:
+      tool_profile: comms
+    coordinator:
+      tool_profile: orchestration
+    research:
+      tool_profile: research

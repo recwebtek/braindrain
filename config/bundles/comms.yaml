@@ -1,0 +1,21 @@
+name: comms
+version: "1"
+description: Modular project communications bundle with provider-ready plumbing.
+agents:
+  - cursor
+rules:
+  - braindrain
+  - project-rules
+skills:
+  - coordinator
+  - gitops
+mcp_servers:
+  - braindrain
+  - mattermost
+capability_profiles:
+  default_role: project-comms
+  roles:
+    project-comms:
+      tool_profile: comms
+    coordinator:
+      tool_profile: core

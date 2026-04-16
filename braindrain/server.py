@@ -16,10 +16,8 @@ from dotenv import load_dotenv
 from fastmcp import FastMCP
 
 from braindrain.config import Config
-from braindrain.comms import evaluate_intent
 from braindrain.context_mode_client import ContextModeClient, MCPProtocolError
 from braindrain.env_probe import get_env_context as _probe_env_context
-from braindrain.memory_learning import can_promote_memory, sanitize_for_comms
 from braindrain.output_router import build_routed_output, should_route
 from braindrain.telemetry import telemetry_from_config
 from braindrain.tool_registry import ToolRegistry
@@ -95,12 +93,7 @@ session_stats = {
 
 
 @mcp.tool()
-async def search_tools(
-    query: str = "",
-    top_k: int = 5,
-    role: str | None = None,
-    bundle: str | None = None,
-) -> dict:
+async def search_tools(query: str = "", top_k: int = 5) -> dict:
     """
     Search available tools by capability. Call this FIRST before any task.
     Returns lightweight references (~300 tokens total), not full definitions.
@@ -109,14 +102,12 @@ async def search_tools(
     """
     # Some clients/agents may accidentally call this tool with `{}`.
     # Make the parameter optional to avoid hard validation failures.
-    results = await registry.search_async(query or "", top_k, role=role, bundle=bundle)
+    results = await registry.search_async(query or "", top_k)
 
     return {
         "tools": results,
         "total_available": registry.count(),
         "query": query,
-        "role": role,
-        "bundle": bundle,
     }
 
 
@@ -273,7 +264,7 @@ async def route_output(
     text: str,
     source: str = "braindrain",
     intent: str | None = None,
-    min_chars: int = 0,
+    min_chars: int = 5000,
     force_index: bool = False,
 ) -> dict:
     """
@@ -284,15 +275,12 @@ async def route_output(
     - If large (or force_index), indexes into context-mode via ctx_index and returns a handle
       plus suggested ctx_search queries.
     """
-    policy_min_chars = int(config.get("token_policy.default_min_chars_route", 3000) or 3000)
-    effective_min_chars = min_chars if min_chars > 0 else policy_min_chars
-    if not force_index and not should_route(text, min_chars=effective_min_chars):
+    if not force_index and not should_route(text, min_chars=min_chars):
         resp = {
             "routed": False,
             "source": source,
             "bytes_raw": len(text.encode("utf-8", errors="ignore")),
             "text": text,
-            "min_chars_used": effective_min_chars,
         }
         telemetry.record(
             tool_name="route_output",
@@ -309,7 +297,6 @@ async def route_output(
             "source": source,
             "bytes_raw": len(text.encode("utf-8", errors="ignore")),
             "text_preview": text[:400],
-            "min_chars_used": effective_min_chars,
         }
         telemetry.record(
             tool_name="route_output",
@@ -412,7 +399,7 @@ async def ping() -> dict:
     return {
         "status": "ok",
         "service": "braindrain",
-        "version": config.get("version", "1.0.2"),
+        "version": config.get("version", "1.0.3"),
         "timestamp": datetime.now().isoformat(),
     }
 
@@ -433,28 +420,12 @@ def get_env_context(refresh: bool = False) -> dict:
     installs, file operations, or tool invocations — so you know exactly what's
     available without discovery probing.
     """
-    compact_default = bool(config.get("token_policy.compact_env_context_default", True))
     result = _probe_env_context(refresh=refresh)
-    if compact_default:
-        summary = result["summary"]
-        compact = {
-            "generated_at": summary.get("generated_at"),
-            "identity": summary.get("identity"),
-            "os": summary.get("os"),
-            "shell": summary.get("shell"),
-            "package_managers": summary.get("package_managers"),
-            "runtimes": summary.get("runtimes"),
-            "modern_cli_tools": summary.get("modern_cli_tools"),
-            "agent_hints": summary.get("agent_hints"),
-        }
-    else:
-        compact = result["summary"]
     return {
         "cached": result["cached"],
         "probe_timestamp": result["probe_timestamp"],
         "agents_md_block": result["agents_md_block"],
-        "summary": compact,
-        "compact": compact_default,
+        "summary": result["summary"],
     }
 
 
@@ -477,34 +448,6 @@ def refresh_env_context() -> dict:
         "agents_md_block": result["agents_md_block"],
         "summary": result["summary"],
         "message": "Environment context refreshed and cached to ~/.braindrain/env_context.json",
-    }
-
-
-@mcp.tool()
-def get_capability_graph() -> dict:
-    """Return configured agent-role capability mappings."""
-    return {
-        "bundles": config.get("bundles", {}),
-        "agent_capabilities": config.get("agent_capabilities", {}),
-    }
-
-
-@mcp.tool()
-def evaluate_comms_intent(intent: str) -> dict:
-    """Validate comms intent against authorization policy."""
-    policy = (config.get("comms.authorization", {}) or {})
-    return evaluate_intent(intent, policy)
-
-
-@mcp.tool()
-def evaluate_memory_candidate(candidate: str) -> dict:
-    """Evaluate if a candidate fact may be promoted into durable memory."""
-    policy = (config.get("memory_learning.promotion", {}) or {})
-    verdict = can_promote_memory(candidate, policy)
-    return {
-        **verdict,
-        "sanitized_preview": sanitize_for_comms(candidate, max_chars=200),
-        "mode": config.get("memory_learning.mode", "project_local"),
     }
 
 
@@ -552,6 +495,9 @@ async def prime_workspace(
     After priming:
     - Agents that support project-local MCP configs will have braindrain wired.
     - Agent rule files will reference the braindrain protocol.
+    - When Cursor is in the resolved agent set, ``config/templates/cursor/`` is
+      copied to ``.cursor/hooks.json`` and ``.cursor/hooks/*.sh`` (see result
+      ``cursor_hooks``; use sync_templates to refresh existing hook files).
     - Project memory is initialized under .braindrain/ (gitignored).
     - Call get_env_context() to populate the live env block.
     """

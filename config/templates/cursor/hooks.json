@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "hooks": {
+    "stop": [
+      {
+        "command": ".cursor/hooks/on-stop-gitops.sh"
+      },
+      {
+        "command": ".cursor/hooks/on-stop-observe.sh"
+      }
+    ]
+  }
+}
