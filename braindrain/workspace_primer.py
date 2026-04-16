@@ -12,6 +12,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from braindrain.scriptlib import (
+    enabled_for_workspace,
+    render_guidance as render_scriptlib_guidance,
+    seed_if_enabled,
+)
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "config" / "templates" / "ruler"
 AGENT_TEMPLATES_DIR = Path(__file__).parent.parent / "config" / "templates" / "agents"
@@ -255,6 +260,7 @@ def deploy_templates(
 
     force_minimal = not all_agents and bool(agents)
     minimal_ruler_updated = False
+    scriptlib_guidance_enabled = enabled_for_workspace(target_dir)
 
     # Phase 1 — ruler.toml first (ordering-independent).
     ruler_dst = ruler_dir / "ruler.toml"
@@ -301,9 +307,17 @@ def deploy_templates(
             continue
         dst = ruler_dir / name
         content = src.read_text(encoding="utf-8")
+        content = render_scriptlib_guidance(content, enabled=scriptlib_guidance_enabled)
         if dst.exists():
-            if not refresh_sources:
+            existing_content = dst.read_text(encoding="utf-8")
+            if existing_content == content:
                 written[name] = {"action": "skipped_existing", "backup": ""}
+                continue
+            if not refresh_sources:
+                backup = dst.with_name(f"{dst.name}.bak.{ts}")
+                shutil.copy2(dst, backup)
+                dst.write_text(content, encoding="utf-8")
+                written[name] = {"action": "updated_scriptlib_guidance", "backup": str(backup)}
                 continue
             backup = dst.with_name(f"{dst.name}.bak.{ts}")
             shutil.copy2(dst, backup)
@@ -433,6 +447,92 @@ def deploy_cursor_hook_templates(
             written[rel] = {"action": "created", "backup": ""}
 
     return written
+
+
+def _build_codex_subagent_block(codex_agent_targets: list[str]) -> str:
+    """Render managed TOML block for codex subagent path hints."""
+    quoted = ", ".join(f'"{p}"' for p in codex_agent_targets)
+    return (
+        "# BEGIN BRAINDRAIN SUBAGENTS\n"
+        "[braindrain_subagents]\n"
+        f"paths = [{quoted}]\n"
+        "# END BRAINDRAIN SUBAGENTS\n"
+    )
+
+
+def ensure_codex_subagent_config(
+    target_dir: Path,
+    *,
+    codex_agent_targets: list[str],
+    dry_run: bool = False,
+    sync_subagents: bool = False,
+) -> dict[str, str | bool]:
+    """
+    Manage project-local .codex/config.toml subagent path hints safely.
+
+    Policy:
+    - sync_subagents=False: do not mutate existing config; create only if missing.
+    - sync_subagents=True: update/append managed block with backup-first writes.
+    """
+    config_path = target_dir / ".codex" / "config.toml"
+    result: dict[str, str | bool] = {
+        "ok": True,
+        "path": str(config_path),
+        "sync_subagents": sync_subagents,
+    }
+    block = _build_codex_subagent_block(codex_agent_targets)
+    begin_marker = "# BEGIN BRAINDRAIN SUBAGENTS"
+    end_marker = "# END BRAINDRAIN SUBAGENTS"
+
+    if dry_run:
+        if not config_path.exists():
+            result["action"] = "dry_run_create"
+            return result
+        if not sync_subagents:
+            result["action"] = "dry_run_skip_existing_no_sync"
+            return result
+        raw = config_path.read_text(encoding="utf-8", errors="ignore")
+        result["action"] = (
+            "dry_run_update_managed_block"
+            if begin_marker in raw and end_marker in raw
+            else "dry_run_append_managed_block"
+        )
+        return result
+
+    if not config_path.exists():
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(block, encoding="utf-8")
+        result["action"] = "created"
+        return result
+
+    if not sync_subagents:
+        result["action"] = "skipped_existing_no_sync"
+        return result
+
+    raw = config_path.read_text(encoding="utf-8", errors="ignore")
+    managed_re = re.compile(
+        r"# BEGIN BRAINDRAIN SUBAGENTS\n.*?# END BRAINDRAIN SUBAGENTS\n?",
+        flags=re.DOTALL,
+    )
+    if managed_re.search(raw):
+        next_raw = managed_re.sub(block, raw, count=1)
+    else:
+        sep = "\n\n" if raw.strip() else ""
+        next_raw = raw.rstrip("\n") + sep + block
+
+    if next_raw == raw:
+        result["action"] = "skipped_already_up_to_date"
+        return result
+
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup = config_path.with_name(f"{config_path.name}.bak.{ts}")
+    shutil.copy2(config_path, backup)
+    config_path.write_text(
+        next_raw if next_raw.endswith("\n") else next_raw + "\n", encoding="utf-8"
+    )
+    result["action"] = "updated"
+    result["backup"] = str(backup)
+    return result
 
 
 def _filter_ruler_toml_agents(toml_content: str, agents: list[str]) -> str:
@@ -861,6 +961,8 @@ def compact_prime_result_for_mcp(
                 for k, v in deployed_ch.items()
             ],
         }
+    out["subagents"] = result.get("subagents")
+    out["codex_subagent_config"] = result.get("codex_subagent_config")
     out["_mcp_response_compact"] = True
     return out
 
@@ -1116,6 +1218,7 @@ def prime(
     local_only: bool = True,
     patch_user_cursor_mcp: bool = False,
     bundle: str = DEFAULT_BUNDLE,
+    codex_agent_targets: Optional[list[str]] = None,
 ) -> dict:
     """
     Full prime flow: deploy templates + subagents + Cursor hook templates + run ruler apply
@@ -1167,6 +1270,8 @@ def prime(
         bundle_manifest = _resolve_bundle_manifest(bundle)
     except Exception as e:
         return {"ok": False, "error": str(e), "bundle": bundle}
+
+    codex_targets = codex_agent_targets or [".codex/agents"]
 
     # Step 1: deploy templates.
     snapshot = create_prime_snapshot(target_dir, dry_run=dry_run)
@@ -1257,10 +1362,34 @@ def prime(
         else:
             cursor_mcp_json = proj_mcp
 
-    # Step 6: initialize memory artifacts (includes one-time .devdocs migration).
+    # Step 6: codex subagent config policy (after ruler apply to avoid overwrite).
+    codex_in_scope = bool(
+        all_agents or apply_agents is None or "codex" in (apply_agents or [])
+    )
+    codex_subagent_config: dict[str, str | bool] = {"skipped": True}
+    if codex_in_scope:
+        codex_subagent_config = ensure_codex_subagent_config(
+            target_dir,
+            codex_agent_targets=codex_targets,
+            dry_run=dry_run,
+            sync_subagents=sync_subagents,
+        )
+
+    # Step 7: initialize memory artifacts (includes one-time .devdocs migration).
     memory_init = initialize_project_memory(target_dir, dry_run=dry_run)
 
-    # Step 7: persist primed marker (skip on dry_run).
+    # Step 8: seed scriptlib only when the workspace has explicitly enabled it.
+    try:
+        scriptlib_result = seed_if_enabled(target_dir, dry_run=dry_run)
+    except Exception as exc:
+        scriptlib_result = {
+            "ok": False,
+            "error": str(exc),
+            "root": str(target_dir / ".scriptlib"),
+            "guidance_enabled": False,
+        }
+
+    # Step 9: persist primed marker (skip on dry_run).
     if not dry_run and ruler_result.get("ok"):
         _write_primed_state(
             target_dir,
@@ -1299,6 +1428,7 @@ def prime(
         "gitignore_protocol": gitignore_protocol,
         "cursor_rules": cursor_rules,
         "cursor_mcp_json": cursor_mcp_json,
+        "codex_subagent_config": codex_subagent_config,
         "templates": {
             "source": str(TEMPLATES_DIR),
             "deployed": template_results,
@@ -1338,6 +1468,7 @@ def prime(
         "ruler": ruler_result,
         "memory_init": memory_init,
         "verification": verification,
+        "scriptlib": scriptlib_result,
         "next_steps": (
             []
             if ok
