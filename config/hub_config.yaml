@@ -93,6 +93,8 @@ mcp_tools:
     defer_loading: true
     hot_tools: [create_pull_request]
     tags: [git, pr, issues, commits, review]
+    roles: [project-comms]
+    bundles: [comms]
     description: "GitHub operations: PR creation, issue management, code review."
     env:
       GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}"

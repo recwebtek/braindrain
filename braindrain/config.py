@@ -52,6 +52,8 @@ class Config:
                     input_examples=tool.get("input_examples", []),
                     env=tool.get("env", {}),
                     token_weight=tool.get("token_weight", "medium"),
+                    roles=tool.get("roles", []),
+                    bundles=tool.get("bundles", []),
                 )
             )
 
@@ -67,6 +69,8 @@ class Config:
                     token_budget=wf.get("token_budget", 2000),
                     plan_before_run=wf.get("plan_before_run", False),
                     input_examples=wf.get("input_examples", []),
+                    required_roles=wf.get("required_roles", []),
+                    output_mode=wf.get("output_mode", "compact"),
                 )
             )
 
@@ -92,6 +96,17 @@ class Config:
             complexity_router=raw.get("complexity_router", {}),
             cache=raw.get("cache", {}),
             cost_tracking=raw.get("cost_tracking", {}),
+            bundles=raw.get("bundles", {}),
+            agent_capabilities=raw.get("agent_capabilities", {}),
+            token_policy=raw.get("token_policy", {}),
+            comms=raw.get("comms", {}),
+            memory_learning=raw.get("memory_learning", {}),
+            observer=raw.get("observer", {}),
+            sessions=raw.get("sessions", {}),
+            wiki_brain=raw.get("wiki_brain", {}),
+            lessons=raw.get("lessons", {}),
+            dreaming=raw.get("dreaming", {}),
+            provider_context=raw.get("provider_context", {}),
         )
 
     def reload(self) -> None:
