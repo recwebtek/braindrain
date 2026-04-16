@@ -424,26 +424,41 @@ braindrain/
 
 ---
 
-## Memory state and roadmap TODOs
+## Memory layer status and roadmap
 
 **Roadmap and release TODOs** ship from the repo root as **`ROADMAP.md`** and **`TODOS.md`**. Use **`.devdocs/`** only on your machine for private drafts (that path is gitignored and must not be committed).
 
-Current implemented memory behavior:
+Implemented now (runtime behavior in this repo):
 
-- Durable project memory path is `.braindrain/AGENT_MEMORY.md` (machine-local, gitignored).
-- Incremental transcript index path is `.cursor/hooks/state/continual-learning-index.json`.
+- **L1 (session and episodic grounding)**:
+  - `ObserverStore` (`braindrain/observer.py`) captures bounded event traces.
+  - `SessionStore` + `EpisodeRecord` (`braindrain/session.py`) track lifecycle, grounded evidence, and promotion-ready episode units.
+- **L2 (durable memory store)**:
+  - `WikiBrain` (`braindrain/wiki_brain.py`) stores semantic/procedural/lesson records with FTS recall, supersession, decay/forgetting, and metrics.
+- **L3/L4 (dream consolidation and operational automation)**:
+  - `DreamEngine` (`braindrain/dream.py`) runs Light/REM/Deep consolidation and writes `ConsolidationPlan` artifacts plus `DREAMS.md`.
+  - MCP tools include `run_dream`, `get_dream_status`, and related memory/episode/recall endpoints in `braindrain/server.py`.
+  - Automation hooks and scheduler helpers are wired:
+    - `.cursor/hooks/on-stop-observe.sh`
+    - `.cursor/hooks/on-stop-gitops.sh`
+    - `scripts/run_dream_cron.sh`
+
+Memory artifacts and paths:
+
+- Durable project memory path: `.braindrain/AGENT_MEMORY.md` (machine-local, gitignored).
+- Incremental transcript index path: `.cursor/hooks/state/continual-learning-index.json`.
+- Dream artifacts path: `~/.braindrain/dreaming/` (`plans/`, `daily/`, `DREAMS.md`, `last_status.json`).
 - `init_project_memory(path, dry_run)` bootstraps memory artifacts and is idempotent.
 - `prime_workspace()` includes memory initialization in onboarding.
 
-L1/L2/L3 roadmap (current-state only, not yet implemented semantics):
+Next-phase roadmap (optional expansion, not missing core restoration):
 
-- **L1 (project memory hardening)**: finalize retention/cleanup guidelines for project-local memory and transcript index updates.
-- **L2 (tiered memory model)**: define explicit layer semantics and migration policy for tiered memory behavior.
-- **L3 (cross-project memory)**: add optional global memory under `~/.braindrain/memory/` with retrieval and governance controls.
+- Cross-project memory governance and retrieval policy for optional global memory.
+- Additional lesson-quality scoring and promotion analytics dashboards.
+- Extended provider-boundary metrics for long-run token ROI tracking.
 
-Roadmap notes:
+Operational notes:
 
-- L1/L2/L3 are planning levels, not active runtime tier enforcement yet.
 - Public telemetry source-of-truth remains `~/.braindrain/costs/session.jsonl`.
 - `.braindrain/token-metrics.jsonl` remains an optional checkpoint stream only.
 
@@ -451,4 +466,19 @@ Roadmap notes:
 
 ## License
 
-MIT
+This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**.
+
+Braindrain is a community-first, research-driven orchestration layer focused on **token-usage reduction** and practical MCP workflows. Contributions and forks are welcome under the AGPL terms.
+
+### What this means in practice
+
+- You can use, study, modify, and redistribute this project.
+- If you run a modified version for users over a network, you must make the corresponding source code available under AGPL-3.0.
+- Derivative works must keep the same license terms.
+
+### Commercial use and naming
+
+Commercial use is permitted under AGPL-3.0.
+However, the **Braindrain** name, branding, and project identity are governed separately by project trademark policy. Forks, research reuse, and community improvements are welcome; just avoid presenting modified or hosted versions as the official Braindrain project unless explicitly authorized.
+
+For full terms, see the [`LICENSE`](LICENSE) file and naming guidance in [`TRADEMARKS.md`](TRADEMARKS.md).
