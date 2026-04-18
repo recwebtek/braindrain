@@ -30,6 +30,7 @@ For each stage:
    - `[SCRIPTLIB]` → delegate to `librarian` subagent
    - `[EMBED]` → delegate to `embedding` subagent
    - `[BUILD]` → handle directly or delegate to `toolcall` subagent
+   - Any new freestanding reusable ops, test-helper, or command script is implicitly `[SCRIPTLIB]` first, even if the implementation task is otherwise `[BUILD]`
 3. **Execute** — spawn sub-agents for parallel-safe tasks; serialize dependent ones
 4. **Verify** — check each sub-agent's result object before marking complete
 5. **Checkpoint** — update `.cursor/PROGRESS.md` after each task

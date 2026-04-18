@@ -62,11 +62,16 @@ OS environment data is probed once, cached locally, and served instantly on ever
 | `prime_workspace(...)` | Prime a project for AI agent use. **Parameters** include `sync_subagents`, `sync_templates`, `bundle` (`core` default), `codex_agent_targets`, `patch_user_cursor_mcp`, `compact_mcp_response`. **First run**: auto-detects current IDE/CLI (`CURSOR_*` → `TERM_PROGRAM` → dotfolders → fallback `cursor`); response includes **`detect_method`**. Uses **`config/bundles/<bundle>.yaml`** for bundle metadata. Always rewrites **minimal `.ruler/ruler.toml`** when targeting specific agents. Deploys Cursor/Codex subagent files from templates (**`subagents`**) and manages Codex **`BRAINDRAIN SUBAGENTS`** in `.codex/config.toml` when allowed (**`codex_subagent_config`**). After apply, syncs **`.cursor/rules/braindrain.mdc`** and **`project-rules.mdc`** from `.ruler/RULES.md` — see **`cursor_rules`**. When Cursor is in scope, copies **`config/templates/cursor/`** → **`.cursor/hooks.json`** and **`.cursor/hooks/*.sh`** — see **`cursor_hooks`** (create-only; **`sync_templates=true`** refreshes Ruler sources and hook templates). **`sync_subagents=true`** updates existing subagent files and managed Codex blocks (backup-first). Set **`all_agents=True`** for the full template. |
 | `init_project_memory(path, dry_run)` | Initialize project memory artifacts only (`.braindrain/AGENT_MEMORY.md` and `.cursor/hooks/state/continual-learning-index.json`). Migrates legacy `.devdocs/` on first call. Idempotent. |
 | `scriptlib_enable(path, scope, harvest, dry_run)` | Hard-opt-in project or global scriptlib. Project enable can immediately harvest reusable workspace scripts into `.scriptlib/`. |
-| `scriptlib_harvest_workspace(path, dry_run)` | Copy scripts from `tests/`, `scripts/`, and supported locations into scriptlib metadata entries and catalog. |
-| `scriptlib_search(query, ...)` | Search scriptlib before writing a new reusable helper script. |
-| `scriptlib_describe(script_id, ...)` | Inspect metadata, score, and run mode for one scriptlib entry. |
+| `scriptlib_harvest_workspace(path, dry_run)` | Recursively copy script-like files from the workspace into the local project scriptlib catalog, honoring ignore rules. |
+| `scriptlib_search(query, ...)` | Search local and shared scriptlib entries before writing a new reusable helper script. Returns a `reuse|fork|new` recommendation. |
+| `scriptlib_describe(script_id, ...)` | Inspect metadata, scope, score, run mode, provenance, and pin/update status for one scriptlib entry. |
 | `scriptlib_run(script_id, ...)` | Execute a script through scriptlib with restored source context when paths are sensitive. |
 | `scriptlib_fork(script_id, new_variant_or_version, ...)` | Fork an existing scriptlib entry into a new version for safe edits. |
+| `scriptlib_promote(script_id, ...)` | Promote a validated project-local script into the shared personal scriptlib catalog. Requires approval. |
+| `scriptlib_list_updates(path)` | List pinned shared script artifacts with available updates for the current workspace. |
+| `scriptlib_apply_update(script_id, ...)` | Pin or upgrade a shared script artifact for the current workspace. Requires approval. |
+| `scriptlib_run_maintenance(path, scope, ...)` | Refresh indexes, surface duplicates/promotions/updates, and optionally persist new ignore dirs. |
+| `scriptlib_catalog_status(path, ...)` | Summarize project/shared roots, shared pins, promotion candidates, and update state. |
 | `scriptlib_record_result(script_id, outcome, ...)` | Update success score, mistakes, and validation state. |
 | `scriptlib_refresh_index(path, scope, dry_run)` | Rebuild project/global scriptlib indexes and generated catalogs. |
 | `plan_workflow(name, args)` | Generate a markdown execution plan and review it before committing to a run. Use before any destructive or long-running workflow. |
@@ -409,7 +414,9 @@ braindrain/
   - `.braindrain/AGENT_MEMORY.md` for high-signal durable memory (legacy `.devdocs/` / `.devdocs/AGENT_MEMORY.md` may be migrated on first run)
   - `.cursor/hooks/state/continual-learning-index.json` for incremental transcript indexing
   - `AGENTS.md` remains generator-owned protocol text and should not be used as memory storage
-- **Scriptlib**: disabled by default. When enabled for a workspace, braindrain seeds `.scriptlib/`, harvests reusable scripts, and injects scriptlib guidance into generated agent rule surfaces for that workspace only.
+- **Scriptlib**: disabled by default. When enabled for a workspace, braindrain seeds project-local `.scriptlib/`, harvests reusable scripts recursively, and injects librarian-first guidance into generated agent rule surfaces for that workspace only.
+- **Shared personal scriptlib**: promoted scripts can also live in `~/.braindrain/scriptlib` as a curated machine-level catalog. Project-local harvest never auto-publishes into the shared catalog.
+- **Pins and updates**: workspaces can pin approved shared artifacts and receive upgrade suggestions later without silent mutation.
 
 ### Docs ownership map (token observability)
 

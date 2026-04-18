@@ -23,6 +23,8 @@ from braindrain.memory_learning import can_promote_memory, evaluate_lesson_candi
 from braindrain.observer import BrainEvent, ObserverStore
 from braindrain.output_router import build_routed_output, should_route
 from braindrain.scriptlib import (
+    apply_update as _scriptlib_apply_update,
+    catalog_status as _scriptlib_catalog_status,
     describe as _scriptlib_describe,
     disable as _scriptlib_disable,
     enable as _scriptlib_enable,
@@ -30,10 +32,13 @@ from braindrain.scriptlib import (
     global_scriptlib_root as _global_scriptlib_root,
     harvest_workspace as _scriptlib_harvest_workspace,
     is_enabled as _scriptlib_is_enabled,
+    list_updates as _scriptlib_list_updates,
     project_scriptlib_root as _project_scriptlib_root,
+    promote as _scriptlib_promote,
     record_result as _scriptlib_record_result,
     refresh_index as _scriptlib_refresh_index,
     run as _scriptlib_run,
+    run_maintenance as _scriptlib_run_maintenance,
     search as _scriptlib_search,
 )
 from braindrain.telemetry import telemetry_from_config
@@ -979,6 +984,126 @@ def scriptlib_record_result(
             "promote_status": promote_status,
             "validate_native_copy": validate_native_copy,
         },
+    )
+    return result
+
+
+@mcp.tool()
+def scriptlib_promote(
+    script_id: str,
+    path: str = ".",
+    variant: str | None = None,
+    channel: str = "stable",
+    approved: bool = False,
+    dry_run: bool = False,
+) -> dict:
+    """Promote a validated project script into the shared personal scriptlib catalog."""
+    result = _scriptlib_promote(
+        script_id,
+        project_path=path,
+        variant=variant,
+        channel=channel,
+        approved=approved,
+        dry_run=dry_run,
+    )
+    telemetry.record(
+        tool_name="scriptlib_promote",
+        raw_text=script_id,
+        actual_text=json.dumps(result, ensure_ascii=False),
+        module="tool_gate",
+        meta={"path": path, "variant": variant, "channel": channel, "approved": approved, "dry_run": dry_run},
+    )
+    return result
+
+
+@mcp.tool()
+def scriptlib_list_updates(
+    path: str = ".",
+) -> dict:
+    """List pinned shared script artifacts with available updates for this workspace."""
+    result = _scriptlib_list_updates(project_path=path)
+    telemetry.record(
+        tool_name="scriptlib_list_updates",
+        raw_text=path,
+        actual_text=json.dumps(result, ensure_ascii=False),
+        module="tool_gate",
+        meta={"path": path},
+    )
+    return result
+
+
+@mcp.tool()
+def scriptlib_apply_update(
+    script_id: str,
+    path: str = ".",
+    channel: str | None = None,
+    target_revision: int | None = None,
+    approved: bool = False,
+    dry_run: bool = False,
+) -> dict:
+    """Pin or upgrade a shared script artifact in the current workspace."""
+    result = _scriptlib_apply_update(
+        script_id,
+        project_path=path,
+        channel=channel,
+        target_revision=target_revision,
+        approved=approved,
+        dry_run=dry_run,
+    )
+    telemetry.record(
+        tool_name="scriptlib_apply_update",
+        raw_text=script_id,
+        actual_text=json.dumps(result, ensure_ascii=False),
+        module="tool_gate",
+        meta={
+            "path": path,
+            "channel": channel,
+            "target_revision": target_revision,
+            "approved": approved,
+            "dry_run": dry_run,
+        },
+    )
+    return result
+
+
+@mcp.tool()
+def scriptlib_run_maintenance(
+    path: str = ".",
+    scope: str = "all",
+    dry_run: bool = False,
+    add_ignore_dirs: list[str] | None = None,
+) -> dict:
+    """Refresh indexes, surface duplicates and promotion candidates, and optionally persist ignore dirs."""
+    result = _scriptlib_run_maintenance(
+        project_path=path,
+        scope=scope,
+        dry_run=dry_run,
+        add_ignore_dirs=add_ignore_dirs,
+    )
+    telemetry.record(
+        tool_name="scriptlib_run_maintenance",
+        raw_text=path,
+        actual_text=json.dumps(result, ensure_ascii=False),
+        module="tool_gate",
+        meta={"scope": scope, "dry_run": dry_run, "add_ignore_dirs": add_ignore_dirs or []},
+    )
+    return result
+
+
+@mcp.tool()
+def scriptlib_catalog_status(
+    path: str = ".",
+    include_entries: bool = False,
+    limit: int = 20,
+) -> dict:
+    """Summarize local/shared scriptlib state, promotion candidates, pins, and updates."""
+    result = _scriptlib_catalog_status(project_path=path, include_entries=include_entries, limit=limit)
+    telemetry.record(
+        tool_name="scriptlib_catalog_status",
+        raw_text=path,
+        actual_text=json.dumps(result, ensure_ascii=False),
+        module="tool_gate",
+        meta={"include_entries": include_entries, "limit": limit},
     )
     return result
 
