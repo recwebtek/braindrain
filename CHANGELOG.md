@@ -6,6 +6,12 @@ The format is based on keeping a clear, user-facing history. Version in `VERSION
 
 ## Unreleased
 
+### For users
+
+- **Scriptlib modularization**: scriptlib now treats project-local `.scriptlib/` and shared `~/.braindrain/scriptlib` as distinct layers, with promotion-only flow into the shared personal catalog.
+- **New scriptlib MCP tools**: added promote, update discovery/application, maintenance, and catalog status flows for local/shared script operations.
+- **Librarian-first routing**: freestanding reusable scripts are now expected to go through librarian decision flow (`reuse`, `fork`, or `new`) before a fresh script is created.
+
 ### For contributors
 
 - **Cursor agents/skills**: librarian and `scriptlib-librarian` live under `config/templates/cursor-subagents/` and `config/templates/cursor-skills/`; `prime_workspace()` deploys both to `.cursor/agents/` and `.cursor/skills/`. The repo root gitignore no longer whitelists paths under `.cursor/` (Braindrain protocol: ship via templates only).
