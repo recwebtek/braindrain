@@ -177,7 +177,6 @@ def _build_targets(detected_configs: dict[str, Any]) -> list[Target | CliCommand
         ("opencode", "OpenCode", "~/.config/opencode/opencode.jsonc", "mcp"),
         ("antigravity", "Antigravity", "~/.gemini/antigravity/mcp_config.json", "mcpServers"),
         ("gemini_cli", "Gemini CLI", "~/.gemini/settings.json", "mcpServers"),
-        ("codex_cli", "Codex CLI", "~/.codex/config.json", "mcpServers"),
         ("codex_openai", "Codex (OpenAI)", "~/.openai/mcp.json", "mcpServers"),
         (
             "claude_desktop",
@@ -202,6 +201,8 @@ def _build_targets(detected_configs: dict[str, Any]) -> list[Target | CliCommand
     out: list[Target | CliCommandTarget] = []
     for key, display, default_path, style in defaults:
         probe = detected_configs.get(key) if isinstance(detected_configs, dict) else None
+        if key == "codex_cli_toml" and probe is None and isinstance(detected_configs, dict):
+            probe = detected_configs.get("codex_cli")
         path = Path((probe or {}).get("config_path", default_path)).expanduser()
         detected = bool((probe or {}).get("exists", False))
         out.append(Target(key=key, display=display, path=path, style=style, detected=detected))
@@ -221,7 +222,7 @@ def _build_targets(detected_configs: dict[str, Any]) -> list[Target | CliCommand
 
 def _ask_selection(targets: list[Target | CliCommandTarget]) -> list[Target | CliCommandTarget]:
     print("\nSelect MCP targets to configure (interactive checklist):")
-    print("Enter comma-separated numbers, 'all', or press Enter for detected-only.")
+    print("Enter comma-separated numbers, 'all', or press Enter for Cursor + Zed + Codex CLI (TOML).")
     for idx, target in enumerate(targets, start=1):
         marker = "detected" if target.detected else "not-detected"
         exists = "exists" if target.path.exists() else "new-file"
@@ -229,11 +230,8 @@ def _ask_selection(targets: list[Target | CliCommandTarget]) -> list[Target | Cl
 
     choice = input("\nSelection: ").strip().lower()
     if not choice:
-        selected = [t for t in targets if t.detected]
-        if selected:
-            return selected
-        print("No detected configs found; defaulting to Cursor + Zed + Codex CLI.")
-        preferred = {"cursor", "zed", "codex_cli"}
+        print("Defaulting to Cursor + Zed + Codex CLI (TOML).")
+        preferred = {"cursor", "zed", "codex_cli_toml"}
         return [t for t in targets if t.key in preferred]
 
     if choice == "all":
@@ -356,4 +354,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

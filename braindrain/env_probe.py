@@ -343,9 +343,10 @@ _PROBE_COMMANDS: list[tuple[str, str]] = [
 
 # ---------------------------------------------------------------------------
 # IDE / Agent MCP config locations
-# Checked by path existence; content parsed if JSON/JSONC.
+# Checked by path existence; content parsed if JSON/JSONC, except Codex CLI
+# which is TOML-first at ~/.codex/config.toml.
 # Format: (app_key, display_name, config_path, mcp_key_path)
-#   mcp_key_path: dot-separated path into the JSON to find server map
+#   mcp_key_path: dot-separated path into the config to find server map
 #   e.g. "mcpServers" or "mcp" or "context_servers"
 # ---------------------------------------------------------------------------
 
@@ -374,7 +375,7 @@ _APP_CONFIG_PROBES: list[tuple[str, str, str, str]] = [
         "~/.config/claude/claude_desktop_config.json",
         "mcpServers",
     ),
-    ("codex_cli", "Codex CLI", "~/.codex/config.json", "mcpServers"),
+    ("codex_cli", "Codex CLI", "~/.codex/config.toml", "mcp_servers"),
     ("codex_openai", "Codex (OpenAI)", "~/.openai/mcp.json", "mcpServers"),
     ("continue", "Continue", "~/.continue/config.json", "mcpServers"),
     ("vscode", "VS Code", "~/.vscode/settings.json", "mcp.servers"),
@@ -423,6 +424,18 @@ def _read_json_file(path: Path) -> dict | None:
         return None
 
 
+def _read_toml_file(path: Path) -> dict | None:
+    """Read a TOML file, return parsed dict or None."""
+    try:
+        import tomllib  # Python 3.11+ stdlib
+
+        raw = path.read_text(encoding="utf-8", errors="ignore")
+        parsed = tomllib.loads(raw)
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        return None
+
+
 def _get_nested(d: dict, dot_path: str) -> Any:
     """Walk a dot-separated key path into a nested dict."""
     parts = dot_path.split(".")
@@ -456,7 +469,7 @@ def probe_app_configs() -> dict[str, Any]:
             }
             continue
 
-        parsed = _read_json_file(path)
+        parsed = _read_toml_file(path) if app_key == "codex_cli" else _read_json_file(path)
         mcp_block = _get_nested(parsed, mcp_key) if parsed else None
 
         server_names: list[str] = []
