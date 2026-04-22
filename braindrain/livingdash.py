@@ -17,6 +17,7 @@ import yaml
 @dataclass(frozen=True)
 class RuntimePaths:
     root: Path
+    scaffold_root: Path
     server: Path
     ui: Path
     data: Path
@@ -30,12 +31,14 @@ SERVER_SHIM = """from braindrain.livingdash_sidecar import main\n\nif __name__ =
 
 
 def _runtime_paths(project_root: Path) -> RuntimePaths:
-    root = project_root / ".ldash"
+    scaffold_root = project_root / ".ldash"
+    root = project_root / ".braindrain" / "ldash"
     data = root / "data"
     return RuntimePaths(
         root=root,
-        server=root / "server",
-        ui=root / "ui",
+        scaffold_root=scaffold_root,
+        server=scaffold_root / "server",
+        ui=scaffold_root / "ui",
         data=data,
         snapshot=data / "snapshot.json",
         status=data / "status.json",
@@ -44,11 +47,28 @@ def _runtime_paths(project_root: Path) -> RuntimePaths:
     )
 
 
+def _migrate_legacy_runtime_data(paths: RuntimePaths) -> None:
+    legacy_data = paths.scaffold_root / "data"
+    if not legacy_data.exists() or not legacy_data.is_dir():
+        return
+
+    for source, dest in (
+        (legacy_data / "snapshot.json", paths.snapshot),
+        (legacy_data / "status.json", paths.status),
+        (legacy_data / "auth.json", paths.auth),
+        (legacy_data / "livingdash.pid", paths.pid),
+    ):
+        if source.exists() and not dest.exists():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(source.read_bytes())
+
+
 def ensure_livingdash_runtime(project_root: str | Path) -> RuntimePaths:
     project_root = Path(project_root).expanduser().resolve()
     paths = _runtime_paths(project_root)
-    for path in (paths.root, paths.server, paths.ui, paths.data):
+    for path in (paths.root, paths.scaffold_root, paths.server, paths.ui, paths.data):
         path.mkdir(parents=True, exist_ok=True)
+    _migrate_legacy_runtime_data(paths)
     app_py = paths.server / "app.py"
     if not app_py.exists():
         app_py.write_text(SERVER_SHIM, encoding="utf-8")

@@ -78,12 +78,14 @@ def test_ensure_livingdash_runtime_creates_isolated_layout(tmp_project_dir: Path
 
     runtime = ensure_livingdash_runtime(project)
 
-    root = project / ".ldash"
+    root = project / ".braindrain" / "ldash"
+    scaffold = project / ".ldash"
     assert runtime.root == root
-    assert (root / "server").is_dir()
-    assert (root / "ui").is_dir()
+    assert runtime.scaffold_root == scaffold
+    assert (scaffold / "server").is_dir()
+    assert (scaffold / "ui").is_dir()
     assert (root / "data").is_dir()
-    assert (root / "server" / "app.py").is_file()
+    assert (scaffold / "server" / "app.py").is_file()
 
 
 def test_build_dashboard_snapshot_collects_workspace_signals(tmp_project_dir: Path) -> None:
@@ -123,7 +125,7 @@ def test_manager_refresh_writes_snapshot_and_status_starts_stopped(tmp_project_d
     assert status["url"] is None
 
     refreshed = manager.refresh()
-    snapshot_path = project / ".ldash" / "data" / "snapshot.json"
+    snapshot_path = project / ".braindrain" / "ldash" / "data" / "snapshot.json"
 
     assert refreshed["ok"] is True
     assert snapshot_path.is_file()
@@ -139,7 +141,7 @@ def test_sidecar_auth_and_snapshot_endpoints(tmp_project_dir: Path) -> None:
 
     app = create_app(
         project_root=project,
-        data_dir=project / ".ldash" / "data",
+        data_dir=project / ".braindrain" / "ldash" / "data",
         ui_dist=project / ".ldash" / "ui" / "dist",
         auth_config=auth,
     )
@@ -162,3 +164,17 @@ def test_sidecar_auth_and_snapshot_endpoints(tmp_project_dir: Path) -> None:
     live = client.get("/api/live")
     assert live.status_code == 200
     assert "workspace_signals" in live.json()
+
+
+def test_ensure_livingdash_runtime_migrates_legacy_ldash_data(tmp_project_dir: Path) -> None:
+    project = _make_sample_project(tmp_project_dir)
+    legacy_data = project / ".ldash" / "data"
+    legacy_data.mkdir(parents=True, exist_ok=True)
+    (legacy_data / "auth.json").write_text('{"username":"admin","password":"legacy"}', encoding="utf-8")
+    (legacy_data / "status.json").write_text('{"running": false}', encoding="utf-8")
+
+    runtime = ensure_livingdash_runtime(project)
+
+    assert runtime.auth.exists()
+    assert runtime.status.exists()
+    assert json.loads(runtime.auth.read_text(encoding="utf-8"))["password"] == "legacy"
