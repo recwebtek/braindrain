@@ -16,7 +16,6 @@ venv/
 
 *.log
 *.logs
-.ldash/
 
 # Docs
 docs/

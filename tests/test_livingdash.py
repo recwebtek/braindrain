@@ -84,6 +84,8 @@ def test_ensure_livingdash_runtime_creates_isolated_layout(tmp_project_dir: Path
     assert runtime.scaffold_root == scaffold
     assert (scaffold / "server").is_dir()
     assert (scaffold / "ui").is_dir()
+    assert (scaffold / "config" / "commands.json").is_file()
+    assert (scaffold / "config" / "services.json").is_file()
     assert (root / "data").is_dir()
     assert (scaffold / "server" / "app.py").is_file()
 
@@ -157,13 +159,34 @@ def test_sidecar_auth_and_snapshot_endpoints(tmp_project_dir: Path) -> None:
     session = client.get("/api/auth/session")
     assert session.json()["authenticated"] is True
 
+    overview = client.get("/api/overview")
+    assert overview.status_code == 200
+    assert overview.json()["workspace"]["name"] == "sample-project"
+    assert overview.json()["startup_flow"]
+
+    commands = client.get("/api/commands")
+    assert commands.status_code == 200
+    assert commands.json()["groups"]
+
+    git_status = client.get("/api/git")
+    assert git_status.status_code == 200
+    assert "summary" in git_status.json()
+
+    processes = client.get("/api/processes")
+    assert processes.status_code == 200
+    assert processes.json()["items"]
+
+    telemetry = client.get("/api/telemetry")
+    assert telemetry.status_code == 200
+    assert "summary" in telemetry.json()
+
     snapshot = client.get("/api/snapshot")
     assert snapshot.status_code == 200
-    assert snapshot.json()["narrative"]["startup_flow"]["steps"]
+    assert snapshot.json()["startupFlow"]
 
     live = client.get("/api/live")
     assert live.status_code == 200
-    assert "workspace_signals" in live.json()
+    assert "events" in live.json()
 
 
 def test_ensure_livingdash_runtime_migrates_legacy_ldash_data(tmp_project_dir: Path) -> None:
@@ -178,3 +201,29 @@ def test_ensure_livingdash_runtime_migrates_legacy_ldash_data(tmp_project_dir: P
     assert runtime.auth.exists()
     assert runtime.status.exists()
     assert json.loads(runtime.auth.read_text(encoding="utf-8"))["password"] == "legacy"
+
+
+def test_sidecar_rejects_unknown_or_disallowed_actions(tmp_project_dir: Path) -> None:
+    project = _make_sample_project(tmp_project_dir)
+    manager = LivingDashManager(project)
+    auth = manager.ensure_auth()
+    manager.refresh()
+
+    app = create_app(
+        project_root=project,
+        data_dir=project / ".braindrain" / "ldash" / "data",
+        ui_dist=project / ".ldash" / "ui" / "dist",
+        auth_config=auth,
+    )
+    client = TestClient(app)
+    login = client.post("/api/auth/login", json={"username": "admin", "password": auth["password"]})
+    assert login.status_code == 200
+
+    missing_command = client.post("/api/commands/run/does-not-exist")
+    assert missing_command.status_code == 404
+
+    unknown_service = client.post("/api/processes/missing/start")
+    assert unknown_service.status_code == 404
+
+    open_watcher = client.post("/api/processes/ui_tests_watch/open")
+    assert open_watcher.status_code == 403

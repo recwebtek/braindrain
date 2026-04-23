@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,18 +21,88 @@ class RuntimePaths:
     scaffold_root: Path
     server: Path
     ui: Path
+    config: Path
     data: Path
     snapshot: Path
     status: Path
     auth: Path
     pid: Path
+    commands_config: Path
+    services_config: Path
+    command_history: Path
+    process_state: Path
+    telemetry_export: Path
+
+
+DEFAULT_COMMANDS = {
+    "schema_version": "1.0",
+    "commands": [
+        {
+            "id": "ui_tests",
+            "label": "Run UI tests",
+            "category": "quality",
+            "description": "Run the LivingDash Vitest suite.",
+            "command": ["npm", "run", "test"],
+            "cwd": ".ldash/ui",
+            "timeout_seconds": 180,
+        },
+        {
+            "id": "ui_build",
+            "label": "Build UI bundle",
+            "category": "quality",
+            "description": "Build the production LivingDash UI bundle.",
+            "command": ["npm", "run", "build"],
+            "cwd": ".ldash/ui",
+            "timeout_seconds": 180,
+        },
+        {
+            "id": "backend_tests",
+            "label": "Run backend tests",
+            "category": "quality",
+            "description": "Run the LivingDash backend pytest suite.",
+            "command": ["./.venv/bin/python", "-m", "pytest", "tests/test_livingdash.py"],
+            "cwd": ".",
+            "timeout_seconds": 180,
+        },
+    ],
+}
+
+
+DEFAULT_SERVICES = {
+    "schema_version": "1.0",
+    "services": [
+        {
+            "id": "ui_preview",
+            "name": "UI Preview",
+            "description": "Launch the Vite preview server for the dashboard UI.",
+            "cwd": ".ldash/ui",
+            "start": ["npm", "run", "dev", "--", "--host", "127.0.0.1", "--port", "4173"],
+            "open_target": "http://127.0.0.1:4173",
+            "healthcheck_url": "http://127.0.0.1:4173",
+            "allowed_actions": ["start", "stop", "open"],
+        },
+        {
+            "id": "ui_tests_watch",
+            "name": "UI Tests Watch",
+            "description": "Run the Vitest watcher for fast dashboard UI iteration.",
+            "cwd": ".ldash/ui",
+            "start": ["npm", "run", "test:watch"],
+            "allowed_actions": ["start", "stop"],
+        },
+    ],
+}
 
 
 SERVER_SHIM = """from braindrain.livingdash_sidecar import main\n\nif __name__ == "__main__":\n    main()\n"""
 
 
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
 def _runtime_paths(project_root: Path) -> RuntimePaths:
     scaffold_root = project_root / ".ldash"
+    config = scaffold_root / "config"
     root = project_root / ".braindrain" / "ldash"
     data = root / "data"
     return RuntimePaths(
@@ -39,11 +110,17 @@ def _runtime_paths(project_root: Path) -> RuntimePaths:
         scaffold_root=scaffold_root,
         server=scaffold_root / "server",
         ui=scaffold_root / "ui",
+        config=config,
         data=data,
         snapshot=data / "snapshot.json",
         status=data / "status.json",
         auth=data / "auth.json",
         pid=data / "livingdash.pid",
+        commands_config=config / "commands.json",
+        services_config=config / "services.json",
+        command_history=data / "command_history.json",
+        process_state=data / "process_state.json",
+        telemetry_export=data / "telemetry_export.json",
     )
 
 
@@ -66,12 +143,23 @@ def _migrate_legacy_runtime_data(paths: RuntimePaths) -> None:
 def ensure_livingdash_runtime(project_root: str | Path) -> RuntimePaths:
     project_root = Path(project_root).expanduser().resolve()
     paths = _runtime_paths(project_root)
-    for path in (paths.root, paths.scaffold_root, paths.server, paths.ui, paths.data):
+    for path in (paths.root, paths.scaffold_root, paths.server, paths.ui, paths.config, paths.data):
         path.mkdir(parents=True, exist_ok=True)
     _migrate_legacy_runtime_data(paths)
     app_py = paths.server / "app.py"
     if not app_py.exists():
         app_py.write_text(SERVER_SHIM, encoding="utf-8")
+    if not paths.commands_config.exists():
+        paths.commands_config.write_text(json.dumps(DEFAULT_COMMANDS, indent=2), encoding="utf-8")
+    if not paths.services_config.exists():
+        paths.services_config.write_text(json.dumps(DEFAULT_SERVICES, indent=2), encoding="utf-8")
+    for runtime_path, default_payload in (
+        (paths.command_history, {"schema_version": "1.0", "entries": []}),
+        (paths.process_state, {"schema_version": "1.0", "services": {}}),
+        (paths.telemetry_export, {"schema_version": "1.0", "exports": []}),
+    ):
+        if not runtime_path.exists():
+            runtime_path.write_text(json.dumps(default_payload, indent=2), encoding="utf-8")
     return paths
 
 
@@ -148,6 +236,9 @@ def _detect_git_state(project_root: Path) -> dict[str, Any]:
                 default_branch = "main"
         except Exception:
             default_branch = None
+
+    if not default_branch and current_branch:
+        default_branch = current_branch
 
     try:
         dirty = subprocess.run(
@@ -341,6 +432,8 @@ class LivingDashManager:
                 "snapshot_path": str(self.paths.snapshot),
                 "project_root": str(self.project_root),
                 "running": bool(status.get("running", False)),
+                "last_refreshed_at": _now_iso(),
+                "refresh_age_seconds": 0,
             }
         )
         self._save_json(self.paths.status, status)
@@ -386,6 +479,8 @@ class LivingDashManager:
             "url": f"http://127.0.0.1:{port}",
             "project_root": str(self.project_root),
             "snapshot_path": str(self.paths.snapshot),
+            "last_refreshed_at": _now_iso(),
+            "refresh_age_seconds": 0,
         }
         self.paths.pid.write_text(str(proc.pid), encoding="utf-8")
         self._save_json(self.paths.status, status)
