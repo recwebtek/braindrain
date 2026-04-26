@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import shutil
+import sys
 import stat
 import uuid
 from pathlib import Path
@@ -17,6 +19,7 @@ from braindrain.workspace_primer import (
 )
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
+_AUDIT_SCRIPT_PATH = _REPO_ROOT / "scripts" / "daily_plan_audit.py"
 
 
 @pytest.fixture
@@ -30,9 +33,19 @@ def tmp_project_dir() -> Path:
         shutil.rmtree(d, ignore_errors=True)
 
 
+def _load_audit_module():
+    spec = importlib.util.spec_from_file_location("daily_plan_audit", _AUDIT_SCRIPT_PATH)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_cursor_hook_templates_exist_in_repo() -> None:
     assert (CURSOR_HOOK_TEMPLATES_DIR / "hooks.json").is_file()
     hooks = CURSOR_HOOK_TEMPLATES_DIR / "hooks"
+    assert (hooks / "on-stop-daily-plan-audit.sh").is_file()
     assert (hooks / "on-stop-gitops.sh").is_file()
     assert (hooks / "on-stop-observe.sh").is_file()
 
@@ -46,9 +59,11 @@ def test_deploy_cursor_hook_templates_writes_expected_paths(tmp_project_dir: Pat
     assert hj.read_text(encoding="utf-8") == src_json
     assert json.loads(hj.read_text(encoding="utf-8"))["version"] == 1
 
+    d = tmp_project_dir / ".cursor" / "hooks" / "on-stop-daily-plan-audit.sh"
     g = tmp_project_dir / ".cursor" / "hooks" / "on-stop-gitops.sh"
     o = tmp_project_dir / ".cursor" / "hooks" / "on-stop-observe.sh"
-    assert g.is_file() and o.is_file()
+    assert d.is_file() and g.is_file() and o.is_file()
+    assert d.stat().st_mode & stat.S_IXUSR
     assert g.stat().st_mode & stat.S_IXUSR
     assert o.stat().st_mode & stat.S_IXUSR
 
@@ -70,9 +85,10 @@ def test_compact_prime_result_includes_cursor_hooks_summary() -> None:
             "skipped": False,
             "deployed": {
                 "hooks.json": {"action": "created", "backup": ""},
+                "hooks/on-stop-daily-plan-audit.sh": {"action": "created", "backup": ""},
                 "hooks/on-stop-gitops.sh": {"action": "created", "backup": ""},
             },
-            "new_files": 2,
+            "new_files": 3,
             "updated_files": 0,
             "skipped_existing": 0,
         },
@@ -86,3 +102,59 @@ def test_compact_prime_result_includes_cursor_hooks_summary() -> None:
     assert isinstance(ch, dict)
     assert ch.get("deployed_summary")
     assert any(x["file"] == "hooks.json" for x in ch["deployed_summary"])
+
+
+def test_daily_plan_hook_contains_once_per_day_gate() -> None:
+    hook_path = CURSOR_HOOK_TEMPLATES_DIR / "hooks" / "on-stop-daily-plan-audit.sh"
+    content = hook_path.read_text(encoding="utf-8")
+    assert "daily-plan-audit.json" in content
+    assert "LAST_RUN_DATE" in content
+    assert 'if [ "${LAST_RUN_DATE}" = "${TODAY}" ]; then' in content
+
+
+def test_daily_plan_audit_prioritizes_cursor_plan_files(tmp_project_dir: Path) -> None:
+    module = _load_audit_module()
+    (tmp_project_dir / ".cursor" / "plans").mkdir(parents=True, exist_ok=True)
+    (tmp_project_dir / ".cursor" / "plans" / "x.plan.md").write_text(
+        "# Plan\n- [ ] Outstanding item\n", encoding="utf-8"
+    )
+    (tmp_project_dir / "ROADMAP.md").write_text("# Roadmap\n- [ ] Next item\n", encoding="utf-8")
+    (tmp_project_dir / "README.md").write_text("# Readme\nUnrelated docs\n", encoding="utf-8")
+
+    primary, secondary = module.discover_sources(tmp_project_dir)
+    assert [p.relative_to(tmp_project_dir).as_posix() for p in primary] == [
+        ".cursor/plans/x.plan.md"
+    ]
+    assert "ROADMAP.md" in {p.relative_to(tmp_project_dir).as_posix() for p in secondary}
+    assert "README.md" not in {p.relative_to(tmp_project_dir).as_posix() for p in secondary}
+
+
+def test_daily_plan_audit_report_contract(tmp_project_dir: Path) -> None:
+    module = _load_audit_module()
+    (tmp_project_dir / ".cursor" / "plans").mkdir(parents=True, exist_ok=True)
+    plan_path = tmp_project_dir / ".cursor" / "plans" / "daily.plan.md"
+    plan_path.write_text(
+        "# Next\n- [ ] Add owner + tests for workflow item\n- [x] Ship core module\n",
+        encoding="utf-8",
+    )
+
+    primary, secondary = module.discover_sources(tmp_project_dir)
+    items = []
+    for src in primary + secondary:
+        items.extend(module.collect_items(src, tmp_project_dir))
+
+    report = module.build_report(
+        report_date="2026-04-26",
+        trigger="cursor-stop-daily-gated",
+        repo_root=tmp_project_dir,
+        primary=primary,
+        secondary=secondary,
+        items=items,
+    )
+
+    assert 'schema_version: "1.0"' in report
+    assert "## Status Matrix (5-State)" in report
+    assert "## Overlap Analysis" in report
+    assert "## Gap Analysis" in report
+    assert "## Memory Context Used" in report
+    assert "## Recommended Next Actions" in report

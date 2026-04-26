@@ -414,7 +414,11 @@ braindrain/
   - Source-of-truth for those generated rule files is `config/templates/ruler/RULES.md` (and `.ruler/ruler.toml`).
   - **Important**: files like `CLAUDE.md` are **generated artifacts** (gitignored) and should be treated as **disposable**. Edit the templates instead, then re-run Ruler.
   - If a project already has older `.ruler/*` files, call `prime_workspace(..., sync_templates=true)` to refresh those templates safely and propagate new guidance without manual cleanup.
-- **Cursor hooks (not Ruler)**: when the resolved agent set includes Cursor, `prime_workspace()` copies `config/templates/cursor/hooks.json` and `config/templates/cursor/hooks/*.sh` into `.cursor/` (create-only by default; `sync_templates=true` overwrites with timestamped backups). Edit templates under `config/templates/cursor/` in this repo, then re-prime consumer projects to roll out hook changes.
+- **Cursor hooks (not Ruler)**: when the resolved agent set includes Cursor, `prime_workspace()` copies `config/templates/cursor/hooks.json` and `config/templates/cursor/hooks/*.sh` into `.cursor/` (create-only by default; `sync_templates=true` overwrites with timestamped backups). Hook templates currently include:
+  - `.cursor/hooks/on-stop-observe.sh` (lightweight stop-event observation)
+  - `.cursor/hooks/on-stop-gitops.sh` (TASK-GRAPH branch queueing)
+  - `.cursor/hooks/on-stop-daily-plan-audit.sh` (daily-gated planning audit report)
+  Edit templates under `config/templates/cursor/` in this repo, then re-prime consumer projects to roll out hook changes.
 - **Subagent templates**: `prime_workspace()` deploys:
   - `config/templates/cursor-subagents/` -> `.cursor/agents/`
   - `config/templates/cursor-skills/` -> `.cursor/skills/` (e.g. scriptlib-librarian)
@@ -459,12 +463,15 @@ Implemented now (runtime behavior in this repo):
   - Automation hooks and scheduler helpers are wired:
     - `.cursor/hooks/on-stop-observe.sh`
     - `.cursor/hooks/on-stop-gitops.sh`
+    - `.cursor/hooks/on-stop-daily-plan-audit.sh`
     - `scripts/run_dream_cron.sh`
 
 Memory artifacts and paths:
 
 - Durable project memory path: `.braindrain/AGENT_MEMORY.md` (machine-local, gitignored).
 - Incremental transcript index path: `.cursor/hooks/state/continual-learning-index.json`.
+- Daily planning audit hook state path: `.cursor/hooks/state/daily-plan-audit.json`.
+- Daily planning audit reports path: `create-subagent/plan-audit-YYYY-MM-DD.md` (plus `create-subagent/latest.md`).
 - Dream artifacts path: `~/.braindrain/dreaming/` (`plans/`, `daily/`, `DREAMS.md`, `last_status.json`).
 - `init_project_memory(path, dry_run)` bootstraps memory artifacts and is idempotent.
 - `prime_workspace()` includes memory initialization in onboarding.

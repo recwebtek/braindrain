@@ -3,6 +3,9 @@
   "hooks": {
     "stop": [
       {
+        "command": ".cursor/hooks/on-stop-daily-plan-audit.sh"
+      },
+      {
         "command": ".cursor/hooks/on-stop-gitops.sh"
       },
       {
