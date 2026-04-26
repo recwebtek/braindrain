@@ -42,6 +42,51 @@ This keeps passwords/session secrets out of shareable dashboard scaffold paths a
 
 ---
 
+## AI Shell plugin (Phase 1)
+
+Braindrain now exposes an AI shell endpoint through a plugin-host contract:
+
+- Host tool entrypoints: `ai_shell_run`, `ai_shell_state_sync`
+- Plugin source path default: `bd-plugins/ai-shell/`
+- Plugin runtime contract: `discover()`, `load(context)`, `register_tools(registry)`, `healthcheck()`, `shutdown()`
+- Execution modes: `simulated | hybrid | real_world` (default `hybrid`)
+- Policy file: `config/ai_shell_policy.yaml`
+- Session persistence (project-scoped): `ai_shell_sessions`, `ai_shell_events`, `ai_shell_commands`
+- macOS bridge transport: unix socket (path from config/env)
+
+### AI Shell config and environment precedence
+
+Configuration values are resolved in this order:
+
+1. env override
+2. `config/hub_config.yaml`
+3. built-in fallback
+
+Operational variables:
+
+- `BRAINDRAIN_AI_SHELL_PLUGIN_PATH` -> override plugin source path
+- `BRAINDRAIN_AI_SHELL_EXECUTION_MODE` -> override default mode
+- `BRAINDRAIN_AI_SHELL_SOCKET_PATH` -> override unix socket path for macOS bridge clients
+
+`hub_config.yaml` defaults:
+
+- `plugins.ai_shell.path: /Volumes/devnvme/Development/BRAIN_MCP_HUB/bd-plugins/ai-shell/`
+- `ai_shell.execution_mode: hybrid`
+- `ai_shell.socket_path: /tmp/braindrain-ai-shell.sock`
+
+### Dev vs prod env run paths
+
+- Dev path: keep `.env.dev` active for local iteration and policy tuning.
+- Prod/stable path: keep `.env.prod` active for stable daily-driver runs.
+- Server env load order is unchanged and non-overriding:
+  1. `.env.dev`
+  2. `.env.prod`
+  3. `.env`
+
+For predictable operations, store AI Shell mode/path/socket overrides in `.env.dev` and `.env.prod` explicitly rather than relying on shell-local exports.
+
+---
+
 ## Tools
 
 ### Environment

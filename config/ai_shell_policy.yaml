@@ -1,0 +1,65 @@
+enable_neural_net_shell: true
+
+default_mode: hybrid
+
+allow_commands:
+  - ls
+  - pwd
+  - echo
+  - cat
+  - grep
+  - rg
+  - python3
+  - pytest
+  - git
+  - cd
+
+tier_always_allow:
+  - cd
+  - pwd
+  - ls
+  - cat
+  - echo
+  - grep
+  - rg
+
+tier_allow_with_constraints:
+  - python3
+  - pytest
+  - git
+
+tier_simulated_only:
+  - curl
+  - wget
+  - rm
+  - sudo
+  - ssh
+  - scp
+  - reboot
+  - shutdown
+  - dd
+  - mkfs
+
+blocked_commands:
+  - rm
+  - sudo
+  - reboot
+  - shutdown
+  - curl
+  - wget
+  - ssh
+  - scp
+
+blocked_prefixes:
+  - rm -rf
+  - dd
+  - mkfs
+  - ":(){:|:&};:"
+
+mode_defaults:
+  simulated:
+    allow_real_world: false
+  hybrid:
+    allow_real_world: true
+  real_world:
+    allow_real_world: true

@@ -52,9 +52,10 @@ CRUSH.md
 
 # Tests are dev-only (not needed on consumer installs)
 tests/*
-!tests/test_workspace_primer_hooks.py
-!tests/test_scriptlib.py
-!tests/test_env_probe_codex.py
+!tests/test_plugin_host_contract.py
+!tests/test_ai_shell_plugin.py
+!tests/test_ai_shell_policy.py
+!tests/test_ai_shell_macos_bridge.py
 
 # Ruler outputs at repo root (no leading dot)
 /AGENTS.md

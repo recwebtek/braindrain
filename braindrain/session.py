@@ -42,6 +42,16 @@ class EpisodeRecord:
     promoted_lesson_id: str | None = None
 
 
+@dataclass
+class AIShellSessionState:
+    session_id: str
+    project_id: str
+    cwd: str
+    env_delta_json: dict[str, str]
+    updated_at: float
+    schema_version: str = "1"
+
+
 class SessionStore:
     """Tracks session summaries and grounded episodes."""
 
@@ -104,6 +114,86 @@ class SessionStore:
                 CREATE INDEX IF NOT EXISTS idx_episode_records_session_time
                 ON episode_records(session_id, created_at DESC)
                 """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ai_shell_sessions (
+                    session_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    cwd TEXT NOT NULL,
+                    env_delta_json TEXT NOT NULL DEFAULT '{}',
+                    updated_at REAL NOT NULL,
+                    schema_version TEXT NOT NULL DEFAULT '1',
+                    PRIMARY KEY (session_id, project_id)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ai_shell_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    payload_json TEXT NOT NULL DEFAULT '{}',
+                    created_at REAL NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ai_shell_commands (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    command_text TEXT NOT NULL,
+                    mode_used TEXT NOT NULL,
+                    policy_decision TEXT NOT NULL,
+                    exit_code INTEGER,
+                    output_digest TEXT NOT NULL DEFAULT '',
+                    request_bytes INTEGER NOT NULL DEFAULT 0,
+                    response_bytes INTEGER NOT NULL DEFAULT 0,
+                    estimated_tokens INTEGER NOT NULL DEFAULT 0,
+                    created_at REAL NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_ai_shell_sessions_updated
+                ON ai_shell_sessions(project_id, session_id, updated_at DESC)
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_ai_shell_events_session
+                ON ai_shell_events(project_id, session_id, created_at DESC)
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_ai_shell_commands_session
+                ON ai_shell_commands(project_id, session_id, created_at DESC)
+                """
+            )
+            self._ensure_ai_shell_command_columns(conn)
+
+    def _ensure_ai_shell_command_columns(self, conn: sqlite3.Connection) -> None:
+        row_set = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(ai_shell_commands)").fetchall()
+        }
+        if "request_bytes" not in row_set:
+            conn.execute(
+                "ALTER TABLE ai_shell_commands ADD COLUMN request_bytes INTEGER NOT NULL DEFAULT 0"
+            )
+        if "response_bytes" not in row_set:
+            conn.execute(
+                "ALTER TABLE ai_shell_commands ADD COLUMN response_bytes INTEGER NOT NULL DEFAULT 0"
+            )
+        if "estimated_tokens" not in row_set:
+            conn.execute(
+                "ALTER TABLE ai_shell_commands ADD COLUMN estimated_tokens INTEGER NOT NULL DEFAULT 0"
             )
 
     def touch_session(
@@ -340,3 +430,236 @@ class SessionStore:
             created_at=float(row["created_at"]),
             promoted_lesson_id=row["promoted_lesson_id"],
         )
+
+    def upsert_ai_shell_session(
+        self,
+        *,
+        session_id: str,
+        project_id: str,
+        cwd: str,
+        env_delta_json: dict[str, str] | None = None,
+        schema_version: str = "1",
+        updated_at: float | None = None,
+    ) -> AIShellSessionState:
+        ts = float(updated_at or time.time())
+        env_delta = env_delta_json or {}
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO ai_shell_sessions (
+                    session_id, project_id, cwd, env_delta_json, updated_at, schema_version
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id, project_id) DO UPDATE SET
+                    cwd = excluded.cwd,
+                    env_delta_json = excluded.env_delta_json,
+                    updated_at = excluded.updated_at,
+                    schema_version = excluded.schema_version
+                """,
+                (
+                    session_id,
+                    project_id,
+                    cwd,
+                    json.dumps(env_delta),
+                    ts,
+                    schema_version,
+                ),
+            )
+        return AIShellSessionState(
+            session_id=session_id,
+            project_id=project_id,
+            cwd=cwd,
+            env_delta_json=env_delta,
+            updated_at=ts,
+            schema_version=schema_version,
+        )
+
+    def get_ai_shell_session(
+        self, *, session_id: str, project_id: str
+    ) -> AIShellSessionState | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT session_id, project_id, cwd, env_delta_json, updated_at, schema_version
+                FROM ai_shell_sessions
+                WHERE session_id = ? AND project_id = ?
+                """,
+                (session_id, project_id),
+            ).fetchone()
+        if not row:
+            return None
+        return AIShellSessionState(
+            session_id=row["session_id"],
+            project_id=row["project_id"],
+            cwd=row["cwd"],
+            env_delta_json=json.loads(row["env_delta_json"] or "{}"),
+            updated_at=float(row["updated_at"]),
+            schema_version=row["schema_version"] or "1",
+        )
+
+    def append_ai_shell_event(
+        self,
+        *,
+        session_id: str,
+        project_id: str,
+        event_type: str,
+        payload: dict[str, Any] | None = None,
+        created_at: float | None = None,
+    ) -> None:
+        ts = float(created_at or time.time())
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO ai_shell_events (
+                    session_id, project_id, event_type, payload_json, created_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (session_id, project_id, event_type, json.dumps(payload or {}), ts),
+            )
+
+    def append_ai_shell_command(
+        self,
+        *,
+        session_id: str,
+        project_id: str,
+        command_text: str,
+        mode_used: str,
+        policy_decision: str,
+        exit_code: int | None,
+        output_digest: str,
+        request_bytes: int = 0,
+        response_bytes: int = 0,
+        estimated_tokens: int = 0,
+        created_at: float | None = None,
+    ) -> None:
+        ts = float(created_at or time.time())
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO ai_shell_commands (
+                    session_id, project_id, command_text, mode_used,
+                    policy_decision, exit_code, output_digest, request_bytes,
+                    response_bytes, estimated_tokens, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session_id,
+                    project_id,
+                    command_text,
+                    mode_used,
+                    policy_decision,
+                    exit_code,
+                    output_digest,
+                    int(request_bytes),
+                    int(response_bytes),
+                    int(estimated_tokens),
+                    ts,
+                ),
+            )
+
+    def get_ai_shell_metrics(
+        self,
+        *,
+        project_id: str,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        with self._connect() as conn:
+            where_clause = "project_id = ?"
+            params: list[Any] = [project_id]
+            if session_id:
+                where_clause += " AND session_id = ?"
+                params.append(session_id)
+
+            aggregate = conn.execute(
+                f"""
+                SELECT
+                    COUNT(*) AS command_count,
+                    COALESCE(SUM(request_bytes), 0) AS total_request_bytes,
+                    COALESCE(SUM(response_bytes), 0) AS total_response_bytes,
+                    COALESCE(SUM(estimated_tokens), 0) AS total_estimated_tokens,
+                    COALESCE(SUM(CASE WHEN mode_used = 'simulated' THEN 1 ELSE 0 END), 0) AS simulated_count,
+                    COALESCE(SUM(CASE WHEN mode_used = 'real_world' THEN 1 ELSE 0 END), 0) AS real_world_count,
+                    COALESCE(SUM(CASE WHEN policy_decision = 'block' THEN 1 ELSE 0 END), 0) AS blocked_count
+                FROM ai_shell_commands
+                WHERE {where_clause}
+                """,
+                tuple(params),
+            ).fetchone()
+
+            latest = conn.execute(
+                f"""
+                SELECT command_text, mode_used, policy_decision, request_bytes,
+                       response_bytes, estimated_tokens, created_at
+                FROM ai_shell_commands
+                WHERE {where_clause}
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                tuple(params),
+            ).fetchone()
+
+        command_count = int(aggregate["command_count"] or 0)
+        total_request_bytes = int(aggregate["total_request_bytes"] or 0)
+        total_response_bytes = int(aggregate["total_response_bytes"] or 0)
+        total_estimated_tokens = int(aggregate["total_estimated_tokens"] or 0)
+        avg_tokens_per_command = (
+            round(total_estimated_tokens / command_count, 2) if command_count else 0.0
+        )
+        avg_bytes_per_command = (
+            round((total_request_bytes + total_response_bytes) / command_count, 2)
+            if command_count
+            else 0.0
+        )
+        return {
+            "project_id": project_id,
+            "session_id": session_id,
+            "command_count": command_count,
+            "total_request_bytes": total_request_bytes,
+            "total_response_bytes": total_response_bytes,
+            "total_estimated_tokens": total_estimated_tokens,
+            "avg_tokens_per_command": avg_tokens_per_command,
+            "avg_bytes_per_command": avg_bytes_per_command,
+            "simulated_count": int(aggregate["simulated_count"] or 0),
+            "real_world_count": int(aggregate["real_world_count"] or 0),
+            "blocked_count": int(aggregate["blocked_count"] or 0),
+            "latest_command": {
+                "command_text": latest["command_text"],
+                "mode_used": latest["mode_used"],
+                "policy_decision": latest["policy_decision"],
+                "request_bytes": int(latest["request_bytes"] or 0),
+                "response_bytes": int(latest["response_bytes"] or 0),
+                "estimated_tokens": int(latest["estimated_tokens"] or 0),
+                "created_at": float(latest["created_at"]),
+            }
+            if latest
+            else None,
+        }
+
+    def prune_ai_shell_history(
+        self,
+        *,
+        session_id: str,
+        project_id: str,
+        max_commands: int = 200,
+        max_event_age_days: int = 30,
+    ) -> None:
+        cutoff_ts = time.time() - max_event_age_days * 86400
+        with self._connect() as conn:
+            conn.execute(
+                """
+                DELETE FROM ai_shell_events
+                WHERE project_id = ? AND session_id = ? AND created_at < ?
+                """,
+                (project_id, session_id, cutoff_ts),
+            )
+            conn.execute(
+                """
+                DELETE FROM ai_shell_commands
+                WHERE id IN (
+                    SELECT id FROM ai_shell_commands
+                    WHERE project_id = ? AND session_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT -1 OFFSET ?
+                )
+                """,
+                (project_id, session_id, max_commands),
+            )

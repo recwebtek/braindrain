@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+import atexit
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -43,6 +44,7 @@ from braindrain.scriptlib import (
 )
 from braindrain.telemetry import telemetry_from_config
 from braindrain.tool_registry import ToolRegistry
+from braindrain.plugin_host import PluginHost
 from braindrain.workflow_engine import WorkflowEngine
 from braindrain.session import EpisodeRecord, SessionStore
 from braindrain.wiki_brain import WikiBrain
@@ -83,6 +85,20 @@ _observer_store: Optional[ObserverStore] = None
 _session_store: Optional[SessionStore] = None
 _wiki_brain: Optional[WikiBrain] = None
 _dream_engine: Optional[DreamEngine] = None
+_plugin_host: Optional[PluginHost] = None
+
+
+def _emit_plugin_event(event_type: str, payload: dict) -> None:
+    if event_type == "plugin_load_failed":
+        telemetry.log_error(f"Plugin event [{event_type}]: {payload}")
+    else:
+        telemetry.record(
+            tool_name="plugin_host",
+            raw_text=event_type,
+            actual_text=json.dumps(payload, ensure_ascii=False),
+            module="plugin_host",
+            meta={"event_type": event_type},
+        )
 
 
 def _get_context_mode_client() -> Optional[ContextModeClient]:
@@ -194,9 +210,121 @@ def _get_dream_engine() -> DreamEngine:
     return _dream_engine
 
 
+def _resolve_ai_shell_plugin_path() -> Path:
+    configured = config.get("plugins.ai_shell.path", "") or ""
+    env_override = os.environ.get("BRAINDRAIN_AI_SHELL_PLUGIN_PATH", "").strip()
+    if env_override:
+        return Path(env_override).expanduser()
+    if configured:
+        return Path(configured).expanduser()
+    return Path("/Volumes/devnvme/Development/BRAIN_MCP_HUB/bd-plugins/ai-shell/")
+
+
+def _resolve_ai_shell_mode() -> str:
+    env_mode = os.environ.get("BRAINDRAIN_AI_SHELL_EXECUTION_MODE", "").strip()
+    if env_mode:
+        return env_mode
+    return str(config.get("ai_shell.execution_mode", "hybrid"))
+
+
+def _resolve_ai_shell_socket_path() -> str:
+    env_socket = os.environ.get("BRAINDRAIN_AI_SHELL_SOCKET_PATH", "").strip()
+    if env_socket:
+        return env_socket
+    return str(config.get("ai_shell.socket_path", "/tmp/braindrain-ai-shell.sock"))
+
+
+def _get_plugin_host() -> PluginHost:
+    global _plugin_host
+    if _plugin_host is not None:
+        return _plugin_host
+
+    host = PluginHost(emit_event=_emit_plugin_event)
+    sessions_cfg = config.get("sessions", {}) or {}
+    db_path = _resolve_path(sessions_cfg.get("storage_path"), "~/.braindrain/sessions.db")
+    plugin_context = {
+        "repo_root": str(Path(__file__).parent.parent.resolve()),
+        "session_db_path": str(db_path),
+        "policy_path": str(Path(__file__).parent.parent / "config" / "ai_shell_policy.yaml"),
+        "default_mode": _resolve_ai_shell_mode(),
+    }
+
+    plugin_path = _resolve_ai_shell_plugin_path()
+    load_result = host.load_plugin("ai_shell", plugin_path, plugin_context)
+    if load_result.get("status") == "plugin_loaded":
+        reg_result = host.register_plugin_tools("ai_shell")
+        if reg_result.get("status") != "ok":
+            telemetry.log_error(f"AI shell plugin tool registration failed: {reg_result}")
+
+    _plugin_host = host
+    return _plugin_host
+
+
 session_stats = {
     "note": "deprecated: use telemetry snapshot"
 }  # kept for backwards compatibility
+
+
+@atexit.register
+def _shutdown_plugin_host() -> None:
+    global _plugin_host
+    if _plugin_host is not None:
+        _plugin_host.shutdown()
+
+
+@mcp.tool()
+async def ai_shell_run(
+    session_id: str,
+    command: str,
+    cwd: str | None = None,
+    requested_mode: str | None = None,
+    project_id: str = "default",
+) -> dict:
+    """
+    Run a shell-style command through the AI Shell plugin endpoint.
+    """
+    host = _get_plugin_host()
+    if not host.has_tool("ai_shell_run"):
+        return {
+            "status": "plugin_unavailable",
+            "error_code": "plugin_tool_not_found",
+            "message": "AI shell plugin is unavailable or failed to load.",
+        }
+
+    return host.invoke_tool(
+        "ai_shell_run",
+        session_id=session_id,
+        command=command,
+        cwd=cwd,
+        requested_mode=requested_mode,
+        project_id=project_id,
+    )
+
+
+@mcp.tool()
+async def ai_shell_state_sync(session_id: str, project_id: str = "default") -> dict:
+    """Return authoritative AI shell session state for prompt resync."""
+    host = _get_plugin_host()
+    if not host.has_tool("ai_shell_state_sync"):
+        return {
+            "status": "plugin_unavailable",
+            "error_code": "plugin_tool_not_found",
+            "message": "AI shell plugin is unavailable or failed to load.",
+        }
+    response = host.invoke_tool("ai_shell_state_sync", session_id=session_id, project_id=project_id)
+    if isinstance(response, dict):
+        response.setdefault("socket_path", _resolve_ai_shell_socket_path())
+    return response
+
+
+@mcp.tool()
+async def ai_shell_metrics(project_id: str = "default", session_id: str | None = None) -> dict:
+    """Return compact AI shell efficiency metrics for dashboard use."""
+    metrics = _get_session_store().get_ai_shell_metrics(
+        project_id=project_id,
+        session_id=session_id,
+    )
+    return {"status": "ok", "metrics": metrics}
 
 
 @mcp.tool()

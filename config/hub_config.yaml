@@ -4,6 +4,14 @@
 version: "1.0.3"
 project_name: "braindrain"
 
+plugins:
+  ai_shell:
+    path: /Volumes/devnvme/Development/BRAIN_MCP_HUB/bd-plugins/ai-shell/
+
+ai_shell:
+  execution_mode: hybrid
+  socket_path: /tmp/braindrain-ai-shell.sock
+
 # ─── MODULES ─────────────────────────────────────────────────────
 modules:
   tool_gate:
