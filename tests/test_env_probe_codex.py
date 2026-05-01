@@ -98,4 +98,6 @@ def test_empty_installer_selection_defaults_to_cursor_zed_and_codex_toml(
     assert keys == ["cursor", "zed", "codex_cli_toml"]
 
     out = capsys.readouterr().out
-    assert "Cursor + Zed + Codex CLI (TOML)" in out
+    # When apps are detected, it shows a different message now.
+    assert "detected apps" in out
+    assert "Cursor, Zed, Codex CLI (TOML)" in out
