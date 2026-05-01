@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import shlex
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -646,7 +647,7 @@ def _parse_python_interpreters(raw: dict[str, Any]) -> list[dict[str, str]]:
             continue
         seen_paths.add(real)
         # Get version for this specific interpreter
-        ver = _run(f"{line} --version 2>/dev/null") or "unknown"
+        ver = _run(f"{shlex.quote(line)} --version 2>/dev/null") or "unknown"
         interpreters.append({"path": line, "real_path": real, "version": ver})
 
     # Always include the venv Python if we can find it (common project patterns)
@@ -656,7 +657,7 @@ def _parse_python_interpreters(raw: dict[str, Any]) -> list[dict[str, str]]:
             real = str(venv_path.resolve())
             if real not in seen_paths:
                 seen_paths.add(real)
-                ver = _run(f"{venv_path} --version 2>/dev/null") or "unknown"
+                ver = _run(f"{shlex.quote(str(venv_path))} --version 2>/dev/null") or "unknown"
                 interpreters.append(
                     {"path": str(venv_path), "real_path": real, "version": ver}
                 )
