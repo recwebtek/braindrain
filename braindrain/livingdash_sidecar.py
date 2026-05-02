@@ -889,11 +889,25 @@ def create_app(
             return FileResponse(index_file)
         fallback = """
         <!doctype html>
-        <html>
-          <head><meta charset="utf-8"><title>LivingDash</title></head>
-          <body style="font-family: ui-sans-serif, system-ui; background:#120916; color:#f6eeff; padding:40px">
-            <h1>LivingDash</h1>
-            <p>The UI build has not been generated yet.</p>
+        <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>LivingDash</title>
+          </head>
+          <body style="font-family: ui-sans-serif, system-ui; background:#120916; color:#f6eeff; padding:40px; line-height:1.6; max-width:800px; margin:0 auto">
+            <main>
+              <h1>LivingDash</h1>
+              <p>The UI build has not been generated yet.</p>
+              <div style="background:#1f1126; border-left:4px solid #9d66d6; padding:20px; margin-top:40px; border-radius:4px">
+                <h2 style="margin-top:0; font-size:1.2rem; color:#d1b3f0">Next Steps</h2>
+                <p>To view the full interactive dashboard, you need to build the frontend:</p>
+                <code style="display:block; background:#000; padding:12px; border-radius:4px; margin:10px 0; font-family:ui-monospace, monospace; color:#b4ffdb">
+                  cd .ldash/ui && pnpm install && pnpm run build
+                </code>
+                <p style="font-size:0.9rem; color:#b0a2bc">After building, restart the dashboard to load the assets.</p>
+              </div>
+            </main>
           </body>
         </html>
         """

@@ -21,3 +21,5 @@ llm-sandbox[mcp-docker]
 
 # Test
 pytest
+fastapi
+httpx
