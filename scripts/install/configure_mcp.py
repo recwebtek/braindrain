@@ -14,10 +14,18 @@ from __future__ import annotations
 import argparse
 import difflib
 import json
+import shlex
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+# ANSI color codes
+BOLD = "\033[1m"
+CYAN = "\033[36m"
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+RESET = "\033[0m"
 
 
 @dataclass(frozen=True)
@@ -221,15 +229,29 @@ def _build_targets(detected_configs: dict[str, Any]) -> list[Target | CliCommand
 
 
 def _ask_selection(targets: list[Target | CliCommandTarget]) -> list[Target | CliCommandTarget]:
-    print("\nSelect MCP targets to configure (interactive checklist):")
-    print("Enter comma-separated numbers, 'all', or press Enter for Cursor + Zed + Codex CLI (TOML).")
+    detected = [t for t in targets if t.detected]
+
+    print(f"\n{BOLD}Select MCP targets to configure (interactive checklist):{RESET}")
+    if detected:
+        detected_names = ", ".join(t.display for t in detected)
+        print(f"Enter comma-separated numbers, 'all', or {BOLD}press Enter for detected apps{RESET} ({detected_names}).")
+    else:
+        print("Enter comma-separated numbers, 'all', or press Enter for Cursor + Zed + Codex CLI (TOML).")
+
     for idx, target in enumerate(targets, start=1):
         marker = "detected" if target.detected else "not-detected"
         exists = "exists" if target.path.exists() else "new-file"
-        print(f"  {idx:>2}) {target.display:<16} [{marker} | {exists}] {target.path}")
+        line = f"  {idx:>2}) {target.display:<16} [{marker} | {exists}] {target.path}"
+        if target.detected:
+            print(f"{CYAN}{BOLD}{line}{RESET}")
+        else:
+            print(line)
 
     choice = input("\nSelection: ").strip().lower()
     if not choice:
+        if detected:
+            print(f"Defaulting to detected apps: {CYAN}{', '.join(t.display for t in detected)}{RESET}")
+            return detected
         print("Defaulting to Cursor + Zed + Codex CLI (TOML).")
         preferred = {"cursor", "zed", "codex_cli_toml"}
         return [t for t in targets if t.key in preferred]
@@ -278,9 +300,10 @@ def main() -> int:
     selected = _ask_selection(targets)
 
     planned: list[tuple[Target | CliCommandTarget, str, str]] = []
+    quoted_launcher = shlex.quote(launcher)
     for target in selected:
         if isinstance(target, CliCommandTarget):
-            planned.append((target, "", target.command_template.format(launcher=launcher)))
+            planned.append((target, "", target.command_template.format(launcher=quoted_launcher)))
             continue
         try:
             before_obj = _load_config(target.path, target.style)
@@ -329,7 +352,7 @@ def main() -> int:
             try:
                 result = subprocess.run(after, shell=True, capture_output=True, text=True, timeout=30)
                 if result.returncode == 0:
-                    print(f"APPLIED: {target.display}")
+                    print(f"{GREEN}✓ APPLIED:{RESET} {target.display}")
                     applied += 1
                 else:
                     print(f"FAILED: {result.stderr}")
@@ -345,7 +368,7 @@ def main() -> int:
             backup.write_text(before, encoding="utf-8")
             print(f"BACKUP: {backup}")
         target.path.write_text(after, encoding="utf-8")
-        print(f"APPLIED: {target.path}")
+        print(f"{GREEN}✓ APPLIED:{RESET} {target.path}")
         applied += 1
 
     print(f"\nApplied {applied} config update(s).")

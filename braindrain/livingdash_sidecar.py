@@ -889,9 +889,13 @@ def create_app(
             return FileResponse(index_file)
         fallback = """
         <!doctype html>
-        <html>
-          <head><meta charset="utf-8"><title>LivingDash</title></head>
-          <body style="font-family: ui-sans-serif, system-ui; background:#120916; color:#f6eeff; padding:40px">
+        <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>LivingDash</title>
+          </head>
+          <body style="font-family: ui-sans-serif, system-ui; background:#120916; color:#f6eeff; padding:40px; line-height:1.5">
             <h1>LivingDash</h1>
             <p>The UI build has not been generated yet.</p>
           </body>
