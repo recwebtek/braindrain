@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import difflib
 import json
+import shlex
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -282,7 +283,9 @@ def main() -> int:
     planned: list[tuple[Target | CliCommandTarget, str, str]] = []
     for target in selected:
         if isinstance(target, CliCommandTarget):
-            planned.append((target, "", target.command_template.format(launcher=launcher)))
+            # Quote launcher to prevent command injection when interpolated into templates
+            safe_launcher = shlex.quote(launcher)
+            planned.append((target, "", target.command_template.format(launcher=safe_launcher)))
             continue
         try:
             before_obj = _load_config(target.path, target.style)
@@ -327,9 +330,15 @@ def main() -> int:
     for target, before, after in planned:
         if isinstance(target, CliCommandTarget):
             print(f"\n--- {target.display} ---")
+
+            # Use shlex.split to run without shell=True for better security
+            # if the 'after' command is already fully formed.
+            # In this script, 'after' is interpolated with launcher.
+            # We'll stick to quoting launcher in _build_targets/planned or here.
+
             print(f"Running: {after}")
             try:
-                result = subprocess.run(after, shell=True, capture_output=True, text=True, timeout=30)
+                result = subprocess.run(shlex.split(after), shell=False, capture_output=True, text=True, timeout=30)
                 if result.returncode == 0:
                     print(f"APPLIED: {target.display}")
                     applied += 1

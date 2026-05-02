@@ -385,7 +385,9 @@ _APP_CONFIG_PROBES: list[tuple[str, str, str, str]] = [
 
 
 def _run(cmd: str) -> str | None:
-    """Run a shell command, return stdout stripped or None on failure."""
+    """Run a shell command, return stdout stripped or None on failure.
+    NOTE: cmd must be properly quoted if it contains external input.
+    """
     try:
         result = subprocess.run(
             cmd,
