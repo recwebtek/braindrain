@@ -46,69 +46,81 @@ This keeps passwords/session secrets out of shareable dashboard scaffold paths a
 
 ### Environment
 
-| Tool | When to use |
-|---|---|
-| `get_env_context()` | **Call this first** in any session. Returns a cached snapshot of the machine: Python interpreters, package managers, installed IDEs and their MCP configs, running LLM servers, browsers, VM tools, GUI tools, CLI tools, and agent behaviour hints. Zero cost after the first probe. |
-| `refresh_env_context()` | After installing new tools, switching machines, or any time the cached data feels stale. Re-runs the full probe (~5s) and updates the cache. |
+
+| Tool                    | When to use                                                                                                                                                                                                                                                                           |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `get_env_context()`     | **Call this first** in any session. Returns a cached snapshot of the machine: Python interpreters, package managers, installed IDEs and their MCP configs, running LLM servers, browsers, VM tools, GUI tools, CLI tools, and agent behaviour hints. Zero cost after the first probe. |
+| `refresh_env_context()` | After installing new tools, switching machines, or any time the cached data feels stale. Re-runs the full probe (~5s) and updates the cache.                                                                                                                                          |
+
 
 ### Tool discovery
 
-| Tool | When to use |
-|---|---|
+
+| Tool                           | When to use                                                                                                                                                                                              |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `search_tools(query, top_k=5)` | Before loading any external MCP tool. Searches the configured tool registry by capability. Returns lightweight references — not full definitions. Prevents loading 26K-token tool schemas unnecessarily. |
-| `get_available_tools()` | Lists all configured tools and whether they are HOT (always loaded) or deferred (loaded on demand). |
+| `get_available_tools()`        | Lists all configured tools and whether they are HOT (always loaded) or deferred (loaded on demand).                                                                                                      |
+
 
 ### Output routing
 
-| Tool | When to use |
-|---|---|
+
+| Tool                                 | When to use                                                                                                                                                  |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `route_output(text, source, intent)` | When a tool returns a large blob. Indexes it into a local FTS5 store and returns a handle + suggested queries. The raw text never enters the context window. |
-| `search_index(query, limit=5)` | Retrieve relevant chunks from a previously routed output. Use the suggested queries from `route_output` as a starting point. |
+| `search_index(query, limit=5)`       | Retrieve relevant chunks from a previously routed output. Use the suggested queries from `route_output` as a starting point.                                 |
+
 
 ### Workflows
 
-| Tool | When to use |
-|---|---|
-| `list_workflows()` | See what multi-step workflows are available. |
-| `prime_workspace(...)` | Prime a project for AI agent use. **Parameters** include `sync_subagents`, `sync_templates`, `bundle` (`core` default), `codex_agent_targets`, `patch_user_cursor_mcp`, `compact_mcp_response`. **First run**: auto-detects current IDE/CLI (`CURSOR_*` → `TERM_PROGRAM` → dotfolders → fallback `cursor`); response includes **`detect_method`**. Uses **`config/bundles/<bundle>.yaml`** for bundle metadata. Always rewrites **minimal `.ruler/ruler.toml`** when targeting specific agents. Deploys Cursor/Codex subagent files from templates (**`subagents`**) and manages Codex **`BRAINDRAIN SUBAGENTS`** in `.codex/config.toml` when allowed (**`codex_subagent_config`**). After apply, syncs **`.cursor/rules/braindrain.mdc`** and **`project-rules.mdc`** from `.ruler/RULES.md` — see **`cursor_rules`**. When Cursor is in scope, copies **`config/templates/cursor/`** → **`.cursor/hooks.json`** and **`.cursor/hooks/*.sh`** — see **`cursor_hooks`** (create-only; **`sync_templates=true`** refreshes Ruler sources and hook templates). **`sync_subagents=true`** updates existing subagent files and managed Codex blocks (backup-first). Set **`all_agents=True`** for the full template. |
-| `init_project_memory(path, dry_run)` | Initialize project memory artifacts only (`.braindrain/AGENT_MEMORY.md` and `.cursor/hooks/state/continual-learning-index.json`). Migrates legacy `.devdocs/` on first call. Idempotent. |
-| `scriptlib_enable(path, scope, harvest, dry_run)` | Hard-opt-in project or global scriptlib. Project enable can immediately harvest reusable workspace scripts into `.scriptlib/`. |
-| `scriptlib_harvest_workspace(path, dry_run)` | Recursively copy script-like files from the workspace into the local project scriptlib catalog, honoring ignore rules. |
-| `scriptlib_search(query, ...)` | Search local and shared scriptlib entries before writing a new reusable helper script. Returns a `reuse|fork|new` recommendation. |
-| `scriptlib_describe(script_id, ...)` | Inspect metadata, scope, score, run mode, provenance, and pin/update status for one scriptlib entry. |
-| `scriptlib_run(script_id, ...)` | Execute a script through scriptlib with restored source context when paths are sensitive. |
-| `scriptlib_fork(script_id, new_variant_or_version, ...)` | Fork an existing scriptlib entry into a new version for safe edits. |
-| `scriptlib_promote(script_id, ...)` | Promote a validated project-local script into the shared personal scriptlib catalog. Requires approval. |
-| `scriptlib_list_updates(path)` | List pinned shared script artifacts with available updates for the current workspace. |
-| `scriptlib_apply_update(script_id, ...)` | Pin or upgrade a shared script artifact for the current workspace. Requires approval. |
-| `scriptlib_run_maintenance(path, scope, ...)` | Refresh indexes, surface duplicates/promotions/updates, and optionally persist new ignore dirs. |
-| `scriptlib_catalog_status(path, ...)` | Summarize project/shared roots, shared pins, promotion candidates, and update state. |
-| `scriptlib_record_result(script_id, outcome, ...)` | Update success score, mistakes, and validation state. |
-| `scriptlib_refresh_index(path, scope, dry_run)` | Rebuild project/global scriptlib indexes and generated catalogs. |
-| `plan_workflow(name, args)` | Generate a markdown execution plan and review it before committing to a run. Use before any destructive or long-running workflow. |
-| `run_workflow(name, args)` | Execute a workflow. Intermediate output is routed through the sandbox — only the final summary returns to the agent. |
+
+| Tool                                                     | When to use                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `list_workflows()`                                       | See what multi-step workflows are available.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `prime_workspace(...)`                                   | Prime a project for AI agent use. **Parameters** include `sync_subagents`, `sync_templates`, `bundle` (`core` default), `codex_agent_targets`, `patch_user_cursor_mcp`, `compact_mcp_response`. **First run**: auto-detects current IDE/CLI (`CURSOR_*` → `TERM_PROGRAM` → dotfolders → fallback `cursor`); response includes `**detect_method`**. Uses `**config/bundles/<bundle>.yaml**` for bundle metadata. Always rewrites **minimal `.ruler/ruler.toml`** when targeting specific agents. Deploys Cursor/Codex subagent files from templates (`**subagents**`) and manages Codex `**BRAINDRAIN SUBAGENTS**` in `.codex/config.toml` when allowed (`**codex_subagent_config**`). After apply, syncs `**.cursor/rules/braindrain.mdc**` and `**project-rules.mdc**` from `.ruler/RULES.md` — see `**cursor_rules**`. When Cursor is in scope, copies `**config/templates/cursor/**` → `**.cursor/hooks.json**` and `**.cursor/hooks/*.sh**` — see `**cursor_hooks**` (create-only; `**sync_templates=true**` refreshes Ruler sources and hook templates). `**sync_subagents=true**` updates existing subagent files and managed Codex blocks (backup-first). Set `**all_agents=True**` for the full template. |
+| `init_project_memory(path, dry_run)`                     | Initialize project memory artifacts only (`.braindrain/AGENT_MEMORY.md` and `.cursor/hooks/state/continual-learning-index.json`). Migrates legacy `.devdocs/` on first call. Idempotent.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `scriptlib_enable(path, scope, harvest, dry_run)`        | Hard-opt-in project or global scriptlib. Project enable can immediately harvest reusable workspace scripts into `.scriptlib/`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `scriptlib_harvest_workspace(path, dry_run)`             | Recursively copy script-like files from the workspace into the local project scriptlib catalog, honoring ignore rules.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `scriptlib_search(query, ...)`                           | Search local and shared scriptlib entries before writing a new reusable helper script. Returns a `reuse                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `scriptlib_describe(script_id, ...)`                     | Inspect metadata, scope, score, run mode, provenance, and pin/update status for one scriptlib entry.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `scriptlib_run(script_id, ...)`                          | Execute a script through scriptlib with restored source context when paths are sensitive.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `scriptlib_fork(script_id, new_variant_or_version, ...)` | Fork an existing scriptlib entry into a new version for safe edits.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `scriptlib_promote(script_id, ...)`                      | Promote a validated project-local script into the shared personal scriptlib catalog. Requires approval.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `scriptlib_list_updates(path)`                           | List pinned shared script artifacts with available updates for the current workspace.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `scriptlib_apply_update(script_id, ...)`                 | Pin or upgrade a shared script artifact for the current workspace. Requires approval.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `scriptlib_run_maintenance(path, scope, ...)`            | Refresh indexes, surface duplicates/promotions/updates, and optionally persist new ignore dirs.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `scriptlib_catalog_status(path, ...)`                    | Summarize project/shared roots, shared pins, promotion candidates, and update state.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `scriptlib_record_result(script_id, outcome, ...)`       | Update success score, mistakes, and validation state.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `scriptlib_refresh_index(path, scope, dry_run)`          | Rebuild project/global scriptlib indexes and generated catalogs.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `plan_workflow(name, args)`                              | Generate a markdown execution plan and review it before committing to a run. Use before any destructive or long-running workflow.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `run_workflow(name, args)`                               | Execute a workflow. Intermediate output is routed through the sandbox — only the final summary returns to the agent.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+
 
 `list_workflows()` now includes `init_project_memory`, so agents can discover memory bootstrap as a first-class onboarding workflow.
 
 ### Telemetry
 
-| Tool | When to use |
-|---|---|
+
+| Tool                    | When to use                                                      |
+| ----------------------- | ---------------------------------------------------------------- |
 | `get_token_dashboard()` | Quick snapshot of estimated tokens saved vs raw in this session. |
-| `get_token_stats()` | Full breakdown: per-tool savings, cache hits, cost avoided. |
+| `get_token_stats()`     | Full breakdown: per-tool savings, cache hits, cost avoided.      |
+
 
 ### Token Checkpoint Protocol
 
 Use this cadence for consistent token observability:
 
-| Trigger | Required | Call |
-|---|---|---|
-| Task start | Yes | `get_token_dashboard()` |
-| Before high-cost operation | Yes | `get_token_dashboard()` |
-| After high-cost operation | Yes | `get_token_dashboard()` |
-| Milestone or phase close | Yes | `get_token_stats()` |
-| Task end | Yes | `get_token_dashboard()` then `get_token_stats()` |
-| Trivial/no-op action | Optional skip | none |
+
+| Trigger                    | Required      | Call                                             |
+| -------------------------- | ------------- | ------------------------------------------------ |
+| Task start                 | Yes           | `get_token_dashboard()`                          |
+| Before high-cost operation | Yes           | `get_token_dashboard()`                          |
+| After high-cost operation  | Yes           | `get_token_dashboard()`                          |
+| Milestone or phase close   | Yes           | `get_token_stats()`                              |
+| Task end                   | Yes           | `get_token_dashboard()` then `get_token_stats()` |
+| Trivial/no-op action       | Optional skip | none                                             |
+
 
 High-cost operations include broad searches, large-output reads, subagent batches, and long-running commands.
 
@@ -116,6 +128,7 @@ For large outputs, always use:
 `route_output() -> search_index()`
 
 Bad vs good large-output handling:
+
 - Bad: paste a long tool dump directly into chat and then ask for analysis.
 - Good: call `route_output()` on the dump, then query targeted chunks with `search_index()`.
 
@@ -138,6 +151,7 @@ Example line:
 `{"schema_version":"1.0","timestamp":"2026-04-06T12:00:00Z","task":"token-stats-rule-system","phase":"post_high_cost","tool":"get_token_dashboard","totals":{"estimated_raw_tokens":6400,"actual_context_tokens":2100,"saved_tokens":4300},"context_tags":["docs","search"],"note":"Captured after cross-file wording audit."}`
 
 Validation gates:
+
 - PASS only if checkpoint cadence is consistent across `RULES.md`, `AGENTS.md.template`, and `.cursor/rules/agent-system.mdc`.
 - PASS only if `route_output() -> search_index()` appears as the large-output path.
 - FAIL if `schema_version` is omitted in JSONL examples.
@@ -145,9 +159,11 @@ Validation gates:
 
 ### Utility
 
-| Tool | When to use |
-|---|---|
+
+| Tool     | When to use                                                   |
+| -------- | ------------------------------------------------------------- |
 | `ping()` | Health check — confirms the server is running and responding. |
+
 
 ---
 
@@ -222,7 +238,7 @@ Replace `/path/to/braindrain` with the absolute path to your clone. `install.sh`
 
 ### Cursor
 
-`.cursor/mcp.json` (project) or **`~/.cursor/mcp.json`** (global) via **Settings › Features › MCP**:
+`.cursor/mcp.json` (project) or `**~/.cursor/mcp.json`** (global) via **Settings › Features › MCP**:
 
 ```json
 {
@@ -237,12 +253,14 @@ Replace `/path/to/braindrain` with the absolute path to your clone. `install.sh`
 }
 ```
 
-If the MCP log shows **`[MCP Allowlist] No serverName provided for adapter`**, either add **`"serverName": "braindrain"`** on that server object in **`~/.cursor/mcp.json`**, or run **`prime_workspace(..., patch_user_cursor_mcp=true)`** once so braindrain patches the global file. `install.sh` / `configure_mcp.py` and project-level `prime_workspace` set this for generated configs; UI-created entries may omit it.
+If the MCP log shows `**[MCP Allowlist] No serverName provided for adapter**`, either add `**"serverName": "braindrain"**` on that server object in `**~/.cursor/mcp.json**`, or run `**prime_workspace(..., patch_user_cursor_mcp=true)**` once so braindrain patches the global file. `install.sh` / `configure_mcp.py` and project-level `prime_workspace` set this for generated configs; UI-created entries may omit it.
 
-**Large `prime_workspace` results:** the MCP tool defaults to **`compact_mcp_response=true`** (smaller JSON) to avoid **ClosedResourceError** / connection closed while returning the tool result. Set **`compact_mcp_response=false`** only if you need the full `templates.deployed` map and untruncated Ruler logs.
+**Large `prime_workspace` results:** the MCP tool defaults to `**compact_mcp_response=true`** (smaller JSON) to avoid **ClosedResourceError** / connection closed while returning the tool result. Set `**compact_mcp_response=false`** only if you need the full `templates.deployed` map and untruncated Ruler logs.
 
 #### Multi-agent loop (Cursor)
+
 This repo includes a 4-tier multi-agent system under `.cursor/`. Run:
+
 - `/intake` (once per project) to generate `project-context.json`
 - `/architect` to generate `PRD.md`, `TASK-GRAPH.md`, and `COORDINATOR-BRIEF.md`
 - `/coordinate` to execute stages (Tier 3 `coordinator` uses `composer-2`)
@@ -279,7 +297,7 @@ This repo includes a 4-tier multi-agent system under `.cursor/`. Run:
 }
 ```
 
-After saving, reload via the command palette: **`agent: reload context servers`**. braindrain will appear in the Agent panel's MCP section.
+After saving, reload via the command palette: `**agent: reload context servers**`. braindrain will appear in the Agent panel's MCP section.
 
 ### OpenCode
 
@@ -355,15 +373,17 @@ Main config: `config/hub_config.yaml`
 
 Environment variables (copy `.env.example` to `.env.dev` to start):
 
-| Variable | Purpose |
-|---|---|
-| `BRAINDRAIN_CONFIG` | Override config file path |
-| `BRAINDRAIN_LAUNCHER_PATH` | Absolute path to the `config/braindrain` launcher. Set automatically by `install.sh`. Required by `prime_workspace()` and `configure_mcp.py`. |
-| `GITHUB_TOKEN` | Enables the deferred GitHub MCP tool |
-| `LMSTUDIO_BASE_URL` | LM Studio endpoint (default: `http://localhost:1234/v1`) |
-| `OLLAMA_HOST` | Ollama endpoint (default: `http://localhost:11434`) |
-| `OPENAI_API_KEY` | Optional — cloud embeddings / semantic search |
-| `BRAINDRAIN_DISABLE_DOCKER_SANDBOX` | Set to `1` to skip the Docker workflow sandbox |
+
+| Variable                            | Purpose                                                                                                                                       |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BRAINDRAIN_CONFIG`                 | Override config file path                                                                                                                     |
+| `BRAINDRAIN_LAUNCHER_PATH`          | Absolute path to the `config/braindrain` launcher. Set automatically by `install.sh`. Required by `prime_workspace()` and `configure_mcp.py`. |
+| `GITHUB_TOKEN`                      | Enables the deferred GitHub MCP tool                                                                                                          |
+| `LMSTUDIO_BASE_URL`                 | LM Studio endpoint (default: `http://localhost:1234/v1`)                                                                                      |
+| `OLLAMA_HOST`                       | Ollama endpoint (default: `http://localhost:11434`)                                                                                           |
+| `OPENAI_API_KEY`                    | Optional — cloud embeddings / semantic search                                                                                                 |
+| `BRAINDRAIN_DISABLE_DOCKER_SANDBOX` | Set to `1` to skip the Docker workflow sandbox                                                                                                |
+
 
 The server auto-loads `.env.dev` → `.env.prod` → `.env` (first found, non-overriding of existing env vars).
 
@@ -409,7 +429,7 @@ braindrain/
 
 ### Rule generation (AGENTS.md vs Ruler)
 
-- **`AGENTS.md`**: generated locally by `./install.sh` from `AGENTS.md.template` (and includes a machine-specific env block between `<!-- ENV_CONTEXT_START -->` / `<!-- ENV_CONTEXT_END -->`).
+- `**AGENTS.md**`: generated locally by `./install.sh` from `AGENTS.md.template` (and includes a machine-specific env block between `<!-- ENV_CONTEXT_START -->` / `<!-- ENV_CONTEXT_END -->`).
 - **Ruler-generated dotfiles**: `./install.sh` (and the `prime_workspace()` tool) deploys `config/templates/ruler/` → `.ruler/` and runs `npx @intellectronica/ruler apply` to generate project-local agent rule files like `.cursor/rules/braindrain.mdc`, `.mcp.json`, `CLAUDE.md`, `.agent/rules/ruler.md`, etc.
   - Source-of-truth for those generated rule files is `config/templates/ruler/RULES.md` (and `.ruler/ruler.toml`).
   - **Important**: files like `CLAUDE.md` are **generated artifacts** (gitignored) and should be treated as **disposable**. Edit the templates instead, then re-run Ruler.
@@ -435,20 +455,22 @@ braindrain/
 
 ### Docs ownership map (token observability)
 
-| File/path | Ownership | Purpose |
-|---|---|---|
-| `config/templates/ruler/RULES.md` | Source-of-truth template | Canonical protocol language and trigger matrix |
-| `AGENTS.md.template` | Source template | Generated `AGENTS.md` content for protocol distribution |
-| `AGENTS.md` | Generated artifact | Do not edit directly |
-| `.cursor/rules/agent-system.mdc` | Cursor local enforcement | Immediate IDE-specific guardrails |
-| `~/.braindrain/costs/session.jsonl` | Machine-local telemetry | Runtime token telemetry source-of-truth |
-| `.braindrain/token-metrics.jsonl` | Optional machine-local artifact | Local checkpoint stream using schema `1.0` |
+
+| File/path                           | Ownership                       | Purpose                                                 |
+| ----------------------------------- | ------------------------------- | ------------------------------------------------------- |
+| `config/templates/ruler/RULES.md`   | Source-of-truth template        | Canonical protocol language and trigger matrix          |
+| `AGENTS.md.template`                | Source template                 | Generated `AGENTS.md` content for protocol distribution |
+| `AGENTS.md`                         | Generated artifact              | Do not edit directly                                    |
+| `.cursor/rules/agent-system.mdc`    | Cursor local enforcement        | Immediate IDE-specific guardrails                       |
+| `~/.braindrain/costs/session.jsonl` | Machine-local telemetry         | Runtime token telemetry source-of-truth                 |
+| `.braindrain/token-metrics.jsonl`   | Optional machine-local artifact | Local checkpoint stream using schema `1.0`              |
+
 
 ---
 
 ## Memory layer status and roadmap
 
-**Roadmap and release TODOs** ship from the repo root as **`ROADMAP.md`** and **`TODOS.md`**. Use **`.devdocs/`** only on your machine for private drafts (that path is gitignored and must not be committed).
+**Roadmap and release TODOs** ship from the repo root as `**ROADMAP.md`** and `**TODOS.md**`. Use `**.devdocs/**` only on your machine for private drafts (that path is gitignored and must not be committed).
 
 Implemented now (runtime behavior in this repo):
 
@@ -471,7 +493,7 @@ Memory artifacts and paths:
 - Durable project memory path: `.braindrain/AGENT_MEMORY.md` (machine-local, gitignored).
 - Incremental transcript index path: `.cursor/hooks/state/continual-learning-index.json`.
 - Daily planning audit hook state path: `.cursor/hooks/state/daily-plan-audit.json`.
-- Daily planning audit reports path: `create-subagent/plan-audit-YYYY-MM-DD.md` (plus `create-subagent/latest.md`).
+- Daily planning audit reports path: `.braindrain/plan-reports/plan-audit-YYYY-MM-DD.md` (plus `.braindrain/plan-reports/latest.md` and regenerated table `.braindrain/plan-reports/plan-task-board.md`). Mark owners in plan bullets with `@name`, `owner:`, `assignee:`, or `dri:` so the audit can classify accountability.
 - Dream artifacts path: `~/.braindrain/dreaming/` (`plans/`, `daily/`, `DREAMS.md`, `last_status.json`).
 - `init_project_memory(path, dry_run)` bootstraps memory artifacts and is idempotent.
 - `prime_workspace()` includes memory initialization in onboarding.
@@ -506,4 +528,4 @@ Braindrain is a community-first, research-driven orchestration layer focused on 
 Commercial use is permitted under AGPL-3.0.
 However, the **Braindrain** name, branding, and project identity are governed separately by project trademark policy. Forks, research reuse, and community improvements are welcome; just avoid presenting modified or hosted versions as the official Braindrain project unless explicitly authorized.
 
-For full terms, see the [`LICENSE`](LICENSE) file and naming guidance in [`TRADEMARKS.md`](TRADEMARKS.md).
+For full terms, see the `[LICENSE](LICENSE)` file and naming guidance in `[TRADEMARKS.md](TRADEMARKS.md)`.
