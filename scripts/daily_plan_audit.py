@@ -15,7 +15,6 @@ import re
 import shutil
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Iterable
 
 
 SCHEMA_VERSION = "1.0"
@@ -61,6 +60,33 @@ CHECKBOX_RE = re.compile(r"^\[([ xX])\]\s*(.*)$")
 HEADING_RE = re.compile(r"^\s*#{1,6}\s+(.*)$")
 BACKTICK_RE = re.compile(r"`([^`]+)`")
 PATHISH_RE = re.compile(r"\b(?:[\w.-]+/)+[\w.-]+\b")
+# Strict ownership markers only (no fuzzy "owner" substring in prose).
+OWNER_AT_RE = re.compile(r"(?:^|[\s([{<'\"]|[-*]\s+)@([a-zA-Z0-9_.-]{1,64})\b")
+OWNER_LABEL_RES = (
+    re.compile(r"\bowner\s*:\s*(\S+)", re.IGNORECASE),
+    re.compile(r"\bassignee\s*:\s*(\S+)", re.IGNORECASE),
+    re.compile(r"\bdri\s*:\s*(\S+)", re.IGNORECASE),
+)
+
+
+def has_explicit_owner(text: str) -> bool:
+    if OWNER_AT_RE.search(text):
+        return True
+    for rx in OWNER_LABEL_RES:
+        if rx.search(text):
+            return True
+    return False
+
+
+def extract_owner_display(text: str) -> str:
+    m = OWNER_AT_RE.search(text)
+    if m:
+        return f"@{m.group(1)}"
+    for rx in OWNER_LABEL_RES:
+        m2 = rx.search(text)
+        if m2:
+            return m2.group(1).strip(".,;:)]}")
+    return "—"
 
 
 @dataclasses.dataclass
@@ -79,7 +105,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repo-root", default=".", help="Repository root")
     parser.add_argument(
         "--output-dir",
-        default="create-subagent",
+        default=".braindrain/plan-reports",
         help="Output directory for markdown reports (repo-relative if not absolute)",
     )
     parser.add_argument("--report-date", default=dt.date.today().isoformat())
@@ -93,7 +119,11 @@ def is_secondary_doc(path: Path) -> bool:
         return False
     if "/create-subagent/" in lowered:
         return False
+    if "/.braindrain/plan-reports/" in lowered:
+        return False
     if "/.cursor/plans/" in lowered:
+        return False
+    if "/.devdocs/" in lowered:
         return False
     if "/.cursor/agents/" in lowered:
         return False
@@ -237,12 +267,12 @@ def detect_gaps(items: list[PlanItem]) -> list[dict[str, str]]:
         if item.status not in {"Outstanding", "In Progress", "Blocked"}:
             continue
         lowered = item.item.lower()
-        has_owner = "@" in item.item or "owner" in lowered
+        has_owner = has_explicit_owner(item.item)
         has_test_hint = "test" in lowered
         has_path_evidence = any("/" in ev for ev in item.evidence)
         missing = []
         if not has_owner:
-            missing.append("owner")
+            missing.append("explicit_owner")
         if not has_test_hint:
             missing.append("test")
         if not has_path_evidence:
@@ -259,6 +289,52 @@ def detect_gaps(items: list[PlanItem]) -> list[dict[str, str]]:
             )
     gaps.sort(key=lambda x: (x["risk"] != "high", x["missing"]))
     return gaps
+
+
+def render_task_board_markdown(report_date: str, items: list[PlanItem]) -> str:
+    """Single markdown table of active work, regenerated each audit run."""
+    rows: list[PlanItem] = [
+        i
+        for i in items
+        if i.status in {"Blocked", "In Progress", "Outstanding"}
+    ]
+    rows.sort(
+        key=lambda i: (
+            {"Blocked": 0, "In Progress": 1, "Outstanding": 2}[i.status],
+            i.source,
+            i.item[:80],
+        )
+    )
+    lines = [
+        "# Plan task board",
+        "",
+        f"_Generated {report_date} by `scripts/daily_plan_audit.py` (daily hook). "
+        "Do not edit by hand — ownership must use `@name`, `owner:`, `assignee:`, or `dri:`._",
+        "",
+        "| Status | Owner | Item | Source | Gaps |",
+        "|--------|-------|------|--------|------|",
+    ]
+    for item in rows:
+        gap_parts = []
+        if not has_explicit_owner(item.item):
+            gap_parts.append("explicit_owner")
+        if "test" not in item.item.lower():
+            gap_parts.append("test")
+        if not any("/" in ev for ev in item.evidence):
+            gap_parts.append("path_evidence")
+        gaps_cell = ", ".join(gap_parts) if gap_parts else "—"
+        owner_cell = extract_owner_display(item.item)
+        item_cell = item.item.replace("|", "\\|").replace("\n", " ")
+        if len(item_cell) > 120:
+            item_cell = item_cell[:117] + "..."
+        src_cell = f"`{item.source}`"
+        lines.append(
+            f"| {item.status} | {owner_cell} | {item_cell} | {src_cell} | {gaps_cell} |"
+        )
+    if not rows:
+        lines.append("| — | — | _No blocked/in-progress/outstanding items parsed._ | — | — |")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def memory_context(repo_root: Path) -> dict[str, object]:
@@ -321,10 +397,28 @@ def build_report(
     mem = memory_context(repo_root)
 
     top_risks: list[str] = []
-    if any(i.status == "Blocked" for i in items):
-        top_risks.append("Blocked plan items require immediate owner assignment.")
-    if gaps:
-        top_risks.append("Open items are missing owner/test/evidence details.")
+    blocked_no_owner = [
+        i for i in items if i.status == "Blocked" and not has_explicit_owner(i.item)
+    ]
+    if blocked_no_owner:
+        top_risks.append(
+            "Blocked items lack explicit owner markers (@, owner:, assignee:, or dri:)."
+        )
+    elif any(i.status == "Blocked" for i in items):
+        top_risks.append(
+            "Blocked items have owner markers; resolve dependencies and unblock execution."
+        )
+    if any("explicit_owner" in g["missing"] for g in gaps) and not blocked_no_owner:
+        top_risks.append(
+            "Some active items lack explicit owner markers (@, owner:, assignee:, or dri:)."
+        )
+    gap_test_or_path = [
+        g
+        for g in gaps
+        if "test" in g["missing"] or "evidence" in g["missing"]
+    ]
+    if gap_test_or_path:
+        top_risks.append("Active items are missing test hints and/or path evidence in plan text.")
     if overlaps:
         top_risks.append("Overlapping plan entries may create duplicated delivery work.")
     if not top_risks:
@@ -450,9 +544,17 @@ def build_report(
         body.append("- Keep roadmap and todos synchronized with implementation references.")
     else:
         for item in prioritized[:7]:
-            body.append(
-                f"- [{item.status}] `{item.source}`: add owner/test/evidence updates for `{item.item}`."
-            )
+            wants: list[str] = []
+            if not has_explicit_owner(item.item):
+                wants.append(
+                    "add explicit owner (@name or owner:/assignee:/dri:)"
+                )
+            if "test" not in item.item.lower():
+                wants.append("add test hint")
+            if not any("/" in ev for ev in item.evidence):
+                wants.append("link path evidence")
+            hint = "; ".join(wants) if wants else "review for drift vs implementation"
+            body.append(f"- [{item.status}] `{item.source}`: {hint} — `{item.item}`")
     body.append("")
     return "\n".join(body)
 
@@ -479,6 +581,10 @@ def main() -> int:
 
     latest_path = out_dir / "latest.md"
     shutil.copyfile(dated_path, latest_path)
+
+    board = render_task_board_markdown(args.report_date, items)
+    (out_dir / "plan-task-board.md").write_text(board, encoding="utf-8")
+
     print(str(dated_path))
     return 0
 

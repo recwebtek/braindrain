@@ -5,10 +5,11 @@ from __future__ import annotations
 import importlib.util
 import json
 import shutil
-import sys
 import stat
+import sys
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -115,11 +116,15 @@ def test_daily_plan_hook_contains_once_per_day_gate() -> None:
 def test_daily_plan_audit_prioritizes_cursor_plan_files(tmp_project_dir: Path) -> None:
     module = _load_audit_module()
     (tmp_project_dir / ".cursor" / "plans").mkdir(parents=True, exist_ok=True)
+    (tmp_project_dir / ".devdocs").mkdir(parents=True, exist_ok=True)
     (tmp_project_dir / ".cursor" / "plans" / "x.plan.md").write_text(
         "# Plan\n- [ ] Outstanding item\n", encoding="utf-8"
     )
     (tmp_project_dir / "ROADMAP.md").write_text("# Roadmap\n- [ ] Next item\n", encoding="utf-8")
     (tmp_project_dir / "README.md").write_text("# Readme\nUnrelated docs\n", encoding="utf-8")
+    (tmp_project_dir / ".devdocs" / "legacy.plan.md").write_text(
+        "# Legacy Plan\n- [ ] stale task\n", encoding="utf-8"
+    )
 
     primary, secondary = module.discover_sources(tmp_project_dir)
     assert [p.relative_to(tmp_project_dir).as_posix() for p in primary] == [
@@ -127,6 +132,46 @@ def test_daily_plan_audit_prioritizes_cursor_plan_files(tmp_project_dir: Path) -
     ]
     assert "ROADMAP.md" in {p.relative_to(tmp_project_dir).as_posix() for p in secondary}
     assert "README.md" not in {p.relative_to(tmp_project_dir).as_posix() for p in secondary}
+    assert ".devdocs/legacy.plan.md" not in {
+        p.relative_to(tmp_project_dir).as_posix() for p in secondary
+    }
+
+
+def test_strict_owner_allowlist(tmp_project_dir: Path) -> None:
+    _ = tmp_project_dir
+    m = _load_audit_module()
+    assert m.has_explicit_owner("@bob fix auth")
+    assert m.has_explicit_owner("Ship owner: team-alpha")
+    assert m.has_explicit_owner("x assignee: jane")
+    assert m.has_explicit_owner("DRI: eng for rollout")
+    assert not m.has_explicit_owner("the owner should review the blocked dependency")
+    assert not m.has_explicit_owner("blocked command classes (policy)")
+
+
+def test_daily_plan_audit_writes_task_board(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    (tmp_project_dir / ".cursor" / "plans").mkdir(parents=True, exist_ok=True)
+    (tmp_project_dir / ".cursor" / "plans" / "board.plan.md").write_text(
+        "# Plan\n"
+        "- [ ] owner: alice first task\n"
+        "- [ ] blocked by policy with no marker\n",
+        encoding="utf-8",
+    )
+    argv = [
+        "daily_plan_audit.py",
+        "--repo-root",
+        str(tmp_project_dir),
+        "--report-date",
+        "2026-06-01",
+    ]
+    with patch.object(sys, "argv", argv):
+        assert m.main() == 0
+    reports = tmp_project_dir / ".braindrain" / "plan-reports"
+    assert (reports / "plan-task-board.md").is_file()
+    board = (reports / "plan-task-board.md").read_text(encoding="utf-8")
+    assert "# Plan task board" in board
+    assert "alice" in board
+    assert (reports / "plan-audit-2026-06-01.md").is_file()
 
 
 def test_daily_plan_audit_report_contract(tmp_project_dir: Path) -> None:

@@ -11,7 +11,7 @@ REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 AUDIT_SCRIPT="${REPO_ROOT}/scripts/daily_plan_audit.py"
 STATE_DIR="${REPO_ROOT}/.cursor/hooks/state"
 STATE_FILE="${STATE_DIR}/daily-plan-audit.json"
-OUT_DIR="${REPO_ROOT}/create-subagent"
+OUT_DIR="${REPO_ROOT}/.braindrain/plan-reports"
 TODAY="$(date +%Y-%m-%d)"
 
 [ -f "${AUDIT_SCRIPT}" ] || exit 0
