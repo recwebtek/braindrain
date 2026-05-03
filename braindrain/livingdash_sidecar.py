@@ -893,11 +893,31 @@ def create_app(
           <head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>LivingDash</title>
+            <title>LivingDash — Build Required</title>
+            <style>
+              :root { --bg: #0f0a13; --card: #1a141f; --text: #f1e9f5; --accent: #c084fc; --muted: #94a3b8; }
+              body { font-family: ui-sans-serif, system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; display: flex; align-items: center; justify-content: center; min-height: 100vh; line-height: 1.6; }
+              .card { background: var(--card); padding: 2.5rem; border-radius: 1rem; border: 1px solid #ffffff10; max-width: 500px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); text-align: center; }
+              h1 { margin: 0 0 1rem; font-size: 1.875rem; font-weight: 700; color: var(--accent); }
+              p { color: var(--muted); margin-bottom: 2rem; font-size: 1.1rem; }
+              .cmd-box { background: #00000050; padding: 1.25rem; border-radius: 0.5rem; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.9rem; text-align: left; border: 1px solid #ffffff08; position: relative; }
+              .cmd-label { position: absolute; top: -0.7rem; left: 1rem; background: var(--accent); color: var(--bg); font-size: 0.7rem; font-weight: 800; padding: 0.1rem 0.5rem; border-radius: 0.2rem; text-transform: uppercase; }
+              code { color: #e2e8f0; display: block; white-space: pre-wrap; }
+              .footer { margin-top: 2rem; font-size: 0.8rem; color: #ffffff20; }
+            </style>
           </head>
-          <body style="font-family: ui-sans-serif, system-ui; background:#120916; color:#f6eeff; padding:40px; line-height:1.5">
-            <h1>LivingDash</h1>
-            <p>The UI build has not been generated yet.</p>
+          <body>
+            <div class="card">
+              <h1>LivingDash</h1>
+              <p>The dashboard UI build is not found. Run the following to generate it:</p>
+              <div class="cmd-box">
+                <span class="cmd-label">Quick Build</span>
+                <code>cd .ldash/ui
+pnpm install
+pnpm run build</code>
+              </div>
+              <div class="footer">Waiting for production artifacts in .ldash/ui/dist</div>
+            </div>
           </body>
         </html>
         """
