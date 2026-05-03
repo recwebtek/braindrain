@@ -16,7 +16,7 @@ import shlex
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Optional, Union
 
 CACHE_PATH = Path.home() / ".braindrain" / "env_context.json"
 
@@ -175,7 +175,7 @@ _LLM_PORTS: dict[int, str] = {
     1337: "LM Studio (alt)",
 }
 
-_PROBE_COMMANDS: list[tuple[str, str]] = [
+_PROBE_COMMANDS: list[tuple[str, Union[str, Callable[[], Optional[str]]]]] = [
     # Identity
     ("hostname", "hostname"),
     ("computer_name", "scutil --get ComputerName 2>/dev/null || hostname"),
@@ -186,7 +186,21 @@ _PROBE_COMMANDS: list[tuple[str, str]] = [
     ("os_release", "cat /etc/os-release 2>/dev/null || sw_vers 2>/dev/null"),
     ("kernel", "uname -r"),
     # Window system / Desktop Environment
-    ("wm_de_info", "echo $XDG_CURRENT_DESKTOP; echo $DESKTOP_SESSION; echo $XDG_SESSION_TYPE; [ -f /usr/bin/sw_vers ] && sw_vers -productVersion"),
+    (
+        "wm_de_info",
+        lambda: "\n".join(
+            filter(
+                None,
+                [
+                    os.environ.get("XDG_CURRENT_DESKTOP"),
+                    os.environ.get("DESKTOP_SESSION"),
+                    os.environ.get("XDG_SESSION_TYPE"),
+                    _run("sw_vers -productVersion") if os.path.exists("/usr/bin/sw_vers") else None,
+                ],
+            )
+        )
+        or None,
+    ),
     # Network — LAN IPs + interface names
     (
         "lan_ip",
@@ -198,10 +212,15 @@ _PROBE_COMMANDS: list[tuple[str, str]] = [
     ),
     ("network_hosts", "cat /etc/hosts | grep -v '^#' | grep -v '^$' | head -20"),
     # Shell & terminal
-    ("shell", "echo $SHELL"),
-    ("shell_version", "$SHELL --version 2>&1 | head -1"),
-    ("term", "echo $TERM"),
-    ("term_program", "echo $TERM_PROGRAM"),
+    ("shell", lambda: os.environ.get("SHELL") or None),
+    (
+        "shell_version",
+        lambda: _run(f"{shlex.quote(os.environ.get('SHELL', ''))} --version 2>&1 | head -1")
+        if os.environ.get("SHELL")
+        else None,
+    ),
+    ("term", lambda: os.environ.get("TERM") or None),
+    ("term_program", lambda: os.environ.get("TERM_PROGRAM") or None),
     # Package managers (presence check)
     (
         "pkg_managers",
@@ -238,7 +257,10 @@ _PROBE_COMMANDS: list[tuple[str, str]] = [
         "editors",
         "for e in nvim vim nano code cursor windsurf zed; do which $e 2>/dev/null && echo $e; done",
     ),
-    ("editor_env", "echo $EDITOR; echo $VISUAL"),
+    (
+        "editor_env",
+        lambda: "\n".join(filter(None, [os.environ.get("EDITOR"), os.environ.get("VISUAL")])) or None,
+    ),
     # Key CLI tools agents commonly use
     (
         "modern_cli_tools",
@@ -255,7 +277,7 @@ _PROBE_COMMANDS: list[tuple[str, str]] = [
         "grep -h '^alias' ~/.zshrc ~/.bashrc ~/.config/fish/config.fish 2>/dev/null | head -30",
     ),
     # PATH
-    ("path", "echo $PATH"),
+    ("path", lambda: os.environ.get("PATH") or None),
     # XDG / config dirs
     ("xdg_config", "ls ~/.config/ 2>/dev/null | head -30"),
     # Homebrew installed formulae (top-level)
@@ -385,7 +407,7 @@ _APP_CONFIG_PROBES: list[tuple[str, str, str, str]] = [
 
 
 def _run(cmd: str) -> str | None:
-    """Run a shell command, return stdout stripped or None on failure.
+    """Run a shell command, return stdout or None on failure.
     NOTE: cmd must be properly quoted if it contains external input.
     """
     try:
@@ -396,8 +418,7 @@ def _run(cmd: str) -> str | None:
             text=True,
             timeout=5,
         )
-        out = result.stdout.strip()
-        return out if out else None
+        return result.stdout if result.stdout else None
     except Exception:
         return None
 
@@ -496,11 +517,18 @@ def run_probe() -> dict[str, Any]:
 
     # Run all shell commands in parallel (all have 5s timeouts)
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as pool:
-        futures = {pool.submit(_run, cmd): key for key, cmd in _PROBE_COMMANDS}
+        futures = {}
+        for key, cmd in _PROBE_COMMANDS:
+            if callable(cmd):
+                futures[pool.submit(cmd)] = key
+            else:
+                futures[pool.submit(_run, cmd)] = key
+
         for future in concurrent.futures.as_completed(futures):
             key = futures[future]
             try:
-                raw[key] = future.result()
+                val = future.result()
+                raw[key] = val.strip() if isinstance(val, str) else val
             except Exception:
                 raw[key] = None
 
