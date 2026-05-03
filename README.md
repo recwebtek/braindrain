@@ -493,7 +493,14 @@ Memory artifacts and paths:
 - Durable project memory path: `.braindrain/AGENT_MEMORY.md` (machine-local, gitignored).
 - Incremental transcript index path: `.cursor/hooks/state/continual-learning-index.json`.
 - Daily planning audit hook state path: `.cursor/hooks/state/daily-plan-audit.json`.
-- Daily planning audit reports path: `.braindrain/plan-reports/plan-audit-YYYY-MM-DD.md` (plus `.braindrain/plan-reports/latest.md` and regenerated table `.braindrain/plan-reports/plan-task-board.md`). Mark owners in plan bullets with `@name`, `owner:`, `assignee:`, or `dri:` so the audit can classify accountability.
+- Daily planning audit reports path:
+  - `.braindrain/plan-reports/plan-audit-YYYY-MM-DD.md` (full report, now plan-centric cards grouped by IDE -> disposition)
+  - `.braindrain/plan-reports/latest.md` (latest mirror)
+  - `.braindrain/plan-reports/plan-task-board.md` (active item board with IDE + inherited owner)
+  - `.braindrain/plan-reports/master-plan.md` (generated master mirror + drift detection)
+  - `.braindrain/plan-reports/next-actions.md` (verb queue: `MERGE`, `FIX`, `REPLAN`, `RESEARCH`, `IMPLEMENT`, `BACKLOG`)
+  - Primary plan discovery now scans known IDE plan dirs (`.cursor/plans`, `.codex/plans`, `.kiro/plans`, `.windsurf/plans`, etc.), and each plan/action is tagged with its IDE source.
+  - Ownership defaults to `@<current username>` from `get_env_context()` when `owner:`/`dri:` are absent. Explicit item-level owner markers (`@name`, `owner:`, `assignee:`, `dri:`) still work and override inherited ownership.
 - Dream artifacts path: `~/.braindrain/dreaming/` (`plans/`, `daily/`, `DREAMS.md`, `last_status.json`).
 - `init_project_memory(path, dry_run)` bootstraps memory artifacts and is idempotent.
 - `prime_workspace()` includes memory initialization in onboarding.

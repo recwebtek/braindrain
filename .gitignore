@@ -16,6 +16,7 @@ venv/
 
 *.log
 *.logs
+.logs
 
 # Docs
 docs/

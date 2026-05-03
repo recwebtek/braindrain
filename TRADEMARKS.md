@@ -4,7 +4,7 @@ This policy applies to the project name **Braindrain**, any official project log
 
 ### Code license vs. brand usage
 
-The source code is licensed under `AGPL-3.0` in [`LICENSE`](LICENSE).
+The source code is licensed under `AGPL-3.0` in `[LICENSE](LICENSE)`.
 That license governs code use, modification, and distribution.
 This policy is only about avoiding confusion around the official project identity.
 

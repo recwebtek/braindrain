@@ -197,7 +197,7 @@ def test_daily_plan_audit_report_contract(tmp_project_dir: Path) -> None:
         items=items,
     )
 
-    assert 'schema_version: "1.0"' in report
+    assert 'schema_version: "1.1"' in report
     assert "## Status Matrix (5-State)" in report
     assert "## Overlap Analysis" in report
     assert "## Gap Analysis" in report
