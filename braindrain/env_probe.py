@@ -16,7 +16,7 @@ import shlex
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Union
 
 CACHE_PATH = Path.home() / ".braindrain" / "env_context.json"
 
@@ -175,7 +175,7 @@ _LLM_PORTS: dict[int, str] = {
     1337: "LM Studio (alt)",
 }
 
-_PROBE_COMMANDS: list[tuple[str, str]] = [
+_PROBE_COMMANDS: list[tuple[str, Union[str, Callable[[], str | None]]]] = [
     # Identity
     ("hostname", "hostname"),
     ("computer_name", "scutil --get ComputerName 2>/dev/null || hostname"),
@@ -186,7 +186,13 @@ _PROBE_COMMANDS: list[tuple[str, str]] = [
     ("os_release", "cat /etc/os-release 2>/dev/null || sw_vers 2>/dev/null"),
     ("kernel", "uname -r"),
     # Window system / Desktop Environment
-    ("wm_de_info", "echo $XDG_CURRENT_DESKTOP; echo $DESKTOP_SESSION; echo $XDG_SESSION_TYPE; [ -f /usr/bin/sw_vers ] && sw_vers -productVersion"),
+    (
+        "wm_de_info",
+        lambda: f"{os.environ.get('XDG_CURRENT_DESKTOP', '')}\n"
+        f"{os.environ.get('DESKTOP_SESSION', '')}\n"
+        f"{os.environ.get('XDG_SESSION_TYPE', '')}\n"
+        f"{_run('sw_vers -productVersion') if Path('/usr/bin/sw_vers').exists() else ''}",
+    ),
     # Network — LAN IPs + interface names
     (
         "lan_ip",
@@ -198,10 +204,15 @@ _PROBE_COMMANDS: list[tuple[str, str]] = [
     ),
     ("network_hosts", "cat /etc/hosts | grep -v '^#' | grep -v '^$' | head -20"),
     # Shell & terminal
-    ("shell", "echo $SHELL"),
-    ("shell_version", "$SHELL --version 2>&1 | head -1"),
-    ("term", "echo $TERM"),
-    ("term_program", "echo $TERM_PROGRAM"),
+    ("shell", lambda: os.environ.get("SHELL")),
+    (
+        "shell_version",
+        lambda: _run(
+            f"{shlex.quote(os.environ.get('SHELL', 'sh'))} --version 2>&1 | head -1"
+        ),
+    ),
+    ("term", lambda: os.environ.get("TERM")),
+    ("term_program", lambda: os.environ.get("TERM_PROGRAM")),
     # Package managers (presence check)
     (
         "pkg_managers",
@@ -238,7 +249,7 @@ _PROBE_COMMANDS: list[tuple[str, str]] = [
         "editors",
         "for e in nvim vim nano code cursor windsurf zed; do which $e 2>/dev/null && echo $e; done",
     ),
-    ("editor_env", "echo $EDITOR; echo $VISUAL"),
+    ("editor_env", lambda: f"{os.environ.get('EDITOR', '')}\n{os.environ.get('VISUAL', '')}"),
     # Key CLI tools agents commonly use
     (
         "modern_cli_tools",
@@ -255,7 +266,7 @@ _PROBE_COMMANDS: list[tuple[str, str]] = [
         "grep -h '^alias' ~/.zshrc ~/.bashrc ~/.config/fish/config.fish 2>/dev/null | head -30",
     ),
     # PATH
-    ("path", "echo $PATH"),
+    ("path", lambda: os.environ.get("PATH")),
     # XDG / config dirs
     ("xdg_config", "ls ~/.config/ 2>/dev/null | head -30"),
     # Homebrew installed formulae (top-level)
@@ -384,20 +395,25 @@ _APP_CONFIG_PROBES: list[tuple[str, str, str, str]] = [
 ]
 
 
-def _run(cmd: str) -> str | None:
-    """Run a shell command, return stdout stripped or None on failure.
+def _run(cmd_or_fn: str | Callable[[], str | None]) -> str | None:
+    """Run a shell command or callable, return result stripped or None on failure.
     NOTE: cmd must be properly quoted if it contains external input.
     """
     try:
-        result = subprocess.run(
-            cmd,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        out = result.stdout.strip()
-        return out if out else None
+        if callable(cmd_or_fn):
+            out = cmd_or_fn()
+        else:
+            result = subprocess.run(
+                cmd_or_fn,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            out = result.stdout
+
+        stripped = out.strip() if out else None
+        return stripped if stripped else None
     except Exception:
         return None
 
