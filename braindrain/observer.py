@@ -24,6 +24,10 @@ class BrainEvent:
 class ObserverStore:
     """SQLite-backed event ring buffer."""
 
+    # Batch pruning threshold: allow 10% overflow before triggering DELETE.
+    # This reduces I/O by batching many prunes into a single operation.
+    PRUNE_THRESHOLD_FACTOR = 1.1
+
     def __init__(self, db_path: str | Path, *, max_events: int = 10_000) -> None:
         self.db_path = Path(db_path).expanduser()
         self.max_events = max_events
@@ -101,9 +105,15 @@ class ObserverStore:
     def _prune_oldest(self, conn: sqlite3.Connection) -> int:
         row = conn.execute("SELECT COUNT(*) AS count FROM brain_events").fetchone()
         total = int(row["count"]) if row else 0
-        overflow = max(0, total - self.max_events)
-        if overflow <= 0:
+
+        # Batch optimization: only prune when we exceed the buffer threshold.
+        # This prevents running a DELETE operation on every single insert once full.
+        threshold = int(self.max_events * self.PRUNE_THRESHOLD_FACTOR)
+        if total <= threshold:
             return 0
+
+        # Prune enough to return exactly to max_events (clearing the entire overflow batch).
+        to_delete = total - self.max_events
         conn.execute(
             """
             DELETE FROM brain_events
@@ -113,9 +123,9 @@ class ObserverStore:
                 LIMIT ?
             )
             """,
-            (overflow,),
+            (to_delete,),
         )
-        return overflow
+        return to_delete
 
     def query_events(
         self,
