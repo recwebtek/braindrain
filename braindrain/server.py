@@ -1173,9 +1173,9 @@ async def prime_workspace(
         agents:         Explicit agent ids (e.g. ["cursor", "claude"]).
         dry_run:        Preview changes without writing files.
         sync_templates: Update existing .ruler files with timestamped backups.
-        sync_subagents: Update existing .cursor/agents/*.md from
-            config/templates/agents with timestamped backups (create-only by default);
-            when Codex is in scope, also updates the managed block in .codex/config.toml.
+        sync_subagents: Update existing ``.cursor/agents/*.md`` and ``.codex/agents/*.md``
+            from ``config/templates/agents/`` with timestamped backups (create-only by default);
+            when Codex is in scope, also updates the managed block in ``.codex/config.toml``.
         all_agents:     Deploy full template and apply all configured agents.
         local_only:     Pass --local-only to ruler apply (default True).
         patch_user_cursor_mcp: If True, also patch ~/.cursor/mcp.json with

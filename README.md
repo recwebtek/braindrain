@@ -439,10 +439,10 @@ braindrain/
   - `.cursor/hooks/on-stop-gitops.sh` (TASK-GRAPH branch queueing)
   - `.cursor/hooks/on-stop-daily-plan-audit.sh` (daily-gated planning audit report)
   Edit templates under `config/templates/cursor/` in this repo, then re-prime consumer projects to roll out hook changes.
-- **Subagent templates**: `prime_workspace()` deploys:
-  - `config/templates/cursor-subagents/` -> `.cursor/agents/`
-  - `config/templates/cursor-skills/` -> `.cursor/skills/` (e.g. scriptlib-librarian)
-  - `config/templates/codex-subagents/` -> `.codex/agents/` (or `codex_agent_targets`)
+- **Subagent templates**: canonical source is `config/templates/agents/*.md`. `prime_workspace()` copies that tree to:
+  - `.cursor/agents/` when Cursor is in the resolved agent set, and
+  - `.codex/agents/` when Codex is in the resolved agent set (same files; IDE-specific layout only).
+  Skills still deploy from `config/templates/cursor-skills/` -> `.cursor/skills/` (e.g. scriptlib-librarian).
   Existing files are create-only by default; set `sync_subagents=true` to update with backups. `.cursor/` is gitignored at repo root; do not commit generated agent/skill files—edit templates and re-run `prime_workspace`.
 - **Codex config merge**: `prime_workspace()` appends/updates a managed `BRAINDRAIN SUBAGENTS` block in `.codex/config.toml` only when allowed by policy (`sync_subagents=true` for existing files). Existing MCP server entries remain intact.
 - **Project memory artifacts**: initialized by `prime_workspace()` (or `init_project_memory()`) and kept separate from generated protocol files:

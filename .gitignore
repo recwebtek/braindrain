@@ -56,6 +56,7 @@ tests/*
 !tests/test_workspace_primer_hooks.py
 !tests/test_scriptlib.py
 !tests/test_env_probe_codex.py
+!tests/test_plan_auditor_master.py
 
 # Ruler outputs at repo root (no leading dot)
 /AGENTS.md
@@ -70,7 +71,7 @@ tests/*
 !/.gitattributes
 !/.gitmodules
 !/.env.example
-# `.cursor/` stays fully ignored; ship agents/skills via config/templates/cursor-* (deploy: prime_workspace).
+# `.cursor/` stays fully ignored; ship subagents from config/templates/agents/ and skills from config/templates/cursor-skills/ (deploy: prime_workspace).
 # If your team commits other root dotdirs (e.g. .husky), add: !/.husky/
 # `.devdocs/` is covered by `/.*` above — local-only; never add ! exceptions for it.
 # END BRAINDRAIN GITIGNORE PROTOCOL

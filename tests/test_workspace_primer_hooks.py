@@ -17,6 +17,7 @@ from braindrain.workspace_primer import (
     CURSOR_HOOK_TEMPLATES_DIR,
     compact_prime_result_for_mcp,
     deploy_cursor_hook_templates,
+    deploy_subagent_templates,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -76,6 +77,20 @@ def test_deploy_cursor_hook_templates_skips_existing_without_sync(tmp_project_di
     deploy_cursor_hook_templates(tmp_project_dir, sync_templates=False, dry_run=False)
     out2 = deploy_cursor_hook_templates(tmp_project_dir, sync_templates=False, dry_run=False)
     assert all(v.get("action") == "skipped_existing" for v in out2.values())
+
+
+def test_deploy_subagent_templates_writes_codex_agents(tmp_project_dir: Path) -> None:
+    out = deploy_subagent_templates(
+        tmp_project_dir,
+        sync_subagents=False,
+        to_cursor=False,
+        to_codex=True,
+    )
+    assert out
+    codex_agents = tmp_project_dir / ".codex" / "agents"
+    assert codex_agents.is_dir()
+    assert (codex_agents / "coordinator.md").is_file()
+    assert (codex_agents / "daily-plan-auditor.md").is_file()
 
 
 def test_compact_prime_result_includes_cursor_hooks_summary() -> None:

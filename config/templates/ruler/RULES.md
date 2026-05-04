@@ -90,6 +90,19 @@ Example JSONL row:
 
 <!-- SCRIPTLIB_GUIDANCE -->
 
+### Planning session close-out (Cursor / Codex)
+
+When you **create or finish editing** a tracked plan file under an IDE `plans/` directory (for example `.cursor/plans/*.plan.md`):
+
+**Planning-owned agents** (for example `architect`, `coordinator`, or any agent authoring `*.plan.md` in a `plans/` tree) **must** complete this close-out **before ending the turn** when a new or materially updated plan was written:
+
+1. Ensure `_master.plan.md` links any new active plans (markdown links to `*.plan.md` files).
+2. Run the planning auditor so reports stay current — either invoke the `daily-plan-auditor` subagent or run:
+   `python3 scripts/daily_plan_audit.py --repo-root . --trigger "post-planning-session"`
+   (The Cursor stop hook may also run the auditor, but it is daily-gated; session close-out should not rely on the hook alone.)
+3. For **replan** work, prefer a **new** plan file and record supersession in the master index rather than overwriting the old file in place.
+4. Mark abandoned plans `disposition: archived` (or `archived: true` / `status: archived`), or list them under `archived_plans:` / `archive:` in `_master.plan.md` frontmatter; the next auditor run moves them to `.plan.archives/` under the same `plans/` directory.
+
 ### Ops/docs to keep current (when behaviour/run paths/tools change)
 
 - `.braindrain/SESSION_PROGRESS.md`

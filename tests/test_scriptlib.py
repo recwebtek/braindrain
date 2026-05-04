@@ -211,14 +211,10 @@ def test_librarian_templates_require_reuse_decision():
     agent = Path("/Volumes/devnvme/Development/BRAIN_MCP_HUB/config/templates/agents/librarian.md").read_text(
         encoding="utf-8"
     )
-    cursor_agent = Path(
-        "/Volumes/devnvme/Development/BRAIN_MCP_HUB/config/templates/cursor-subagents/librarian.md"
-    ).read_text(encoding="utf-8")
 
     assert "reuseDecision" in skill
     assert "must not be written until" in skill
     assert "approvalRequired" in agent
-    assert "approvalRequired" in cursor_agent
 
 
 def test_deploy_templates_includes_guidance_only_when_enabled(tmp_path, monkeypatch):

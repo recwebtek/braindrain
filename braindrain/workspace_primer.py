@@ -331,29 +331,24 @@ def deploy_templates(
     return written
 
 
-def deploy_subagent_templates(
-    target_dir: Path,
+_SUBAGENT_ACTION_RANK = {
+    "updated": 4,
+    "created": 3,
+    "created_from_empty": 3,
+    "skipped_existing": 2,
+    "dry_run": 1,
+}
+
+
+def _deploy_subagent_templates_to_dir(
     *,
-    sync_subagents: bool = False,
+    agents_dir: Path,
+    sync_subagents: bool,
 ) -> dict[str, dict[str, str | bool]]:
-    """
-    Deploy subagent markdown templates from config/templates/agents -> .cursor/agents.
-
-    Default mode is create-only:
-      - missing files are created
-      - existing non-empty files are preserved
-      - existing empty files are filled
-
-    When sync_subagents=True:
-      - existing files are backed up to .bak.<timestamp> and overwritten
-    """
-    agents_dir = target_dir / ".cursor" / "agents"
+    """Copy ``config/templates/agents/*.md`` into ``agents_dir``."""
     agents_dir.mkdir(parents=True, exist_ok=True)
     written: dict[str, dict[str, str | bool]] = {}
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-
-    if not AGENT_TEMPLATES_DIR.exists():
-        return written
 
     for src in sorted(AGENT_TEMPLATES_DIR.glob("*.md")):
         dst = agents_dir / src.name
@@ -375,6 +370,79 @@ def deploy_subagent_templates(
             dst.write_text(content, encoding="utf-8")
             written[src.name] = {"action": "created", "backup": ""}
     return written
+
+
+def _merge_subagent_deploy_results(
+    left: dict[str, dict[str, str | bool]],
+    right: dict[str, dict[str, str | bool]],
+) -> dict[str, dict[str, str | bool]]:
+    """Merge per-file deploy metadata from two destination trees."""
+    merged: dict[str, dict[str, str | bool]] = dict(left)
+    for fname, meta in right.items():
+        if fname not in merged:
+            merged[fname] = dict(meta)
+            continue
+        a = str((merged[fname] or {}).get("action") or "")
+        b = str((meta or {}).get("action") or "")
+        pick = (
+            a
+            if _SUBAGENT_ACTION_RANK.get(a, 0) >= _SUBAGENT_ACTION_RANK.get(b, 0)
+            else b
+        )
+        ba = str((merged[fname] or {}).get("backup") or "")
+        bb = str((meta or {}).get("backup") or "")
+        backup = bb if pick == b and bb else ba
+        merged[fname] = {"action": pick, "backup": backup}
+    return merged
+
+
+def deploy_subagent_templates(
+    target_dir: Path,
+    *,
+    sync_subagents: bool = False,
+    to_cursor: bool = True,
+    to_codex: bool = False,
+) -> dict[str, dict[str, str | bool]]:
+    """
+    Deploy subagent markdown from ``config/templates/agents/`` into IDE agent dirs.
+
+    When ``to_cursor`` is True, writes ``.cursor/agents/*.md``.
+    When ``to_codex`` is True, writes ``.codex/agents/*.md``.
+    Both can be True so a single canonical template tree serves every IDE.
+
+    Default mode is create-only:
+      - missing files are created
+      - existing non-empty files are preserved
+      - existing empty files are filled
+
+    When sync_subagents=True:
+      - existing files are backed up to .bak.<timestamp> and overwritten
+    """
+    if not AGENT_TEMPLATES_DIR.exists():
+        return {}
+
+    partials: list[dict[str, dict[str, str | bool]]] = []
+    if to_cursor:
+        partials.append(
+            _deploy_subagent_templates_to_dir(
+                agents_dir=target_dir / ".cursor" / "agents",
+                sync_subagents=sync_subagents,
+            )
+        )
+    if to_codex:
+        partials.append(
+            _deploy_subagent_templates_to_dir(
+                agents_dir=target_dir / ".codex" / "agents",
+                sync_subagents=sync_subagents,
+            )
+        )
+    if not partials:
+        return {}
+
+    out = partials[0]
+    for p in partials[1:]:
+        out = _merge_subagent_deploy_results(out, p)
+    return out
 
 
 def deploy_cursor_hook_templates(
@@ -1264,6 +1332,9 @@ def prime(
     cursor_in_scope = bool(
         all_agents or apply_agents is None or "cursor" in (apply_agents or [])
     )
+    codex_in_scope = bool(
+        all_agents or apply_agents is None or "codex" in (apply_agents or [])
+    )
 
     launcher_path = _get_launcher_path()
     try:
@@ -1286,6 +1357,8 @@ def prime(
         subagent_results = deploy_subagent_templates(
             target_dir,
             sync_subagents=sync_subagents,
+            to_cursor=cursor_in_scope,
+            to_codex=codex_in_scope,
         )
         cursor_hook_results = (
             deploy_cursor_hook_templates(
@@ -1304,7 +1377,7 @@ def prime(
         subagent_results = {
             str(f.name): {"action": "dry_run", "backup": ""}
             for f in AGENT_TEMPLATES_DIR.glob("*.md")
-        } if AGENT_TEMPLATES_DIR.exists() else {}
+        } if (cursor_in_scope or codex_in_scope) and AGENT_TEMPLATES_DIR.exists() else {}
         cursor_hook_results = (
             deploy_cursor_hook_templates(
                 target_dir,
@@ -1363,9 +1436,6 @@ def prime(
             cursor_mcp_json = proj_mcp
 
     # Step 6: codex subagent config policy (after ruler apply to avoid overwrite).
-    codex_in_scope = bool(
-        all_agents or apply_agents is None or "codex" in (apply_agents or [])
-    )
     codex_subagent_config: dict[str, str | bool] = {"skipped": True}
     if codex_in_scope:
         codex_subagent_config = ensure_codex_subagent_config(

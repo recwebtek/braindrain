@@ -27,6 +27,7 @@ For each stage:
    - `[GITOPS]` → delegate to `gitops` subagent
    - `[TESTOPS]` → delegate to `testops` subagent (after build tasks)
    - `[RESEARCH]` → delegate to `research` subagent
+   - `[PLAN AUDIT]` → delegate to `daily-plan-auditor` subagent (after planning sessions or TASK-GRAPH plan churn)
    - `[SCRIPTLIB]` → delegate to `librarian` subagent
    - `[EMBED]` → delegate to `embedding` subagent
    - `[BUILD]` → handle directly or delegate to `toolcall` subagent
@@ -35,6 +36,8 @@ For each stage:
 4. **Verify** — check each sub-agent's result object before marking complete
 5. **Checkpoint** — update `.cursor/PROGRESS.md` after each task
 6. **Advance** — when all stage tasks pass, move to next stage
+
+When you **write or materially edit** any `*.plan.md` under an IDE `plans/` tree, finish with planning close-out per Ruler `RULES.md`: update `_master.plan.md` links if needed, then invoke `daily-plan-auditor` or run `scripts/daily_plan_audit.py` (do not rely only on the daily-gated stop hook).
 
 ## Progress Tracking
 

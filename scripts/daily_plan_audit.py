@@ -97,6 +97,7 @@ VALID_DISPOSITIONS = (
     "backlogged",
     "scratched",
     "implemented",
+    "archived",
 )
 DEFAULT_DISPOSITION = "active"
 
@@ -340,7 +341,7 @@ class PlanCard:
     @property
     def is_active_for_triage(self) -> bool:
         """True when the plan should produce next-actions output."""
-        return self.disposition not in {"scratched", "implemented"}
+        return self.disposition not in {"scratched", "implemented", "archived"}
 
 
 def derive_ide_tag(rel_path: str) -> str:
@@ -440,12 +441,106 @@ def parse_args() -> argparse.Namespace:
             "auto-discovers it under known IDE plan dirs."
         ),
     )
+    parser.add_argument(
+        "--skip-archive",
+        action="store_true",
+        help="Do not move plans marked archived into .plan.archives/ (for tests).",
+    )
     return parser.parse_args()
+
+
+def plan_marked_archived(fm: dict[str, object]) -> bool:
+    """True when frontmatter says this plan should live under ``.plan.archives/``."""
+    disp = str(fm.get("disposition") or "").strip().lower()
+    if disp == "archived":
+        return True
+    st = str(fm.get("status") or "").strip().lower()
+    if st == "archived":
+        return True
+    arch = fm.get("archived")
+    if isinstance(arch, bool):
+        return arch
+    if str(arch).strip().lower() in ("true", "yes", "1"):
+        return True
+    return False
+
+
+def relocate_archived_plans(repo_root: Path) -> list[str]:
+    """Move archived ``*.plan.md`` files into ``<ide>/plans/.plan.archives/``.
+
+    A plan is archived when its own frontmatter matches `plan_marked_archived`, or
+    when ``_master.plan.md`` lists it under ``archived_plans:`` or ``archive:``
+    (YAML list of paths relative to that ``plans/`` directory).
+
+    Returns repo-relative paths of files **after** the move (under ``.plan.archives/``).
+    """
+    moved_to: list[str] = []
+    ts = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+
+    for folder in KNOWN_IDE_DOTFOLDERS:
+        plans_dir = repo_root / folder / "plans"
+        if not plans_dir.is_dir():
+            continue
+        archive_dir = plans_dir / ".plan.archives"
+        to_move: set[Path] = set()
+
+        master_path = plans_dir / "_master.plan.md"
+        if master_path.is_file():
+            mfm = parse_plan_frontmatter(master_path)
+            raw = mfm.get("archived_plans")
+            if raw is None:
+                raw = mfm.get("archive")
+            if isinstance(raw, str):
+                raw = [raw]
+            if isinstance(raw, list):
+                for entry in raw:
+                    rel = str(entry).strip().strip('"').strip("'")
+                    if not rel or rel.startswith(("/", "http://", "https://")):
+                        continue
+                    candidate = (plans_dir / rel).resolve()
+                    try:
+                        candidate.relative_to(repo_root.resolve())
+                    except ValueError:
+                        continue
+                    if candidate.is_file() and candidate.suffix.lower() == ".md":
+                        to_move.add(candidate)
+
+        for path in sorted(plans_dir.glob("*.plan.md")):
+            if path.name.startswith("_master"):
+                continue
+            if plan_marked_archived(parse_plan_frontmatter(path)):
+                to_move.add(path.resolve())
+
+        for src in sorted(to_move, key=lambda p: p.as_posix()):
+            if not src.is_file():
+                continue
+            if src.name.startswith("_master"):
+                continue
+            try:
+                rel_check = src.resolve().relative_to(plans_dir.resolve())
+            except ValueError:
+                continue
+            if rel_check.parts[:1] == (".plan.archives",):
+                continue
+
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            dest = archive_dir / src.name
+            if dest.exists():
+                dest = archive_dir / f"{src.stem}.bak.{ts}{src.suffix}"
+            shutil.move(str(src), str(dest))
+            try:
+                moved_to.append(dest.resolve().relative_to(repo_root.resolve()).as_posix())
+            except ValueError:
+                moved_to.append(dest.as_posix())
+
+    return moved_to
 
 
 def is_secondary_doc(path: Path) -> bool:
     lowered = path.as_posix().lower()
     if "/.git/" in lowered:
+        return False
+    if "/.plan.archives/" in lowered:
         return False
     if "/create-subagent/" in lowered:
         return False
@@ -1482,6 +1577,10 @@ def main() -> int:
         out_dir = repo_root / out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    archive_moves: list[str] = []
+    if not getattr(args, "skip_archive", False):
+        archive_moves = relocate_archived_plans(repo_root)
+
     default_owner = resolve_default_owner(repo_root)
     primary, secondary = discover_sources(repo_root)
 
@@ -1504,6 +1603,13 @@ def main() -> int:
         items,
         cards_by_source=cards_by_source,
     )
+    if archive_moves:
+        report = (
+            report
+            + "\n\n## Archived plan files (this run)\n\n"
+            + "\n".join(f"- `{p}`" for p in archive_moves)
+            + "\n"
+        )
     dated_path = out_dir / f"plan-audit-{args.report_date}.md"
     dated_path.write_text(report, encoding="utf-8")
 
