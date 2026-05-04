@@ -67,6 +67,12 @@ class ObserverStore:
                 ON brain_events(event_type, timestamp DESC)
                 """
             )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_brain_events_timestamp
+                ON brain_events(timestamp ASC)
+                """
+            )
 
     def record_event(self, event: BrainEvent) -> dict[str, Any]:
         payload = asdict(event)
@@ -99,11 +105,22 @@ class ObserverStore:
             return {"event_id": cursor.lastrowid, "pruned": pruned}
 
     def _prune_oldest(self, conn: sqlite3.Connection) -> int:
+        """
+        Prune the oldest events when the total exceeds the ring buffer size.
+        Implements batch pruning (10% overflow threshold) to minimize DELETE frequency.
+        """
+        # Batch pruning threshold factor (e.g. 1.1 means wait for 10% overflow)
+        PRUNE_THRESHOLD_FACTOR = 1.1
+
         row = conn.execute("SELECT COUNT(*) AS count FROM brain_events").fetchone()
         total = int(row["count"]) if row else 0
-        overflow = max(0, total - self.max_events)
-        if overflow <= 0:
+
+        # Only prune if we exceed the max_events by at least 10% overflow buffer
+        threshold = self.max_events * PRUNE_THRESHOLD_FACTOR
+        if total <= threshold:
             return 0
+
+        overflow = total - self.max_events
         conn.execute(
             """
             DELETE FROM brain_events
