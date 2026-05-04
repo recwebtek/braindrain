@@ -893,11 +893,75 @@ def create_app(
           <head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>LivingDash</title>
+            <title>LivingDash | UI Pending</title>
+            <style>
+              :root {
+                --bg: #120916;
+                --card-bg: #1d1124;
+                --text: #f6eeff;
+                --text-dim: #b8a9c3;
+                --accent: #d2a8ff;
+                --border: #3c2a4d;
+              }
+              body {
+                font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+                background: var(--bg);
+                color: var(--text);
+                margin: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                min-height: 100vh;
+                line-height: 1.6;
+              }
+              .card {
+                background: var(--card-bg);
+                border: 1px solid var(--border);
+                border-radius: 12px;
+                padding: 32px;
+                max-width: 500px;
+                width: 90%;
+                box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+              }
+              h1 {
+                margin-top: 0;
+                font-size: 24px;
+                color: var(--accent);
+                display: flex;
+                align-items: center;
+                gap: 12px;
+              }
+              p { color: var(--text-dim); margin-bottom: 24px; }
+              code {
+                background: #000;
+                padding: 12px;
+                border-radius: 6px;
+                display: block;
+                font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+                font-size: 13px;
+                color: #e6edf3;
+                overflow-x: auto;
+                border: 1px solid var(--border);
+              }
+              .label {
+                font-size: 11px;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+                font-weight: 600;
+                color: var(--accent);
+                margin-bottom: 8px;
+                display: block;
+              }
+            </style>
           </head>
-          <body style="font-family: ui-sans-serif, system-ui; background:#120916; color:#f6eeff; padding:40px; line-height:1.5">
-            <h1>LivingDash</h1>
-            <p>The UI build has not been generated yet.</p>
+          <body>
+            <div class="card">
+              <h1><span aria-hidden="true">🎨</span> LivingDash</h1>
+              <p>The dashboard interface is ready to be built. Follow these steps to generate the UI bundle:</p>
+              <span class="label">Required Actions</span>
+              <code>cd .ldash/ui<br>pnpm install<br>pnpm run build</code>
+              <p style="margin-top: 24px; font-size: 14px;">Once complete, refresh this page to access your workspace dashboard.</p>
+            </div>
           </body>
         </html>
         """
