@@ -33,13 +33,14 @@ class ObserverStore:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        # Enable WAL mode for better write performance
-        conn.execute("PRAGMA journal_mode=WAL")
+        # PRAGMA synchronous is connection-local and must be set on every connection.
         conn.execute("PRAGMA synchronous=NORMAL")
         return conn
 
     def _init_schema(self) -> None:
         with self._connect() as conn:
+            # PRAGMA journal_mode=WAL is persistent and only needs to be set once.
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS brain_events (
@@ -75,7 +76,7 @@ class ObserverStore:
             )
 
     def record_event(self, event: BrainEvent) -> dict[str, Any]:
-        payload = asdict(event)
+        # Avoid asdict() to skip expensive recursive overhead
         with self._connect() as conn:
             cursor = conn.execute(
                 """
@@ -91,14 +92,14 @@ class ObserverStore:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    payload["timestamp"],
-                    payload["session_id"],
-                    payload["event_type"],
-                    payload["tool_name"],
-                    json.dumps(payload["files_touched"]),
-                    payload["token_cost"],
-                    payload["duration_ms"],
-                    json.dumps(payload["metadata"]),
+                    event.timestamp,
+                    event.session_id,
+                    event.event_type,
+                    event.tool_name,
+                    json.dumps(event.files_touched),
+                    event.token_cost,
+                    event.duration_ms,
+                    json.dumps(event.metadata),
                 ),
             )
             pruned = self._prune_oldest(conn)

@@ -54,13 +54,14 @@ class SessionStore:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        # Enable WAL mode for better write performance
-        conn.execute("PRAGMA journal_mode=WAL")
+        # PRAGMA synchronous is connection-local and must be set on every connection.
         conn.execute("PRAGMA synchronous=NORMAL")
         return conn
 
     def _init_schema(self) -> None:
         with self._connect() as conn:
+            # PRAGMA journal_mode=WAL is persistent and only needs to be set once.
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS session_summaries (
@@ -144,7 +145,7 @@ class SessionStore:
         return existing
 
     def upsert_session(self, summary: SessionSummary) -> None:
-        payload = asdict(summary)
+        # Avoid expensive asdict() in hot path
         with self._connect() as conn:
             conn.execute(
                 """
@@ -172,16 +173,16 @@ class SessionStore:
                     updated_at = excluded.updated_at
                 """,
                 (
-                    payload["session_id"],
-                    payload["start_time"],
-                    payload["end_time"],
-                    payload["events_count"],
-                    json.dumps(payload["tools_used"]),
-                    json.dumps(payload["files_modified"]),
-                    json.dumps(payload["key_decisions"]),
-                    json.dumps(payload["errors"]),
-                    payload["token_total"],
-                    payload["updated_at"],
+                    summary.session_id,
+                    summary.start_time,
+                    summary.end_time,
+                    summary.events_count,
+                    json.dumps(summary.tools_used),
+                    json.dumps(summary.files_modified),
+                    json.dumps(summary.key_decisions),
+                    json.dumps(summary.errors),
+                    summary.token_total,
+                    summary.updated_at,
                 ),
             )
 
@@ -237,11 +238,11 @@ class SessionStore:
         return (current - latest) >= quiet * 60
 
     def record_episode(self, episode: EpisodeRecord) -> dict[str, Any]:
-        payload = asdict(episode)
-        if not payload["episode_id"]:
-            payload["episode_id"] = str(uuid.uuid4())
-        if not payload["created_at"]:
-            payload["created_at"] = time.time()
+        # Avoid expensive asdict() in hot path
+        if not episode.episode_id:
+            episode.episode_id = str(uuid.uuid4())
+        if not episode.created_at:
+            episode.created_at = time.time()
         with self._connect() as conn:
             conn.execute(
                 """
@@ -262,22 +263,22 @@ class SessionStore:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    payload["episode_id"],
-                    payload["session_id"],
-                    payload["problem"],
-                    payload["context"],
-                    payload["action"],
-                    payload["outcome"],
-                    json.dumps(payload["evidence_refs"]),
-                    payload["local_critique"],
-                    payload["global_reflection"],
-                    payload["confidence"],
-                    json.dumps(payload["tags"]),
-                    payload["created_at"],
-                    payload["promoted_lesson_id"],
+                    episode.episode_id,
+                    episode.session_id,
+                    episode.problem,
+                    episode.context,
+                    episode.action,
+                    episode.outcome,
+                    json.dumps(episode.evidence_refs),
+                    episode.local_critique,
+                    episode.global_reflection,
+                    episode.confidence,
+                    json.dumps(episode.tags),
+                    episode.created_at,
+                    episode.promoted_lesson_id,
                 ),
             )
-        return {"episode_id": payload["episode_id"]}
+        return {"episode_id": episode.episode_id}
 
     def mark_episode_promoted(self, episode_id: str, lesson_id: str) -> None:
         with self._connect() as conn:

@@ -65,13 +65,14 @@ class WikiBrain:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        # Enable WAL mode for better write performance
-        conn.execute("PRAGMA journal_mode=WAL")
+        # PRAGMA synchronous is connection-local and must be set on every connection.
         conn.execute("PRAGMA synchronous=NORMAL")
         return conn
 
     def _init_schema(self) -> None:
         with self._connect() as conn:
+            # PRAGMA journal_mode=WAL is persistent and only needs to be set once.
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS brain_records (
@@ -138,22 +139,22 @@ class WikiBrain:
                 self._fts_available = False
 
     def store_record(self, record: BrainRecord) -> dict[str, Any]:
-        payload = asdict(record)
+        # Avoid expensive asdict() in hot path
         now = time.time()
-        if not payload["record_id"]:
-            payload["record_id"] = str(uuid.uuid4())
-        if not payload["created_at"]:
-            payload["created_at"] = now
-        payload["updated_at"] = now
+        if not record.record_id:
+            record.record_id = str(uuid.uuid4())
+        if not record.created_at:
+            record.created_at = now
+        record.updated_at = now
 
         contradiction = self.detect_contradiction(
-            content=payload["content"],
-            title=payload["title"],
-            record_class=payload["record_class"],
-            exclude_record_id=payload["record_id"],
+            content=record.content,
+            title=record.title,
+            record_class=record.record_class,
+            exclude_record_id=record.record_id,
         )
         if contradiction:
-            payload["supersedes_id"] = contradiction["record_id"]
+            record.supersedes_id = contradiction["record_id"]
 
         with self._connect() as conn:
             conn.execute(
@@ -179,33 +180,33 @@ class WikiBrain:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    payload["record_id"],
-                    payload["record_class"],
-                    payload["title"],
-                    payload["content"],
-                    payload["source"],
-                    payload["category"],
-                    payload["status"],
-                    payload["importance"],
-                    payload["confidence"],
-                    json.dumps(payload["tags"]),
-                    json.dumps(payload["evidence_refs"]),
-                    json.dumps(payload["metadata"]),
-                    payload["supersedes_id"],
-                    payload["created_at"],
-                    payload["updated_at"],
-                    payload["last_accessed"],
-                    payload["access_count"],
+                    record.record_id,
+                    record.record_class,
+                    record.title,
+                    record.content,
+                    record.source,
+                    record.category,
+                    record.status,
+                    record.importance,
+                    record.confidence,
+                    json.dumps(record.tags),
+                    json.dumps(record.evidence_refs),
+                    json.dumps(record.metadata),
+                    record.supersedes_id,
+                    record.created_at,
+                    record.updated_at,
+                    record.last_accessed,
+                    record.access_count,
                 ),
             )
-            if payload["supersedes_id"]:
+            if record.supersedes_id:
                 conn.execute(
                     """
                     UPDATE brain_records
                     SET status = 'superseded', updated_at = ?
                     WHERE record_id = ?
                     """,
-                    (now, payload["supersedes_id"]),
+                    (now, record.supersedes_id),
                 )
             if self._fts_available:
                 conn.execute(
@@ -226,21 +227,21 @@ class WikiBrain:
                     )
                     """,
                     (
-                        payload["record_id"],
-                        payload["record_id"],
-                        payload["title"],
-                        payload["content"],
-                        " ".join(payload["tags"]),
-                        payload["record_class"],
-                        payload["category"],
-                        payload["status"],
+                        record.record_id,
+                        record.record_id,
+                        record.title,
+                        record.content,
+                        " ".join(record.tags),
+                        record.record_class,
+                        record.category,
+                        record.status,
                     ),
                 )
 
         return {
-            "record_id": payload["record_id"],
-            "status": payload["status"],
-            "supersedes_id": payload["supersedes_id"],
+            "record_id": record.record_id,
+            "status": record.status,
+            "supersedes_id": record.supersedes_id,
         }
 
     def store_fact(
