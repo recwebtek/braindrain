@@ -891,8 +891,7 @@ def create_app(
         <!doctype html>
         <html lang="en">
           <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
             <title>LivingDash — Build Required</title>
             <style>
               :root { --bg: #0f0a13; --card: #1a141f; --text: #f1e9f5; --accent: #c084fc; --muted: #94a3b8; }
@@ -900,9 +899,14 @@ def create_app(
               .card { background: var(--card); padding: 2.5rem; border-radius: 1rem; border: 1px solid #ffffff10; max-width: 500px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); text-align: center; }
               h1 { margin: 0 0 1rem; font-size: 1.875rem; font-weight: 700; color: var(--accent); }
               p { color: var(--muted); margin-bottom: 2rem; font-size: 1.1rem; }
-              .cmd-box { background: #00000050; padding: 1.25rem; border-radius: 0.5rem; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.9rem; text-align: left; border: 1px solid #ffffff08; position: relative; }
+              .cmd-box { background: #00000050; padding: 1.25rem; border-radius: 0.5rem; font-family: ui-monospace, monospace; font-size: 0.9rem; text-align: left; border: 1px solid #ffffff08; position: relative; transition: border-color 0.2s; }
+              .cmd-box:hover { border-color: #ffffff20; }
               .cmd-label { position: absolute; top: -0.7rem; left: 1rem; background: var(--accent); color: var(--bg); font-size: 0.7rem; font-weight: 800; padding: 0.1rem 0.5rem; border-radius: 0.2rem; text-transform: uppercase; }
               code { color: #e2e8f0; display: block; white-space: pre-wrap; }
+              .copy-btn { position: absolute; top: 0.5rem; right: 0.5rem; background: #ffffff10; border: 1px solid #ffffff20; color: var(--muted); padding: 0.25rem 0.5rem; border-radius: 0.25rem; cursor: pointer; font-size: 0.7rem; transition: all 0.2s; display: flex; align-items: center; gap: 0.25rem; }
+              .copy-btn:hover { background: #ffffff20; color: var(--text); }
+              .copy-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+              .copy-btn.success { border-color: var(--accent); color: var(--accent); }
               .footer { margin-top: 2rem; font-size: 0.8rem; color: #ffffff20; }
             </style>
           </head>
@@ -912,12 +916,23 @@ def create_app(
               <p>The dashboard UI build is not found. Run the following to generate it:</p>
               <div class="cmd-box">
                 <span class="cmd-label">Quick Build</span>
-                <code>cd .ldash/ui
+                <button class="copy-btn" onclick="copyCmd()" aria-label="Copy build command"><span aria-hidden="true">📋</span> Copy</button>
+                <code id="copy-target">cd .ldash/ui
 pnpm install
 pnpm run build</code>
               </div>
               <div class="footer">Waiting for production artifacts in .ldash/ui/dist</div>
             </div>
+            <script>
+              function copyCmd() {
+                const code = document.getElementById('copy-target').innerText;
+                navigator.clipboard.writeText(code).then(() => {
+                  const btn = document.querySelector('.copy-btn');
+                  const old = btn.innerHTML; btn.innerHTML = '<span aria-hidden="true">✓</span> Copied'; btn.classList.add('success');
+                  setTimeout(() => { btn.innerHTML = old; btn.classList.remove('success'); }, 2000);
+                });
+              }
+            </script>
           </body>
         </html>
         """
