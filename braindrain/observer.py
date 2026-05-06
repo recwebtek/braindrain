@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -75,7 +75,6 @@ class ObserverStore:
             )
 
     def record_event(self, event: BrainEvent) -> dict[str, Any]:
-        payload = asdict(event)
         with self._connect() as conn:
             cursor = conn.execute(
                 """
@@ -91,14 +90,14 @@ class ObserverStore:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    payload["timestamp"],
-                    payload["session_id"],
-                    payload["event_type"],
-                    payload["tool_name"],
-                    json.dumps(payload["files_touched"]),
-                    payload["token_cost"],
-                    payload["duration_ms"],
-                    json.dumps(payload["metadata"]),
+                    event.timestamp,
+                    event.session_id,
+                    event.event_type,
+                    event.tool_name,
+                    json.dumps(event.files_touched),
+                    event.token_cost,
+                    event.duration_ms,
+                    json.dumps(event.metadata),
                 ),
             )
             pruned = self._prune_oldest(conn)

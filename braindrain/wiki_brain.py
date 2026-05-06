@@ -9,7 +9,7 @@ import sqlite3
 import time
 import uuid
 from collections import defaultdict
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +33,27 @@ class BrainRecord:
     updated_at: float = 0.0
     last_accessed: float = 0.0
     access_count: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "record_id": self.record_id,
+            "record_class": self.record_class,
+            "title": self.title,
+            "content": self.content,
+            "source": self.source,
+            "category": self.category,
+            "status": self.status,
+            "importance": self.importance,
+            "confidence": self.confidence,
+            "tags": self.tags,
+            "evidence_refs": self.evidence_refs,
+            "metadata": self.metadata,
+            "supersedes_id": self.supersedes_id,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "last_accessed": self.last_accessed,
+            "access_count": self.access_count,
+        }
 
 
 class WikiBrain:
@@ -138,22 +159,21 @@ class WikiBrain:
                 self._fts_available = False
 
     def store_record(self, record: BrainRecord) -> dict[str, Any]:
-        payload = asdict(record)
         now = time.time()
-        if not payload["record_id"]:
-            payload["record_id"] = str(uuid.uuid4())
-        if not payload["created_at"]:
-            payload["created_at"] = now
-        payload["updated_at"] = now
+        if not record.record_id:
+            record.record_id = str(uuid.uuid4())
+        if not record.created_at:
+            record.created_at = now
+        record.updated_at = now
 
         contradiction = self.detect_contradiction(
-            content=payload["content"],
-            title=payload["title"],
-            record_class=payload["record_class"],
-            exclude_record_id=payload["record_id"],
+            content=record.content,
+            title=record.title,
+            record_class=record.record_class,
+            exclude_record_id=record.record_id,
         )
         if contradiction:
-            payload["supersedes_id"] = contradiction["record_id"]
+            record.supersedes_id = contradiction["record_id"]
 
         with self._connect() as conn:
             conn.execute(
@@ -179,33 +199,33 @@ class WikiBrain:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    payload["record_id"],
-                    payload["record_class"],
-                    payload["title"],
-                    payload["content"],
-                    payload["source"],
-                    payload["category"],
-                    payload["status"],
-                    payload["importance"],
-                    payload["confidence"],
-                    json.dumps(payload["tags"]),
-                    json.dumps(payload["evidence_refs"]),
-                    json.dumps(payload["metadata"]),
-                    payload["supersedes_id"],
-                    payload["created_at"],
-                    payload["updated_at"],
-                    payload["last_accessed"],
-                    payload["access_count"],
+                    record.record_id,
+                    record.record_class,
+                    record.title,
+                    record.content,
+                    record.source,
+                    record.category,
+                    record.status,
+                    record.importance,
+                    record.confidence,
+                    json.dumps(record.tags),
+                    json.dumps(record.evidence_refs),
+                    json.dumps(record.metadata),
+                    record.supersedes_id,
+                    record.created_at,
+                    record.updated_at,
+                    record.last_accessed,
+                    record.access_count,
                 ),
             )
-            if payload["supersedes_id"]:
+            if record.supersedes_id:
                 conn.execute(
                     """
                     UPDATE brain_records
                     SET status = 'superseded', updated_at = ?
                     WHERE record_id = ?
                     """,
-                    (now, payload["supersedes_id"]),
+                    (now, record.supersedes_id),
                 )
             if self._fts_available:
                 conn.execute(
@@ -226,21 +246,21 @@ class WikiBrain:
                     )
                     """,
                     (
-                        payload["record_id"],
-                        payload["record_id"],
-                        payload["title"],
-                        payload["content"],
-                        " ".join(payload["tags"]),
-                        payload["record_class"],
-                        payload["category"],
-                        payload["status"],
+                        record.record_id,
+                        record.record_id,
+                        record.title,
+                        record.content,
+                        " ".join(record.tags),
+                        record.record_class,
+                        record.category,
+                        record.status,
                     ),
                 )
 
         return {
-            "record_id": payload["record_id"],
-            "status": payload["status"],
-            "supersedes_id": payload["supersedes_id"],
+            "record_id": record.record_id,
+            "status": record.status,
+            "supersedes_id": record.supersedes_id,
         }
 
     def store_fact(
@@ -344,7 +364,7 @@ class WikiBrain:
             )
             ranked.append(
                 {
-                    "record": asdict(record),
+                    "record": record.to_dict(),
                     "score": round(score, 6),
                     "signal_breakdown": {
                         "similarity": round(similarity, 6),
@@ -361,7 +381,7 @@ class WikiBrain:
 
     def review_playbook(self, *, query: str = "", limit: int = 10) -> list[dict[str, Any]]:
         records = self.query_records(query=query, record_class="lesson", limit=limit)
-        return [asdict(record) for record in records]
+        return [record.to_dict() for record in records]
 
     def detect_contradiction(
         self,
