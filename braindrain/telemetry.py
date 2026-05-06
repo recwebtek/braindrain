@@ -75,44 +75,69 @@ class TelemetrySession:
             import sys
             print(f"Telemetry warning: could not write to {self.log_file}", file=sys.stderr)
 
+    def _sanitize_data(self, data: Any) -> Any:
+        """Recursively redact sensitive paths and API keys from data."""
+        import re
+
+        if isinstance(data, dict):
+            return {k: self._sanitize_data(v) for k, v in data.items()}
+        if isinstance(data, list):
+            return [self._sanitize_data(i) for i in data]
+        if not isinstance(data, str):
+            return data
+
+        # 1. Redact absolute system paths (macOS & Linux)
+        data = re.sub(
+            r"(/Users/[^\s'\"]+|/Volumes/[^\s'\"]+|/home/[^\s'\"]+|/root/[^\s'\"]+|/tmp/[^\s'\"]+)",
+            "[REDACTED_PATH]",
+            data,
+        )
+
+        # 2. Redact common API key patterns (OpenAI, Anthropic, Groq, HF)
+        data = re.sub(
+            r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9-]{20,}|hf_[a-zA-Z0-9-]{20,})",
+            "[REDACTED_KEY]",
+            data,
+        )
+
+        return data
+
     def log_error(self, error: str, context: Optional[dict[str, Any]] = None) -> None:
         """
         Log an error or bad response to a daily debug report.
-        Sanitizes personal information (device paths, usernames).
+        Sanitizes personal information (device paths, usernames, API keys).
         """
-        import re
         from datetime import datetime
 
-        # 1. Sanitize error string
-        # Mask absolute paths starting with /Users/ or /Volumes/
-        sanitized = re.sub(r"(/Users/[^/\s]+|/Volumes/[^/\s]+)", "[REDACTED_PATH]", error)
-        
+        # 1. Sanitize error string and context
+        sanitized_error = self._sanitize_data(error)
+        sanitized_context = self._sanitize_data(context) if context else {}
+
         # 2. Prepare event
         event = {
             "ts": time.time(),
             "type": "error",
-            "message": sanitized,
-            "context": context or {},
+            "message": sanitized_error,
+            "context": sanitized_context,
         }
 
         # 3. Write to daily debug report in .logs/
-        # Use project root for .logs/ (assumed to be current working directory or relative to it)
         date_str = datetime.now().strftime("%Y-%m-%d")
         debug_log_path = Path(".logs") / f"braindrain_debug_report_{date_str}.md"
-        
+
         # Ensure .logs exists
         debug_log_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         # Append to markdown report
         header_exists = debug_log_path.exists()
         with open(debug_log_path, "a", encoding="utf-8") as f:
             if not header_exists:
                 f.write(f"# BRAINDRAIN Debug Report — {date_str}\n\n")
-            
+
             f.write(f"### [{datetime.now().strftime('%H:%M:%S')}] Error\n")
-            f.write(f"- **Message**: {sanitized}\n")
-            if context:
-                f.write(f"- **Context**: `{json.dumps(context)}`\n")
+            f.write(f"- **Message**: {sanitized_error}\n")
+            if sanitized_context:
+                f.write(f"- **Context**: `{json.dumps(sanitized_context)}`\n")
             f.write("\n---\n\n")
 
         # Also append to session JSONL
