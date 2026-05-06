@@ -37,6 +37,19 @@ For each stage:
 5. **Checkpoint** — update `.cursor/PROGRESS.md` after each task
 6. **Advance** — when all stage tasks pass, move to next stage
 
+## Model provenance requirements
+
+- Respect `config/hub_config.yaml` `provenance.*` toggles.
+- When dispatching a sub-agent, include explicit model slug when available and log the run by calling `record_model_trace_event` with:
+  - `actor`: sub-agent name
+  - `model_name`: resolved model (or `auto` when host does not expose)
+  - `event`: `start` and `finish`
+  - `source`: `coordinator`
+- For plan edits and planning close-out responses, include frontmatter provenance fields:
+  `created_by_model`, `created_at`, `last_modified_by_model`, `last_modified_at`, `cursor_mode`.
+- If `provenance.chat_footer.enabled=true` and scope allows, append:
+  `model: <model_name> | date: <YYYY-MM-DD>`.
+
 When you **write or materially edit** any `*.plan.md` under an IDE `plans/` tree, finish with planning close-out per Ruler `RULES.md`: update `_master.plan.md` links if needed, then invoke `daily-plan-auditor` or run `scripts/daily_plan_audit.py` (do not rely only on the daily-gated stop hook).
 
 ## Progress Tracking

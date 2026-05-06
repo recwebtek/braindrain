@@ -88,3 +88,49 @@ def test_plan_marked_archived_disposition() -> None:
     assert m.plan_marked_archived({"disposition": "archived"})
     assert m.plan_marked_archived({"status": "archived"})
     assert not m.plan_marked_archived({"disposition": "active"})
+
+
+def test_report_includes_model_provenance_frontmatter(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    (tmp_project_dir / ".cursor" / "plans").mkdir(parents=True)
+    (tmp_project_dir / ".cursor" / "plans" / "p.plan.md").write_text(
+        "# Plan\n- [ ] owner: test item\n",
+        encoding="utf-8",
+    )
+    trace_path = tmp_project_dir / ".braindrain" / "plan-reports" / "model-trace.jsonl"
+    trace_path.parent.mkdir(parents=True, exist_ok=True)
+    trace_path.write_text(
+        '{"model_name":"composer-2","actor":"coordinator"}\n'
+        '{"model_name":"gpt-5.4-medium","actor":"research"}\n',
+        encoding="utf-8",
+    )
+
+    argv = [
+        "daily_plan_audit.py",
+        "--repo-root",
+        str(tmp_project_dir),
+        "--report-date",
+        "2026-06-02",
+        "--model-name",
+        "Codex 5.3",
+        "--cursor-mode",
+        "auto",
+        "--trace-path",
+        str(trace_path),
+    ]
+    from unittest.mock import patch
+
+    with patch.object(sys, "argv", argv):
+        assert m.main() == 0
+
+    report = (
+        tmp_project_dir
+        / ".braindrain"
+        / "plan-reports"
+        / "plan-audit-2026-06-02.md"
+    ).read_text(encoding="utf-8")
+    assert 'created_by_model: "Codex 5.3"' in report
+    assert 'cursor_mode: "auto"' in report
+    assert 'subagent_models_used:' in report
+    assert '    - "composer-2"' in report
+    assert '    - "gpt-5.4-medium"' in report

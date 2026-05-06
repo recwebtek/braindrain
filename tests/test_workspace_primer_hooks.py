@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import shutil
 import stat
+import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -126,6 +128,46 @@ def test_daily_plan_hook_contains_once_per_day_gate() -> None:
     assert "daily-plan-audit.json" in content
     assert "LAST_RUN_DATE" in content
     assert 'if [ "${LAST_RUN_DATE}" = "${TODAY}" ]; then' in content
+
+
+def test_observe_hook_template_suppresses_known_stdout_sources() -> None:
+    """Guard against regressions that break Cursor JSON hook parsing."""
+    hook_path = CURSOR_HOOK_TEMPLATES_DIR / "hooks" / "on-stop-observe.sh"
+    content = hook_path.read_text(encoding="utf-8")
+    assert "PRAGMA journal_mode=WAL;" in content
+    assert 'sqlite3 "${DB_PATH}" >/dev/null 2>/dev/null <<SQL' in content
+    assert '[observe-hook] Recorded stop event' not in content
+
+
+def test_observe_hook_runtime_stdout_is_empty(tmp_project_dir: Path) -> None:
+    hook_path = _REPO_ROOT / ".cursor" / "hooks" / "on-stop-observe.sh"
+    if not hook_path.is_file():
+        pytest.skip("workspace observe hook not present")
+    for dep in ("sqlite3", "jq", "git"):
+        if shutil.which(dep) is None:
+            pytest.skip(f"{dep} is required for observe hook runtime test")
+
+    fake_home = tmp_project_dir / "home"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(
+        {
+            "session_id": "hook-test-session",
+            "hook_event_name": "stop",
+            "workspace_roots": [str(_REPO_ROOT)],
+        }
+    )
+    result = subprocess.run(
+        [str(hook_path)],
+        input=payload,
+        text=True,
+        capture_output=True,
+        cwd=_REPO_ROOT,
+        env={**os.environ, **{"HOME": str(fake_home)}},
+        check=False,
+    )
+    assert result.returncode == 0
+    assert result.stdout.strip() == ""
+    assert result.stderr.strip() == ""
 
 
 def test_daily_plan_audit_prioritizes_cursor_plan_files(tmp_project_dir: Path) -> None:

@@ -57,3 +57,9 @@ Return JSON only:
 - Prefer the generated reports under `.braindrain/plan-reports/` over re-deriving scores in chat.
 - Replan work: prefer a **new** plan file and link supersession in `_master.plan.md` rather than silently overwriting history (see coordinator / architect guidance).
 - Research-heavy follow-ups: delegate to the `research` subagent, then fold findings back into the parent plan.
+- Ensure plan/report frontmatter contains model provenance fields:
+  `created_by_model`, `created_at`, `last_modified_by_model`, `last_modified_at`, `cursor_mode`.
+- Include sub-agent model rollup (`subagent_models_used`) when trace data exists at
+  `.braindrain/plan-reports/model-trace.jsonl`.
+- If chat footer policy is enabled for planning scope, append:
+  `model: <model_name> | date: <YYYY-MM-DD>`.

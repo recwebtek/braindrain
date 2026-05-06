@@ -103,6 +103,24 @@ When you **create or finish editing** a tracked plan file under an IDE `plans/` 
 3. For **replan** work, prefer a **new** plan file and record supersession in the master index rather than overwriting the old file in place.
 4. Mark abandoned plans `disposition: archived` (or `archived: true` / `status: archived`), or list them under `archived_plans:` / `archive:` in `_master.plan.md` frontmatter; the next auditor run moves them to `.plan.archives/` under the same `plans/` directory.
 
+### Model provenance and footer policy
+
+Use `provenance` settings from `config/hub_config.yaml` as the source of truth:
+
+- `provenance.chat_footer.enabled` + `provenance.chat_footer.scope` controls chat footer inclusion.
+  - `all_agents`: append footer on every completion message.
+  - `planning_only`: append footer on planning/audit/coordination completions only.
+  - `off`: do not append footer.
+- Footer format: `model: <model_name> | date: <YYYY-MM-DD>` using `provenance.date_format`.
+- When model identity is not available from the host, use `model: auto` (never invent model names).
+- In `planning_only` scope, when creating or materially rewriting any `*.plan.md`, include YAML frontmatter metadata at first write (not later patch-up), including:
+  - plan metadata: `name`, `owner`, `dri`, `disposition`, `priority`, `parent`, `ide`, `isProject`, `todos`
+  - provenance metadata: `created_by_model`, `created_at`, `last_modified_by_model`, `last_modified_at`, `cursor_mode`
+- For plan files and generated plan reports, include provenance in YAML frontmatter:
+  - `created_by_model`, `created_at`, `last_modified_by_model`, `last_modified_at`, `cursor_mode`.
+- For sub-agent operations, record model provenance events to
+  `.braindrain/plan-reports/model-trace.jsonl` when `provenance.subagent_trace.enabled=true`.
+
 ### Ops/docs to keep current (when behaviour/run paths/tools change)
 
 - `.braindrain/SESSION_PROGRESS.md`

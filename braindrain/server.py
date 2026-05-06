@@ -85,6 +85,60 @@ _wiki_brain: Optional[WikiBrain] = None
 _dream_engine: Optional[DreamEngine] = None
 
 
+def _provenance_settings() -> dict:
+    defaults = {
+        "enabled": True,
+        "date_format": "%Y-%m-%d",
+        "chat_footer": {"enabled": True, "scope": "all_agents"},
+        "plan_metadata": {"enabled": True},
+        "subagent_trace": {
+            "enabled": True,
+            "path": ".braindrain/plan-reports/model-trace.jsonl",
+        },
+    }
+    configured = config.get("provenance", {}) or {}
+    merged = dict(defaults)
+    merged.update(configured)
+    merged["chat_footer"] = {
+        **defaults["chat_footer"],
+        **(configured.get("chat_footer", {}) if isinstance(configured, dict) else {}),
+    }
+    merged["plan_metadata"] = {
+        **defaults["plan_metadata"],
+        **(configured.get("plan_metadata", {}) if isinstance(configured, dict) else {}),
+    }
+    merged["subagent_trace"] = {
+        **defaults["subagent_trace"],
+        **(configured.get("subagent_trace", {}) if isinstance(configured, dict) else {}),
+    }
+    return merged
+
+
+def _effective_model_name(explicit_model: str | None = None) -> str:
+    if explicit_model and explicit_model.strip():
+        return explicit_model.strip()
+    for env_key in (
+        "BRAINDRAIN_ACTIVE_MODEL",
+        "CURSOR_ACTIVE_MODEL",
+        "CURSOR_MODEL",
+        "MODEL_NAME",
+    ):
+        value = os.environ.get(env_key, "").strip()
+        if value:
+            return value
+    return "auto"
+
+
+def _effective_cursor_mode() -> str:
+    mode = (
+        os.environ.get("CURSOR_MODEL_SELECTION", "")
+        or os.environ.get("BRAINDRAIN_CURSOR_MODE", "")
+    ).strip().lower()
+    if mode in {"manual", "auto"}:
+        return mode
+    return "auto"
+
+
 def _get_context_mode_client() -> Optional[ContextModeClient]:
     global _context_mode_client
     if _context_mode_client is not None:
@@ -498,6 +552,57 @@ async def search_index(query: str, limit: int = 5) -> dict:
 async def get_token_dashboard() -> dict:
     """Compact token-savings dashboard (estimated tokens, Claude-focused)."""
     return telemetry.snapshot()
+
+
+@mcp.tool()
+def get_provenance_settings() -> dict:
+    """Return current model provenance settings and effective defaults."""
+    return {
+        "provenance": _provenance_settings(),
+        "effective_model": _effective_model_name(),
+        "cursor_mode": _effective_cursor_mode(),
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+@mcp.tool()
+def record_model_trace_event(
+    actor: str,
+    model_name: str = "",
+    event: str = "run",
+    source: str = "manual",
+    metadata: dict | None = None,
+) -> dict:
+    """Append a machine-local model provenance event for audits and plan reports."""
+    settings = _provenance_settings()
+    trace_cfg = settings.get("subagent_trace", {}) if isinstance(settings, dict) else {}
+    enabled = bool(trace_cfg.get("enabled", True)) and bool(settings.get("enabled", True))
+    if not enabled:
+        return {
+            "ok": True,
+            "status": "disabled",
+            "message": "provenance.subagent_trace is disabled",
+        }
+
+    trace_path = Path(str(trace_cfg.get("path") or ".braindrain/plan-reports/model-trace.jsonl"))
+    if not trace_path.is_absolute():
+        trace_path = Path.cwd() / trace_path
+    trace_path.parent.mkdir(parents=True, exist_ok=True)
+
+    now = datetime.now()
+    payload = {
+        "timestamp": now.isoformat(),
+        "date": now.strftime(str(settings.get("date_format", "%Y-%m-%d"))),
+        "actor": actor,
+        "event": event,
+        "source": source,
+        "model_name": _effective_model_name(model_name),
+        "cursor_mode": _effective_cursor_mode(),
+        "metadata": metadata or {},
+    }
+    with open(trace_path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    return {"ok": True, "trace_path": str(trace_path), "event": payload}
 
 
 @mcp.tool()

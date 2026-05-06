@@ -68,3 +68,4 @@ class ConfigData:
     lessons: dict = field(default_factory=dict)
     dreaming: dict = field(default_factory=dict)
     provider_context: dict = field(default_factory=dict)
+    provenance: dict = field(default_factory=dict)

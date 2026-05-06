@@ -12,6 +12,7 @@ import argparse
 import dataclasses
 import datetime as dt
 import getpass
+import json
 import os
 import re
 import shutil
@@ -120,6 +121,50 @@ FRONTMATTER_BLOCK_RE = re.compile(
 FRONTMATTER_KV_RE = re.compile(
     r"^([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.*?)\s*$"
 )
+
+
+def resolve_model_name(model_name: str | None = None) -> str:
+    if model_name and model_name.strip():
+        return model_name.strip()
+    for key in (
+        "BRAINDRAIN_ACTIVE_MODEL",
+        "CURSOR_ACTIVE_MODEL",
+        "CURSOR_MODEL",
+        "MODEL_NAME",
+    ):
+        value = os.environ.get(key, "").strip()
+        if value:
+            return value
+    return "auto"
+
+
+def resolve_cursor_mode(cursor_mode: str | None = None) -> str:
+    mode = (
+        cursor_mode
+        or os.environ.get("CURSOR_MODEL_SELECTION", "")
+        or os.environ.get("BRAINDRAIN_CURSOR_MODE", "")
+    ).strip().lower()
+    if mode in {"auto", "manual"}:
+        return mode
+    return "auto"
+
+
+def load_trace_models(trace_path: Path, limit: int = 1000) -> list[str]:
+    if not trace_path.is_file():
+        return []
+    models: list[str] = []
+    for raw in trace_path.read_text(encoding="utf-8", errors="ignore").splitlines()[-limit:]:
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        model_name = str(payload.get("model_name") or "").strip()
+        if model_name:
+            models.append(model_name)
+    return sorted(set(models))
 
 
 def _strip_quotes(value: str) -> str:
@@ -433,6 +478,21 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--report-date", default=dt.date.today().isoformat())
     parser.add_argument("--trigger", default="cursor-stop-daily-gated")
+    parser.add_argument(
+        "--model-name",
+        default="",
+        help="Model name for provenance metadata (defaults to env lookup or auto).",
+    )
+    parser.add_argument(
+        "--cursor-mode",
+        default="",
+        help="Cursor model mode for provenance metadata (auto/manual).",
+    )
+    parser.add_argument(
+        "--trace-path",
+        default=".braindrain/plan-reports/model-trace.jsonl",
+        help="JSONL path for model trace events used to populate subagent model rollups.",
+    )
     parser.add_argument(
         "--master-plan",
         default=None,
@@ -933,6 +993,7 @@ def render_task_board_markdown(
     items: list[PlanItem],
     *,
     cards_by_source: dict[str, "PlanCard"] | None = None,
+    provenance: dict[str, object] | None = None,
 ) -> str:
     """Single markdown table of active work, regenerated each audit run.
 
@@ -960,9 +1021,22 @@ def render_task_board_markdown(
         "Do not edit by hand — ownership inherits from the parent plan's "
         "frontmatter (`owner:` / `dri:`) unless an item explicitly delegates._",
         "",
+    ]
+    provenance = provenance or {}
+    lines.extend(
+        [
+            f"_model: {provenance.get('last_modified_by_model', 'auto')} | "
+            f"cursor_mode: {provenance.get('cursor_mode', 'auto')} | "
+            f"date: {provenance.get('last_modified_at', report_date)}_",
+            "",
+        ]
+    )
+    lines.extend(
+        [
         "| IDE | Status | Owner | Item | Source | Gaps |",
         "|-----|--------|-------|------|--------|------|",
-    ]
+        ]
+    )
     for item in rows:
         plan_card = cards_by_source.get(item.source)
         plan_has_owner = bool(
@@ -1193,10 +1267,93 @@ def parse_master_plan(master_path: Path, repo_root: Path) -> dict[str, object]:
     return {"frontmatter": fm, "children": children}
 
 
+def sync_master_plan(
+    master_path: Path | None,
+    repo_root: Path,
+    cards: list["PlanCard"],
+) -> list[str]:
+    """Auto-add missing discovered plans into curated `_master.plan.md`.
+
+    Missing plans are grouped under their disposition heading (e.g. `## active`).
+    Returns the repo-relative source paths that were inserted.
+    """
+    if not master_path or not master_path.is_file():
+        return []
+
+    master_doc = parse_master_plan(master_path, repo_root)
+    in_master: set[str] = set(master_doc.get("children", []))  # type: ignore[arg-type]
+    by_source = {card.source: card for card in cards if not card.is_master}
+    missing = sorted(set(by_source.keys()) - in_master)
+    if not missing:
+        return []
+
+    text = master_path.read_text(encoding="utf-8", errors="ignore")
+    fm_match = FRONTMATTER_BLOCK_RE.match(text)
+    fm_block = fm_match.group(0) if fm_match else ""
+    body = text[len(fm_block):]
+    body_lines = body.splitlines()
+
+    def section_bounds(section_name: str) -> tuple[int, int] | None:
+        header = f"## {section_name}"
+        start = None
+        for idx, line in enumerate(body_lines):
+            if line.strip().lower() == header.lower():
+                start = idx
+                break
+        if start is None:
+            return None
+        end = len(body_lines)
+        for idx in range(start + 1, len(body_lines)):
+            if body_lines[idx].startswith("## "):
+                end = idx
+                break
+        return start, end
+
+    inserted: list[str] = []
+    # Keep insertion stable by disposition order, then source path.
+    ordered_missing = sorted(
+        missing,
+        key=lambda src: (
+            _DISPOSITION_ORDER.index(by_source[src].disposition)
+            if by_source[src].disposition in _DISPOSITION_ORDER
+            else 99,
+            src,
+        ),
+    )
+    for src in ordered_missing:
+        card = by_source[src]
+        target_abs = (repo_root / src).resolve()
+        rel_link = os.path.relpath(target_abs, start=master_path.parent.resolve()).replace("\\", "/")
+        bullet = f"- [{card.title}]({rel_link}) — DRI: {card.dri}"
+
+        bounds = section_bounds(card.disposition)
+        if bounds is None:
+            if body_lines and body_lines[-1].strip():
+                body_lines.append("")
+            body_lines.append(f"## {card.disposition}")
+            body_lines.append("")
+            body_lines.append(bullet)
+            inserted.append(src)
+            continue
+
+        start, end = bounds
+        insert_at = end
+        # Keep a blank line between section content and next heading.
+        while insert_at > start + 1 and not body_lines[insert_at - 1].strip():
+            insert_at -= 1
+        body_lines.insert(insert_at, bullet)
+        inserted.append(src)
+
+    new_body = "\n".join(body_lines).rstrip() + "\n"
+    master_path.write_text(fm_block + new_body, encoding="utf-8")
+    return inserted
+
+
 def render_next_actions(
     actions: list[Action],
     *,
     report_date: str = "",
+    provenance: dict[str, object] | None = None,
 ) -> str:
     """Render the triage queue grouped by verb.
 
@@ -1215,6 +1372,12 @@ def render_next_actions(
             f"_Generated {report_date} by `scripts/daily_plan_audit.py`. "
             "Do not edit by hand. Action a verb by editing the parent plan's "
             "`disposition:` and re-running the audit._"
+        )
+        provenance = provenance or {}
+        lines.append(
+            f"_model: {provenance.get('last_modified_by_model', 'auto')} | "
+            f"cursor_mode: {provenance.get('cursor_mode', 'auto')} | "
+            f"date: {provenance.get('last_modified_at', report_date)}_"
         )
     lines.append("")
 
@@ -1251,6 +1414,7 @@ def render_master_mirror(
     master_doc: dict[str, object] | None = None,
     *,
     report_date: str = "",
+    provenance: dict[str, object] | None = None,
 ) -> str:
     """Generated mirror of the master plan with rollup + drift detection.
 
@@ -1287,6 +1451,13 @@ def render_master_mirror(
             "_Generated by `scripts/daily_plan_audit.py`. "
             f"Do not edit by hand. Source: {src_note}._"
         )
+    lines.append("")
+    provenance = provenance or {}
+    lines.append(
+        f"_model: {provenance.get('last_modified_by_model', 'auto')} | "
+        f"cursor_mode: {provenance.get('cursor_mode', 'auto')} | "
+        f"date: {provenance.get('last_modified_at', report_date or '')}_"
+    )
     lines.append("")
 
     if not cards:
@@ -1383,6 +1554,7 @@ def build_report(
     items: list[PlanItem],
     *,
     cards_by_source: dict[str, "PlanCard"] | None = None,
+    provenance: dict[str, object] | None = None,
 ) -> str:
     overlaps = detect_overlaps(items)
     cards_by_source = cards_by_source or {}
@@ -1449,6 +1621,7 @@ def build_report(
         "top_risks": top_risks[:5],
         "memory_context": mem,
     }
+    provenance = provenance or {}
 
     body: list[str] = []
     body.append("---")
@@ -1476,6 +1649,25 @@ def build_report(
         body.append(f"    - \"{source}\"")
     if not frontmatter["memory_context"]["sources"]:
         body.append("    - \"none\"")
+    body.append("provenance:")
+    body.append(
+        f"  created_by_model: \"{str(provenance.get('created_by_model', 'auto'))}\""
+    )
+    body.append(
+        f"  created_at: \"{str(provenance.get('created_at', report_date))}\""
+    )
+    body.append(
+        f"  last_modified_by_model: \"{str(provenance.get('last_modified_by_model', 'auto'))}\""
+    )
+    body.append(
+        f"  last_modified_at: \"{str(provenance.get('last_modified_at', report_date))}\""
+    )
+    body.append(
+        f"  cursor_mode: \"{str(provenance.get('cursor_mode', 'auto'))}\""
+    )
+    body.append("  subagent_models_used:")
+    for model in provenance.get("subagent_models_used", []) or ["auto"]:
+        body.append(f"    - \"{model}\"")
     body.append("---")
     body.append("")
     body.append("# Daily Plan Audit Report")
@@ -1572,6 +1764,19 @@ def build_report(
 def main() -> int:
     args = parse_args()
     repo_root = Path(args.repo_root).resolve()
+    trace_path = Path(args.trace_path)
+    if not trace_path.is_absolute():
+        trace_path = repo_root / trace_path
+    model_name = resolve_model_name(args.model_name)
+    cursor_mode = resolve_cursor_mode(args.cursor_mode)
+    provenance = {
+        "created_by_model": model_name,
+        "created_at": args.report_date,
+        "last_modified_by_model": model_name,
+        "last_modified_at": args.report_date,
+        "cursor_mode": cursor_mode,
+        "subagent_models_used": load_trace_models(trace_path),
+    }
     out_dir = Path(args.output_dir)
     if not out_dir.is_absolute():
         out_dir = repo_root / out_dir
@@ -1602,6 +1807,7 @@ def main() -> int:
         secondary,
         items,
         cards_by_source=cards_by_source,
+        provenance=provenance,
     )
     if archive_moves:
         report = (
@@ -1617,7 +1823,10 @@ def main() -> int:
     shutil.copyfile(dated_path, latest_path)
 
     board = render_task_board_markdown(
-        args.report_date, items, cards_by_source=cards_by_source
+        args.report_date,
+        items,
+        cards_by_source=cards_by_source,
+        provenance=provenance,
     )
     (out_dir / "plan-task-board.md").write_text(board, encoding="utf-8")
 
@@ -1630,17 +1839,33 @@ def main() -> int:
     else:
         master_path = discover_master_plan(repo_root)
 
+    synced_master_entries = sync_master_plan(
+        master_path,
+        repo_root,
+        list(cards_by_source.values()),
+    )
     master_doc = parse_master_plan(master_path, repo_root) if master_path else None
     mirror = render_master_mirror(
         list(cards_by_source.values()),
         master_doc,
         report_date=args.report_date,
+        provenance=provenance,
     )
     (out_dir / "master-plan.md").write_text(mirror, encoding="utf-8")
 
     # Triage queue (`next-actions.md`).
     actions = detect_actions(list(cards_by_source.values()))
-    next_actions = render_next_actions(actions, report_date=args.report_date)
+    next_actions = render_next_actions(
+        actions,
+        report_date=args.report_date,
+        provenance=provenance,
+    )
+    if synced_master_entries:
+        next_actions += (
+            "\n## Master plan sync (this run)\n\n"
+            + "\n".join(f"- added to `_master.plan.md`: `{src}`" for src in synced_master_entries)
+            + "\n"
+        )
     (out_dir / "next-actions.md").write_text(next_actions, encoding="utf-8")
 
     print(str(dated_path))

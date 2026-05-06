@@ -55,7 +55,7 @@ METADATA_SQL="$(sql_escape "${METADATA_JSON}")"
 SESSION_SQL="$(sql_escape "${SESSION_ID}")"
 TIMESTAMP="$(date +%s)"
 
-sqlite3 "${DB_PATH}" <<SQL
+sqlite3 "${DB_PATH}" >/dev/null 2>/dev/null <<SQL
 PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS brain_events (
   event_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -91,5 +91,4 @@ INSERT INTO brain_events (
 );
 SQL
 
-echo "[observe-hook] Recorded stop event for ${SESSION_ID}"
 exit 0

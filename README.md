@@ -77,7 +77,7 @@ This keeps passwords/session secrets out of shareable dashboard scaffold paths a
 | Tool                                                     | When to use                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `list_workflows()`                                       | See what multi-step workflows are available.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `prime_workspace(...)`                                   | Prime a project for AI agent use. **Parameters** include `sync_subagents`, `sync_templates`, `bundle` (`core` default), `codex_agent_targets`, `patch_user_cursor_mcp`, `compact_mcp_response`. **First run**: auto-detects current IDE/CLI (`CURSOR_*` → `TERM_PROGRAM` → dotfolders → fallback `cursor`); response includes `**detect_method`**. Uses `**config/bundles/<bundle>.yaml**` for bundle metadata. Always rewrites **minimal `.ruler/ruler.toml`** when targeting specific agents. Deploys Cursor/Codex subagent files from templates (`**subagents**`) and manages Codex `**BRAINDRAIN SUBAGENTS**` in `.codex/config.toml` when allowed (`**codex_subagent_config**`). After apply, syncs `**.cursor/rules/braindrain.mdc**` and `**project-rules.mdc**` from `.ruler/RULES.md` — see `**cursor_rules**`. When Cursor is in scope, copies `**config/templates/cursor/**` → `**.cursor/hooks.json**` and `**.cursor/hooks/*.sh**` — see `**cursor_hooks**` (create-only; `**sync_templates=true**` refreshes Ruler sources and hook templates). `**sync_subagents=true**` updates existing subagent files and managed Codex blocks (backup-first). Set `**all_agents=True**` for the full template. |
+| `prime_workspace(...)`                                   | Prime a project for AI agent use. **Parameters** include `sync_subagents`, `sync_templates`, `bundle` (`core` default), `codex_agent_targets`, `patch_user_cursor_mcp`, `compact_mcp_response`. **First run**: auto-detects current IDE/CLI (`CURSOR_*` → `TERM_PROGRAM` → dotfolders → fallback `cursor`); response includes `**detect_method`**. Uses `**config/bundles/<bundle>.yaml`** for bundle metadata. Always rewrites **minimal `.ruler/ruler.toml`** when targeting specific agents. Deploys Cursor/Codex subagent files from templates (`**subagents**`) and manages Codex `**BRAINDRAIN SUBAGENTS**` in `.codex/config.toml` when allowed (`**codex_subagent_config**`). After apply, syncs `**.cursor/rules/braindrain.mdc**` and `**project-rules.mdc**` from `.ruler/RULES.md` — see `**cursor_rules**`. When Cursor is in scope, copies `**config/templates/cursor/**` → `**.cursor/hooks.json**` and `**.cursor/hooks/*.sh**` — see `**cursor_hooks**` (create-only; `**sync_templates=true**` refreshes Ruler sources and hook templates). `**sync_subagents=true**` updates existing subagent files and managed Codex blocks (backup-first). Set `**all_agents=True**` for the full template. |
 | `init_project_memory(path, dry_run)`                     | Initialize project memory artifacts only (`.braindrain/AGENT_MEMORY.md` and `.cursor/hooks/state/continual-learning-index.json`). Migrates legacy `.devdocs/` on first call. Idempotent.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `scriptlib_enable(path, scope, harvest, dry_run)`        | Hard-opt-in project or global scriptlib. Project enable can immediately harvest reusable workspace scripts into `.scriptlib/`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `scriptlib_harvest_workspace(path, dry_run)`             | Recursively copy script-like files from the workspace into the local project scriptlib catalog, honoring ignore rules.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
@@ -214,7 +214,7 @@ Install logs are written to `.braindrain/install-logs/install-<timestamp>.log`.
 
 ### Arch / Linux dev machines
 
-On Arch/rolling-release distros (e.g. EndeavourOS) where `python3` often points at Python 3.14:
+On Arch/rolling-release distros where `python3` often points at Python 3.14:
 
 - The installer supports Python 3.11–3.14 and prefers `python3.14` when available.
 - Make sure system `python`/`python3` and `pip` are installed via your package manager (e.g. `pacman -S python python-pip`).
@@ -226,7 +226,7 @@ cd braindrain
 ./install.sh
 ```
 
-is expected to succeed; if it doesn’t, capture the full log from `.braindrain/install-logs/` and append a new section to `QA-Logs/bdqadebug.md` (Lenovo/Arch debug log) before iterating.
+is expected to succeed; if it doesn’t, capture the full log from `.braindrain/install-logs/` and append a new section to `QA-Logs/bdqadebug.md` (debug log) before iterating.
 
 ---
 
@@ -387,6 +387,29 @@ Environment variables (copy `.env.example` to `.env.dev` to start):
 
 The server auto-loads `.env.dev` → `.env.prod` → `.env` (first found, non-overriding of existing env vars).
 
+### Model provenance toggles
+
+`config/hub_config.yaml` now includes a `provenance` block used by planning/report tooling:
+
+- `provenance.chat_footer.enabled` and `provenance.chat_footer.scope` (`all_agents`, `planning_only`, `off`)
+- `provenance.plan_metadata.enabled`
+- `provenance.subagent_trace.enabled`
+- `provenance.subagent_trace.path` (default: `.braindrain/plan-reports/model-trace.jsonl`)
+- `provenance.date_format` (default: `%Y-%m-%d`)
+
+The planning auditor writes model metadata into report frontmatter:
+`created_by_model`, `created_at`, `last_modified_by_model`, `last_modified_at`, `cursor_mode`, and `subagent_models_used`.
+
+To force explicit provenance values during audit runs:
+
+```bash
+python3 scripts/daily_plan_audit.py \
+  --repo-root . \
+  --report-date "$(date +%Y-%m-%d)" \
+  --model-name "Codex 5.3" \
+  --cursor-mode auto
+```
+
 ---
 
 ## Repo structure
@@ -438,6 +461,7 @@ braindrain/
   - `.cursor/hooks/on-stop-observe.sh` (lightweight stop-event observation)
   - `.cursor/hooks/on-stop-gitops.sh` (TASK-GRAPH branch queueing)
   - `.cursor/hooks/on-stop-daily-plan-audit.sh` (daily-gated planning audit report)
+  - Hook output contract: stop-hook scripts should be silent unless they intentionally emit valid JSON. Plain text output can cause Cursor hook-response JSON parse failures.
   Edit templates under `config/templates/cursor/` in this repo, then re-prime consumer projects to roll out hook changes.
 - **Subagent templates**: canonical source is `config/templates/agents/*.md`. `prime_workspace()` copies that tree to:
   - `.cursor/agents/` when Cursor is in the resolved agent set, and
@@ -470,7 +494,7 @@ braindrain/
 
 ## Memory layer status and roadmap
 
-**Roadmap and release TODOs** ship from the repo root as `**ROADMAP.md`** and `**TODOS.md**`. Use `**.devdocs/**` only on your machine for private drafts (that path is gitignored and must not be committed).
+**Roadmap and release TODOs** ship from the repo root as `**ROADMAP.md`** and `**TODOS.md`**. Use `**.devdocs/**` only on your machine for private drafts (that path is gitignored and must not be committed).
 
 Implemented now (runtime behavior in this repo):
 
