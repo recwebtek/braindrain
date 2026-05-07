@@ -903,6 +903,9 @@ def create_app(
               .cmd-box { background: #00000050; padding: 1.25rem; border-radius: 0.5rem; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.9rem; text-align: left; border: 1px solid #ffffff08; position: relative; }
               .cmd-label { position: absolute; top: -0.7rem; left: 1rem; background: var(--accent); color: var(--bg); font-size: 0.7rem; font-weight: 800; padding: 0.1rem 0.5rem; border-radius: 0.2rem; text-transform: uppercase; }
               code { color: #e2e8f0; display: block; white-space: pre-wrap; }
+              .copy-btn { position: absolute; top: 0.5rem; right: 0.5rem; background: #ffffff05; border: 1px solid #ffffff20; color: var(--muted); border-radius: 0.375rem; padding: 0.4rem 0.6rem; font-size: 0.75rem; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 0.4rem; font-family: ui-sans-serif, system-ui, sans-serif; }
+              .copy-btn:hover { background: #ffffff10; color: var(--text); border-color: var(--accent); }
+              .copy-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
               .footer { margin-top: 2rem; font-size: 0.8rem; color: #ffffff20; }
             </style>
           </head>
@@ -912,12 +915,33 @@ def create_app(
               <p>The dashboard UI build is not found. Run the following to generate it:</p>
               <div class="cmd-box">
                 <span class="cmd-label">Quick Build</span>
-                <code>cd .ldash/ui
+                <button class="copy-btn" aria-label="Copy commands to clipboard" onclick="copyCommands(this)">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  <span>Copy</span>
+                </button>
+                <code id="build-cmd">cd .ldash/ui
 pnpm install
 pnpm run build</code>
               </div>
               <div class="footer">Waiting for production artifacts in .ldash/ui/dist</div>
             </div>
+            <script>
+              function copyCommands(btn) {
+                const code = document.getElementById('build-cmd').innerText;
+                navigator.clipboard.writeText(code).then(() => {
+                  const span = btn.querySelector('span');
+                  const originalText = span.innerText;
+                  span.innerText = 'Copied!';
+                  btn.style.borderColor = 'var(--accent)';
+                  btn.style.color = 'var(--accent)';
+                  setTimeout(() => {
+                    span.innerText = originalText;
+                    btn.style.borderColor = '';
+                    btn.style.color = '';
+                  }, 2000);
+                });
+              }
+            </script>
           </body>
         </html>
         """
