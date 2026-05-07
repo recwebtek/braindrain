@@ -9,6 +9,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tarfile
 import uuid
 from pathlib import Path
 from unittest.mock import patch
@@ -16,10 +17,13 @@ from unittest.mock import patch
 import pytest
 
 from braindrain.workspace_primer import (
+    MAX_ROLLBACK_SNAPSHOTS,
     CURSOR_HOOK_TEMPLATES_DIR,
     compact_prime_result_for_mcp,
+    create_prime_snapshot,
     deploy_cursor_hook_templates,
     deploy_subagent_templates,
+    prime,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -93,6 +97,99 @@ def test_deploy_subagent_templates_writes_codex_agents(tmp_project_dir: Path) ->
     assert codex_agents.is_dir()
     assert (codex_agents / "coordinator.md").is_file()
     assert (codex_agents / "daily-plan-auditor.md").is_file()
+
+
+def test_deploy_subagent_templates_preserves_customized(tmp_project_dir: Path) -> None:
+    agents_dir = tmp_project_dir / ".cursor" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    custom_path = agents_dir / "coordinator.md"
+    custom_text = "# My Custom Coordinator\n\nkeep me\n"
+    custom_path.write_text(custom_text, encoding="utf-8")
+
+    out = deploy_subagent_templates(
+        tmp_project_dir,
+        sync_subagents=True,
+        to_cursor=True,
+        to_codex=False,
+    )
+    assert out["coordinator.md"]["classification"] == "customized"
+    assert out["coordinator.md"]["action"] == "skipped_existing"
+    assert custom_path.read_text(encoding="utf-8") == custom_text
+
+
+def test_deploy_subagent_templates_marks_default_current(tmp_project_dir: Path) -> None:
+    out_first = deploy_subagent_templates(
+        tmp_project_dir,
+        sync_subagents=False,
+        to_cursor=True,
+        to_codex=False,
+    )
+    assert out_first["coordinator.md"]["action"] in {"created", "created_from_empty"}
+
+    out_second = deploy_subagent_templates(
+        tmp_project_dir,
+        sync_subagents=True,
+        to_cursor=True,
+        to_codex=False,
+    )
+    assert out_second["coordinator.md"]["classification"] == "default_current"
+
+
+def test_create_prime_snapshot_archives_cursor_and_manifest(tmp_project_dir: Path) -> None:
+    (tmp_project_dir / ".cursor" / "agents").mkdir(parents=True, exist_ok=True)
+    (tmp_project_dir / ".cursor" / "agents" / "x.md").write_text("x", encoding="utf-8")
+    snapshot = create_prime_snapshot(
+        tmp_project_dir,
+        apply_agents=["cursor"],
+        all_agents=False,
+        dry_run=False,
+    )
+    assert snapshot["ok"] is True
+    assert snapshot["archive_count"] >= 1
+    manifest_path = Path(str(snapshot["manifest_path"]))
+    assert manifest_path.is_file()
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert ".cursor" in manifest["ide_dirs"]
+    archive_paths = [Path(a["path"]) for a in manifest["archives"]]
+    assert any(p.name == "cursor.tar.gz" for p in archive_paths)
+    tar_path = next(p for p in archive_paths if p.name == "cursor.tar.gz")
+    with tarfile.open(tar_path, "r:gz") as tf:
+        names = tf.getnames()
+    assert any(name.endswith("agents/x.md") for name in names)
+
+
+def test_create_prime_snapshot_prunes_to_max(tmp_project_dir: Path) -> None:
+    rollback_root = tmp_project_dir / ".braindrain" / "rollback"
+    for idx in range(MAX_ROLLBACK_SNAPSHOTS + 2):
+        d = rollback_root / f"20260101-0000{idx:02d}"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "manifest.json").write_text("{}", encoding="utf-8")
+    (tmp_project_dir / ".cursor").mkdir(parents=True, exist_ok=True)
+    create_prime_snapshot(
+        tmp_project_dir,
+        apply_agents=["cursor"],
+        all_agents=False,
+        dry_run=False,
+    )
+    dirs = [p for p in rollback_root.iterdir() if p.is_dir()]
+    assert len(dirs) == MAX_ROLLBACK_SNAPSHOTS
+
+
+def test_prime_result_exposes_rollback_manifest(tmp_project_dir: Path) -> None:
+    (tmp_project_dir / ".cursor").mkdir(parents=True, exist_ok=True)
+    with patch("braindrain.workspace_primer.run_ruler_apply", return_value={"ok": True, "stdout": "", "stderr": "", "command": "x", "returncode": 0}), patch(
+        "braindrain.workspace_primer.initialize_project_memory",
+        return_value={"ok": True, "dry_run": False, "artifacts": {}, "migration": {}},
+    ), patch(
+        "braindrain.workspace_primer.seed_if_enabled",
+        return_value={"ok": True, "enabled": False},
+    ), patch(
+        "braindrain.workspace_primer.verify_prime_install",
+        return_value={"ok": True, "checks": {"dry_run": False}},
+    ):
+        result = prime(path=str(tmp_project_dir), agents=["cursor"], local_only=True)
+    assert result["rollback_manifest_path"]
+    assert isinstance(result["rollback_archives"], list)
 
 
 def test_compact_prime_result_includes_cursor_hooks_summary() -> None:

@@ -7,7 +7,9 @@ import os
 import re
 import shutil
 import subprocess
+import tarfile
 import yaml
+from hashlib import sha256
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -30,6 +32,8 @@ _LEGACY_DEVDOCS_DIR = ".devdocs"
 
 DEFAULT_MEMORY_FILE = f"{BRAINDRAIN_DIR}/AGENT_MEMORY.md"
 DEFAULT_INDEX_FILE = ".cursor/hooks/state/continual-learning-index.json"
+MAX_ROLLBACK_SNAPSHOTS = 12
+_TEMPLATE_MARKER_PREFIX = "<!-- braindrain-template:"
 
 # Marker file persisted after the first successful prime.
 _PRIMED_MARKER = f"{BRAINDRAIN_DIR}/primed.json"
@@ -350,25 +354,96 @@ def _deploy_subagent_templates_to_dir(
     written: dict[str, dict[str, str | bool]] = {}
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
 
+    def _template_hash(text: str) -> str:
+        return sha256(text.encode("utf-8")).hexdigest()
+
+    def _stamp_template_marker(text: str, template_name: str) -> str:
+        marker = f"{_TEMPLATE_MARKER_PREFIX} {template_name} sha256={_template_hash(text)} -->"
+        if text.startswith(f"{_TEMPLATE_MARKER_PREFIX} "):
+            first_newline = text.find("\n")
+            if first_newline == -1:
+                return marker + "\n"
+            return marker + text[first_newline:]
+        return marker + "\n" + text
+
+    def _extract_marker_hash(existing_text: str, template_name: str) -> str:
+        if not existing_text.startswith(f"{_TEMPLATE_MARKER_PREFIX} "):
+            return ""
+        first_line = existing_text.splitlines()[0].strip()
+        m = re.match(
+            rf"^{re.escape(_TEMPLATE_MARKER_PREFIX)}\s+{re.escape(template_name)}\s+sha256=([a-f0-9]{{64}})\s*-->$",
+            first_line,
+        )
+        return m.group(1) if m else ""
+
+    def _strip_marker(text: str) -> str:
+        if not text.startswith(f"{_TEMPLATE_MARKER_PREFIX} "):
+            return text
+        idx = text.find("\n")
+        return "" if idx == -1 else text[idx + 1 :]
+
     for src in sorted(AGENT_TEMPLATES_DIR.glob("*.md")):
         dst = agents_dir / src.name
-        content = src.read_text(encoding="utf-8")
+        raw_content = src.read_text(encoding="utf-8")
+        content = _stamp_template_marker(raw_content, src.name)
+        current_hash = _template_hash(raw_content)
         if dst.exists():
-            if sync_subagents:
+            existing = dst.read_text(encoding="utf-8", errors="ignore")
+            if not existing.strip():
+                dst.write_text(content, encoding="utf-8")
+                written[src.name] = {
+                    "action": "created_from_empty",
+                    "backup": "",
+                    "classification": "empty",
+                }
+                continue
+
+            marker_hash = _extract_marker_hash(existing, src.name)
+            existing_without_marker = _strip_marker(existing)
+            if existing_without_marker == raw_content:
+                # Ensure marker is present for future old-default detection.
+                if existing != content:
+                    backup = dst.with_name(f"{dst.name}.bak.{ts}")
+                    shutil.copy2(dst, backup)
+                    dst.write_text(content, encoding="utf-8")
+                    written[src.name] = {
+                        "action": "updated",
+                        "backup": str(backup),
+                        "classification": "default_current",
+                    }
+                else:
+                    written[src.name] = {
+                        "action": "skipped_existing",
+                        "backup": "",
+                        "classification": "default_current",
+                    }
+                continue
+
+            if marker_hash and marker_hash != current_hash:
+                # Old managed default from prior template version: safe to upgrade.
                 backup = dst.with_name(f"{dst.name}.bak.{ts}")
                 shutil.copy2(dst, backup)
                 dst.write_text(content, encoding="utf-8")
-                written[src.name] = {"action": "updated", "backup": str(backup)}
-            else:
-                existing = dst.read_text(encoding="utf-8", errors="ignore")
-                if existing.strip():
-                    written[src.name] = {"action": "skipped_existing", "backup": ""}
-                else:
-                    dst.write_text(content, encoding="utf-8")
-                    written[src.name] = {"action": "created_from_empty", "backup": ""}
+                written[src.name] = {
+                    "action": "updated",
+                    "backup": str(backup),
+                    "classification": "default_old",
+                }
+                continue
+
+            # Customized or unmanaged file: never overwrite automatically.
+            written[src.name] = {
+                "action": "skipped_existing",
+                "backup": "",
+                "classification": "customized",
+            }
         else:
             dst.write_text(content, encoding="utf-8")
-            written[src.name] = {"action": "created", "backup": ""}
+            written[src.name] = {
+                "action": "created",
+                "backup": "",
+                "classification": "missing",
+            }
     return written
 
 
@@ -410,13 +485,12 @@ def deploy_subagent_templates(
     When ``to_codex`` is True, writes ``.codex/agents/*.md``.
     Both can be True so a single canonical template tree serves every IDE.
 
-    Default mode is create-only:
+    Safe mode semantics (applies even when sync_subagents=True):
       - missing files are created
-      - existing non-empty files are preserved
       - existing empty files are filled
-
-    When sync_subagents=True:
-      - existing files are backed up to .bak.<timestamp> and overwritten
+      - existing customized files are preserved
+      - existing managed defaults are updated only when they are old/default
+        revisions (marker hash mismatch), with timestamped backups
     """
     if not AGENT_TEMPLATES_DIR.exists():
         return {}
@@ -926,29 +1000,147 @@ def ensure_cursor_mcp_json_server_name(
     )
 
 
-def create_prime_snapshot(target_dir: Path, *, dry_run: bool = False) -> dict[str, str | bool]:
-    """Create a lightweight rollback snapshot before mutating prime files."""
-    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    snapshot_dir = target_dir / BRAINDRAIN_DIR / "rollback" / ts
-    tracked = [
-        target_dir / ".ruler" / "ruler.toml",
-        target_dir / ".cursor" / "mcp.json",
-        target_dir / ".cursor" / "rules" / "project-rules.mdc",
-        target_dir / ".cursor" / "rules" / "braindrain.mdc",
+def _resolve_ide_snapshot_dirs(
+    target_dir: Path,
+    *,
+    apply_agents: Optional[list[str]],
+    all_agents: bool,
+) -> list[Path]:
+    """Return IDE dotdirs that should be snapshot-protected for this prime run."""
+    agent_to_dir = {
+        "cursor": ".cursor",
+        "codex": ".codex",
+        "kiro": ".kiro",
+        "windsurf": ".windsurf",
+        "opencode": ".opencode",
+        "zed": ".zed",
+        "trae": ".trae",
+    }
+    dirs: list[Path] = []
+    if all_agents or apply_agents is None:
+        candidates = list(agent_to_dir.values())
+    else:
+        candidates = [agent_to_dir[a] for a in apply_agents if a in agent_to_dir]
+    for rel in candidates:
+        p = target_dir / rel
+        if p.exists():
+            dirs.append(p)
+    # Always protect .cursor when present because prime routinely touches it.
+    cursor_dir = target_dir / ".cursor"
+    if cursor_dir.exists() and cursor_dir not in dirs:
+        dirs.append(cursor_dir)
+    return sorted(dirs, key=lambda p: p.as_posix())
+
+
+def _prime_touched_paths(
+    target_dir: Path,
+    *,
+    apply_agents: Optional[list[str]],
+    all_agents: bool,
+) -> list[str]:
+    touched = [
+        ".ruler/ruler.toml",
+        ".ruler/RULES.md",
+        ".ruler/AGENTS.md",
+        ".cursor/mcp.json",
+        ".cursor/rules/project-rules.mdc",
+        ".cursor/rules/braindrain.mdc",
+        ".cursor/hooks.json",
+        ".cursor/hooks/on-stop-daily-plan-audit.sh",
+        ".cursor/hooks/on-stop-gitops.sh",
+        ".cursor/hooks/on-stop-observe.sh",
+        ".gitignore",
     ]
+    if all_agents or apply_agents is None or "cursor" in (apply_agents or []):
+        touched.append(".cursor/agents/")
+    if all_agents or apply_agents is None or "codex" in (apply_agents or []):
+        touched.append(".codex/agents/")
+        touched.append(".codex/config.toml")
+    return sorted(set(touched))
+
+
+def _create_dir_archive(src_dir: Path, out_file: Path) -> None:
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(out_file, "w:gz") as tf:
+        tf.add(src_dir, arcname=src_dir.name)
+
+
+def _prune_old_snapshots(rollback_root: Path, *, keep: int = MAX_ROLLBACK_SNAPSHOTS) -> list[str]:
+    if not rollback_root.exists():
+        return []
+    entries = [p for p in rollback_root.iterdir() if p.is_dir()]
+    entries.sort(key=lambda p: p.name, reverse=True)
+    to_remove = entries[keep:]
+    removed: list[str] = []
+    for path in to_remove:
+        shutil.rmtree(path, ignore_errors=True)
+        removed.append(path.name)
+    return removed
+
+
+def create_prime_snapshot(
+    target_dir: Path,
+    *,
+    apply_agents: Optional[list[str]],
+    all_agents: bool,
+    dry_run: bool = False,
+) -> dict[str, object]:
+    """Create compressed rollback snapshot(s) for IDE dirs + manifest."""
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    rollback_root = target_dir / BRAINDRAIN_DIR / "rollback"
+    snapshot_dir = rollback_root / ts
+    ide_dirs = _resolve_ide_snapshot_dirs(
+        target_dir,
+        apply_agents=apply_agents,
+        all_agents=all_agents,
+    )
+    touched = _prime_touched_paths(
+        target_dir,
+        apply_agents=apply_agents,
+        all_agents=all_agents,
+    )
     if dry_run:
-        return {"ok": True, "dry_run": True, "snapshot_dir": str(snapshot_dir)}
+        return {
+            "ok": True,
+            "dry_run": True,
+            "snapshot_dir": str(snapshot_dir),
+            "ide_dirs": [str(p.relative_to(target_dir)) for p in ide_dirs],
+            "touched_paths": touched,
+        }
+
     snapshot_dir.mkdir(parents=True, exist_ok=True)
-    copied = 0
-    for src in tracked:
-        if not src.exists():
-            continue
-        rel = src.relative_to(target_dir)
-        dst = snapshot_dir / rel
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
-        copied += 1
-    return {"ok": True, "snapshot_dir": str(snapshot_dir), "files_copied": copied}
+    archives: list[dict[str, str]] = []
+    for d in ide_dirs:
+        archive_name = f"{d.name.lstrip('.')}.tar.gz"
+        archive_path = snapshot_dir / archive_name
+        _create_dir_archive(d, archive_path)
+        archives.append(
+            {
+                "name": archive_name,
+                "source": str(d.relative_to(target_dir)),
+                "path": str(archive_path),
+            }
+        )
+    manifest = {
+        "timestamp": ts,
+        "target": str(target_dir),
+        "ide_dirs": [str(p.relative_to(target_dir)) for p in ide_dirs],
+        "archives": archives,
+        "touched_paths": touched,
+        "retention_max": MAX_ROLLBACK_SNAPSHOTS,
+    }
+    manifest_path = snapshot_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+    pruned = _prune_old_snapshots(rollback_root, keep=MAX_ROLLBACK_SNAPSHOTS)
+    return {
+        "ok": True,
+        "snapshot_dir": str(snapshot_dir),
+        "manifest_path": str(manifest_path),
+        "archives": archives,
+        "archive_count": len(archives),
+        "pruned": pruned,
+    }
 
 
 def verify_prime_install(target_dir: Path, bundle_manifest: dict) -> dict:
@@ -1345,7 +1537,12 @@ def prime(
     codex_targets = codex_agent_targets or [".codex/agents"]
 
     # Step 1: deploy templates.
-    snapshot = create_prime_snapshot(target_dir, dry_run=dry_run)
+    snapshot = create_prime_snapshot(
+        target_dir,
+        apply_agents=apply_agents,
+        all_agents=all_agents,
+        dry_run=dry_run,
+    )
     if not dry_run:
         template_results = deploy_templates(
             target_dir,
@@ -1495,6 +1692,8 @@ def prime(
         },
         "detect_method": detect_method,
         "rollback_snapshot": snapshot,
+        "rollback_manifest_path": snapshot.get("manifest_path", ""),
+        "rollback_archives": snapshot.get("archives", []),
         "gitignore_protocol": gitignore_protocol,
         "cursor_rules": cursor_rules,
         "cursor_mcp_json": cursor_mcp_json,
