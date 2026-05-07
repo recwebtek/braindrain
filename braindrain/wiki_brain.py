@@ -9,7 +9,7 @@ import sqlite3
 import time
 import uuid
 from collections import defaultdict
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +33,28 @@ class BrainRecord:
     updated_at: float = 0.0
     last_accessed: float = 0.0
     access_count: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        """Performance-optimized alternative to dataclasses.asdict()."""
+        return {
+            "record_id": self.record_id,
+            "record_class": self.record_class,
+            "title": self.title,
+            "content": self.content,
+            "source": self.source,
+            "category": self.category,
+            "status": self.status,
+            "importance": self.importance,
+            "confidence": self.confidence,
+            "tags": self.tags,
+            "evidence_refs": self.evidence_refs,
+            "metadata": self.metadata,
+            "supersedes_id": self.supersedes_id,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "last_accessed": self.last_accessed,
+            "access_count": self.access_count,
+        }
 
 
 class WikiBrain:
@@ -138,7 +160,7 @@ class WikiBrain:
                 self._fts_available = False
 
     def store_record(self, record: BrainRecord) -> dict[str, Any]:
-        payload = asdict(record)
+        payload = record.to_dict()
         now = time.time()
         if not payload["record_id"]:
             payload["record_id"] = str(uuid.uuid4())
@@ -344,7 +366,7 @@ class WikiBrain:
             )
             ranked.append(
                 {
-                    "record": asdict(record),
+                    "record": record.to_dict(),
                     "score": round(score, 6),
                     "signal_breakdown": {
                         "similarity": round(similarity, 6),
@@ -361,7 +383,7 @@ class WikiBrain:
 
     def review_playbook(self, *, query: str = "", limit: int = 10) -> list[dict[str, Any]]:
         records = self.query_records(query=query, record_class="lesson", limit=limit)
-        return [asdict(record) for record in records]
+        return [record.to_dict() for record in records]
 
     def detect_contradiction(
         self,
