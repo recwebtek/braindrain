@@ -75,24 +75,49 @@ class TelemetrySession:
             import sys
             print(f"Telemetry warning: could not write to {self.log_file}", file=sys.stderr)
 
+    def _sanitize_data(self, data: Any) -> Any:
+        """
+        Recursively redact absolute paths and sensitive API keys.
+        """
+        import re
+
+        if isinstance(data, str):
+            # Paths: macOS (/Users, /Volumes) and Linux (/home)
+            # API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_)
+            data = re.sub(
+                r"(/Users/[^\s'\"]+|/Volumes/[^\s'\"]+|/home/[^\s'\"]+)",
+                "[REDACTED_PATH]",
+                data,
+            )
+            data = re.sub(
+                r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9-]{20,}|hf_[a-zA-Z0-9-]{20,})",
+                "[REDACTED_KEY]",
+                data,
+            )
+            return data
+        if isinstance(data, dict):
+            return {k: self._sanitize_data(v) for k, v in data.items()}
+        if isinstance(data, list):
+            return [self._sanitize_data(x) for x in data]
+        return data
+
     def log_error(self, error: str, context: Optional[dict[str, Any]] = None) -> None:
         """
         Log an error or bad response to a daily debug report.
-        Sanitizes personal information (device paths, usernames).
+        Sanitizes personal information (device paths, usernames, API keys).
         """
-        import re
         from datetime import datetime
 
-        # 1. Sanitize error string
-        # Mask absolute paths starting with /Users/ or /Volumes/
-        sanitized = re.sub(r"(/Users/[^/\s]+|/Volumes/[^/\s]+)", "[REDACTED_PATH]", error)
-        
+        # 1. Sanitize error and context
+        sanitized_error = self._sanitize_data(error)
+        sanitized_context = self._sanitize_data(context or {})
+
         # 2. Prepare event
         event = {
             "ts": time.time(),
             "type": "error",
-            "message": sanitized,
-            "context": context or {},
+            "message": sanitized_error,
+            "context": sanitized_context,
         }
 
         # 3. Write to daily debug report in .logs/
@@ -110,9 +135,9 @@ class TelemetrySession:
                 f.write(f"# BRAINDRAIN Debug Report — {date_str}\n\n")
             
             f.write(f"### [{datetime.now().strftime('%H:%M:%S')}] Error\n")
-            f.write(f"- **Message**: {sanitized}\n")
-            if context:
-                f.write(f"- **Context**: `{json.dumps(context)}`\n")
+            f.write(f"- **Message**: {sanitized_error}\n")
+            if sanitized_context:
+                f.write(f"- **Context**: `{json.dumps(sanitized_context)}`\n")
             f.write("\n---\n\n")
 
         # Also append to session JSONL
@@ -138,6 +163,9 @@ class TelemetrySession:
         saved = max(0, raw_tokens - actual_tokens)
         self.module_attribution[module] = self.module_attribution.get(module, 0) + saved
 
+        # Sanitize meta to avoid path/key leakage in JSONL
+        sanitized_meta = self._sanitize_data(meta or {})
+
         event = {
             "ts": time.time(),
             "tool": tool_name,
@@ -145,7 +173,7 @@ class TelemetrySession:
             "tokens_in_raw_est": raw_tokens,
             "tokens_in_actual_est": actual_tokens,
             "tokens_saved_est": saved,
-            "meta": meta or {},
+            "meta": sanitized_meta,
         }
         self._append_jsonl(event)
         return event
