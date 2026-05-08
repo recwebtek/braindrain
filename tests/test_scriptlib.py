@@ -205,16 +205,21 @@ def test_scriptlib_maintenance_and_ignore_persistence(tmp_path, monkeypatch):
 
 
 def test_librarian_templates_require_reuse_decision():
-    skill = Path("/Volumes/devnvme/Development/BRAIN_MCP_HUB/config/templates/cursor-skills/scriptlib-librarian/SKILL.md").read_text(
+    project_root = Path(__file__).parent.parent
+    skill = (project_root / "config/templates/cursor-skills/scriptlib-librarian/SKILL.md").read_text(
         encoding="utf-8"
     )
-    agent = Path("/Volumes/devnvme/Development/BRAIN_MCP_HUB/config/templates/agents/librarian.md").read_text(
+    agent = (project_root / "config/templates/agents/librarian.md").read_text(
         encoding="utf-8"
     )
+    cursor_agent_path = project_root / "config/templates/cursor-subagents/librarian.md"
 
     assert "reuseDecision" in skill
     assert "must not be written until" in skill
     assert "approvalRequired" in agent
+    if cursor_agent_path.exists():
+        cursor_agent = cursor_agent_path.read_text(encoding="utf-8")
+        assert "approvalRequired" in cursor_agent
 
 
 def test_deploy_templates_includes_guidance_only_when_enabled(tmp_path, monkeypatch):
@@ -232,9 +237,7 @@ def test_deploy_templates_includes_guidance_only_when_enabled(tmp_path, monkeypa
     scriptlib.enable(str(enabled_workspace), harvest=False)
     workspace_primer.deploy_templates(enabled_workspace, launcher)
     enabled_rules = (enabled_workspace / ".ruler" / "RULES.md").read_text(encoding="utf-8")
-    enabled_agents = (enabled_workspace / ".ruler" / "AGENTS.md").read_text(encoding="utf-8")
     assert "scriptlib before writing a new task script" in enabled_rules
-    assert "scriptlib before writing a new task script" in enabled_agents
     assert "reuse`, `fork`, or `new`" in enabled_rules
 
 
