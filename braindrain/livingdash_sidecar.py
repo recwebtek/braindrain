@@ -925,7 +925,11 @@ pnpm run build</code>
             </div>
             <script>
               function copyCmd(btn) {
-                if (!navigator.clipboard) return;
+                if (!navigator.clipboard || !window.isSecureContext) {
+                  btn.innerText = 'N/A';
+                  setTimeout(() => { btn.innerText = 'Copy'; }, 1500);
+                  return;
+                }
                 const code = btn.nextElementSibling.innerText;
                 navigator.clipboard.writeText(code).then(() => {
                   const originalText = btn.innerText;
