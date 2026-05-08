@@ -73,5 +73,6 @@ Instructions specifically for the Sonnet coordinator:
 - Prefer explicit over implicit. The coordinator and sub-agents are not you — they need precise instructions.
 - Flag any ambiguities from intake as `[ASSUMPTION: ...]` inline.
 - If AI compatibility was requested, include full LLMs.txt schema in PRD.
+- If you create or materially update any `*.plan.md` under an IDE `plans/` directory (for example `.cursor/plans/`), follow **Planning session close-out** in Ruler `RULES.md` (link new plans in `_master.plan.md`, then run `daily-plan-auditor` or `scripts/daily_plan_audit.py`).
 
 After writing all files: "Architecture complete. Run /coordinate to begin execution."

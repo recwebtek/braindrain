@@ -7,7 +7,9 @@ import os
 import re
 import shutil
 import subprocess
+import tarfile
 import yaml
+from hashlib import sha256
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -30,6 +32,8 @@ _LEGACY_DEVDOCS_DIR = ".devdocs"
 
 DEFAULT_MEMORY_FILE = f"{BRAINDRAIN_DIR}/AGENT_MEMORY.md"
 DEFAULT_INDEX_FILE = ".cursor/hooks/state/continual-learning-index.json"
+MAX_ROLLBACK_SNAPSHOTS = 12
+_TEMPLATE_MARKER_PREFIX = "<!-- braindrain-template:"
 
 # Marker file persisted after the first successful prime.
 _PRIMED_MARKER = f"{BRAINDRAIN_DIR}/primed.json"
@@ -331,50 +335,188 @@ def deploy_templates(
     return written
 
 
-def deploy_subagent_templates(
-    target_dir: Path,
+_SUBAGENT_ACTION_RANK = {
+    "updated": 4,
+    "created": 3,
+    "created_from_empty": 3,
+    "skipped_existing": 2,
+    "dry_run": 1,
+}
+
+
+def _deploy_subagent_templates_to_dir(
     *,
-    sync_subagents: bool = False,
+    agents_dir: Path,
+    sync_subagents: bool,
 ) -> dict[str, dict[str, str | bool]]:
-    """
-    Deploy subagent markdown templates from config/templates/agents -> .cursor/agents.
-
-    Default mode is create-only:
-      - missing files are created
-      - existing non-empty files are preserved
-      - existing empty files are filled
-
-    When sync_subagents=True:
-      - existing files are backed up to .bak.<timestamp> and overwritten
-    """
-    agents_dir = target_dir / ".cursor" / "agents"
+    """Copy ``config/templates/agents/*.md`` into ``agents_dir``."""
     agents_dir.mkdir(parents=True, exist_ok=True)
     written: dict[str, dict[str, str | bool]] = {}
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
 
-    if not AGENT_TEMPLATES_DIR.exists():
-        return written
+    def _template_hash(text: str) -> str:
+        return sha256(text.encode("utf-8")).hexdigest()
+
+    def _stamp_template_marker(text: str, template_name: str) -> str:
+        marker = f"{_TEMPLATE_MARKER_PREFIX} {template_name} sha256={_template_hash(text)} -->"
+        if text.startswith(f"{_TEMPLATE_MARKER_PREFIX} "):
+            first_newline = text.find("\n")
+            if first_newline == -1:
+                return marker + "\n"
+            return marker + text[first_newline:]
+        return marker + "\n" + text
+
+    def _extract_marker_hash(existing_text: str, template_name: str) -> str:
+        if not existing_text.startswith(f"{_TEMPLATE_MARKER_PREFIX} "):
+            return ""
+        first_line = existing_text.splitlines()[0].strip()
+        m = re.match(
+            rf"^{re.escape(_TEMPLATE_MARKER_PREFIX)}\s+{re.escape(template_name)}\s+sha256=([a-f0-9]{{64}})\s*-->$",
+            first_line,
+        )
+        return m.group(1) if m else ""
+
+    def _strip_marker(text: str) -> str:
+        if not text.startswith(f"{_TEMPLATE_MARKER_PREFIX} "):
+            return text
+        idx = text.find("\n")
+        return "" if idx == -1 else text[idx + 1 :]
 
     for src in sorted(AGENT_TEMPLATES_DIR.glob("*.md")):
         dst = agents_dir / src.name
-        content = src.read_text(encoding="utf-8")
+        raw_content = src.read_text(encoding="utf-8")
+        content = _stamp_template_marker(raw_content, src.name)
+        current_hash = _template_hash(raw_content)
         if dst.exists():
-            if sync_subagents:
+            existing = dst.read_text(encoding="utf-8", errors="ignore")
+            if not existing.strip():
+                dst.write_text(content, encoding="utf-8")
+                written[src.name] = {
+                    "action": "created_from_empty",
+                    "backup": "",
+                    "classification": "empty",
+                }
+                continue
+
+            marker_hash = _extract_marker_hash(existing, src.name)
+            existing_without_marker = _strip_marker(existing)
+            if existing_without_marker == raw_content:
+                # Ensure marker is present for future old-default detection.
+                if existing != content:
+                    backup = dst.with_name(f"{dst.name}.bak.{ts}")
+                    shutil.copy2(dst, backup)
+                    dst.write_text(content, encoding="utf-8")
+                    written[src.name] = {
+                        "action": "updated",
+                        "backup": str(backup),
+                        "classification": "default_current",
+                    }
+                else:
+                    written[src.name] = {
+                        "action": "skipped_existing",
+                        "backup": "",
+                        "classification": "default_current",
+                    }
+                continue
+
+            if marker_hash and marker_hash != current_hash:
+                # Old managed default from prior template version: safe to upgrade.
                 backup = dst.with_name(f"{dst.name}.bak.{ts}")
                 shutil.copy2(dst, backup)
                 dst.write_text(content, encoding="utf-8")
-                written[src.name] = {"action": "updated", "backup": str(backup)}
-            else:
-                existing = dst.read_text(encoding="utf-8", errors="ignore")
-                if existing.strip():
-                    written[src.name] = {"action": "skipped_existing", "backup": ""}
-                else:
-                    dst.write_text(content, encoding="utf-8")
-                    written[src.name] = {"action": "created_from_empty", "backup": ""}
+                written[src.name] = {
+                    "action": "updated",
+                    "backup": str(backup),
+                    "classification": "default_old",
+                }
+                continue
+
+            # Customized or unmanaged file: never overwrite automatically.
+            written[src.name] = {
+                "action": "skipped_existing",
+                "backup": "",
+                "classification": "customized",
+            }
         else:
             dst.write_text(content, encoding="utf-8")
-            written[src.name] = {"action": "created", "backup": ""}
+            written[src.name] = {
+                "action": "created",
+                "backup": "",
+                "classification": "missing",
+            }
     return written
+
+
+def _merge_subagent_deploy_results(
+    left: dict[str, dict[str, str | bool]],
+    right: dict[str, dict[str, str | bool]],
+) -> dict[str, dict[str, str | bool]]:
+    """Merge per-file deploy metadata from two destination trees."""
+    merged: dict[str, dict[str, str | bool]] = dict(left)
+    for fname, meta in right.items():
+        if fname not in merged:
+            merged[fname] = dict(meta)
+            continue
+        a = str((merged[fname] or {}).get("action") or "")
+        b = str((meta or {}).get("action") or "")
+        pick = (
+            a
+            if _SUBAGENT_ACTION_RANK.get(a, 0) >= _SUBAGENT_ACTION_RANK.get(b, 0)
+            else b
+        )
+        ba = str((merged[fname] or {}).get("backup") or "")
+        bb = str((meta or {}).get("backup") or "")
+        backup = bb if pick == b and bb else ba
+        merged[fname] = {"action": pick, "backup": backup}
+    return merged
+
+
+def deploy_subagent_templates(
+    target_dir: Path,
+    *,
+    sync_subagents: bool = False,
+    to_cursor: bool = True,
+    to_codex: bool = False,
+) -> dict[str, dict[str, str | bool]]:
+    """
+    Deploy subagent markdown from ``config/templates/agents/`` into IDE agent dirs.
+
+    When ``to_cursor`` is True, writes ``.cursor/agents/*.md``.
+    When ``to_codex`` is True, writes ``.codex/agents/*.md``.
+    Both can be True so a single canonical template tree serves every IDE.
+
+    Safe mode semantics (applies even when sync_subagents=True):
+      - missing files are created
+      - existing empty files are filled
+      - existing customized files are preserved
+      - existing managed defaults are updated only when they are old/default
+        revisions (marker hash mismatch), with timestamped backups
+    """
+    if not AGENT_TEMPLATES_DIR.exists():
+        return {}
+
+    partials: list[dict[str, dict[str, str | bool]]] = []
+    if to_cursor:
+        partials.append(
+            _deploy_subagent_templates_to_dir(
+                agents_dir=target_dir / ".cursor" / "agents",
+                sync_subagents=sync_subagents,
+            )
+        )
+    if to_codex:
+        partials.append(
+            _deploy_subagent_templates_to_dir(
+                agents_dir=target_dir / ".codex" / "agents",
+                sync_subagents=sync_subagents,
+            )
+        )
+    if not partials:
+        return {}
+
+    out = partials[0]
+    for p in partials[1:]:
+        out = _merge_subagent_deploy_results(out, p)
+    return out
 
 
 def deploy_cursor_hook_templates(
@@ -858,29 +1000,205 @@ def ensure_cursor_mcp_json_server_name(
     )
 
 
-def create_prime_snapshot(target_dir: Path, *, dry_run: bool = False) -> dict[str, str | bool]:
-    """Create a lightweight rollback snapshot before mutating prime files."""
-    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    snapshot_dir = target_dir / BRAINDRAIN_DIR / "rollback" / ts
-    tracked = [
-        target_dir / ".ruler" / "ruler.toml",
-        target_dir / ".cursor" / "mcp.json",
-        target_dir / ".cursor" / "rules" / "project-rules.mdc",
-        target_dir / ".cursor" / "rules" / "braindrain.mdc",
+def _resolve_ide_snapshot_dirs(
+    target_dir: Path,
+    *,
+    apply_agents: Optional[list[str]],
+    all_agents: bool,
+) -> list[Path]:
+    """Return IDE dotdirs that should be snapshot-protected for this prime run."""
+    agent_to_dir = {
+        "cursor": ".cursor",
+        "codex": ".codex",
+        "kiro": ".kiro",
+        "windsurf": ".windsurf",
+        "opencode": ".opencode",
+        "zed": ".zed",
+        "trae": ".trae",
+    }
+    dirs: list[Path] = []
+    if all_agents or apply_agents is None:
+        candidates = list(agent_to_dir.values())
+    else:
+        candidates = [agent_to_dir[a] for a in apply_agents if a in agent_to_dir]
+    for rel in candidates:
+        p = target_dir / rel
+        if p.exists():
+            dirs.append(p)
+    # Always protect .cursor when present because prime routinely touches it.
+    cursor_dir = target_dir / ".cursor"
+    if cursor_dir.exists() and cursor_dir not in dirs:
+        dirs.append(cursor_dir)
+    return sorted(dirs, key=lambda p: p.as_posix())
+
+
+def _prime_touched_paths(
+    target_dir: Path,
+    *,
+    apply_agents: Optional[list[str]],
+    all_agents: bool,
+) -> list[str]:
+    touched = [
+        ".ruler/ruler.toml",
+        ".ruler/RULES.md",
+        ".ruler/AGENTS.md",
+        ".cursor/mcp.json",
+        ".cursor/rules/project-rules.mdc",
+        ".cursor/rules/braindrain.mdc",
+        ".cursor/hooks.json",
+        ".cursor/hooks/on-stop-daily-plan-audit.sh",
+        ".cursor/hooks/on-stop-gitops.sh",
+        ".cursor/hooks/on-stop-observe.sh",
+        ".gitignore",
     ]
+    if all_agents or apply_agents is None or "cursor" in (apply_agents or []):
+        touched.append(".cursor/agents/")
+    if all_agents or apply_agents is None or "codex" in (apply_agents or []):
+        touched.append(".codex/agents/")
+        touched.append(".codex/config.toml")
+    return sorted(set(touched))
+
+
+def _create_dir_archive(src_dir: Path, out_file: Path) -> None:
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(out_file, "w:gz") as tf:
+        tf.add(src_dir, arcname=src_dir.name)
+
+
+def _prune_old_snapshots(rollback_root: Path, *, keep: int = MAX_ROLLBACK_SNAPSHOTS) -> list[str]:
+    if not rollback_root.exists():
+        return []
+    entries = [p for p in rollback_root.iterdir() if p.is_dir()]
+    entries.sort(key=lambda p: p.name, reverse=True)
+    to_remove = entries[keep:]
+    removed: list[str] = []
+    for path in to_remove:
+        shutil.rmtree(path, ignore_errors=True)
+        removed.append(path.name)
+    return removed
+
+
+def create_prime_snapshot(
+    target_dir: Path,
+    *,
+    apply_agents: Optional[list[str]],
+    all_agents: bool,
+    dry_run: bool = False,
+) -> dict[str, object]:
+    """Create compressed rollback snapshot(s) for IDE dirs + manifest."""
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    rollback_root = target_dir / BRAINDRAIN_DIR / "rollback"
+    snapshot_dir = rollback_root / ts
+    ide_dirs = _resolve_ide_snapshot_dirs(
+        target_dir,
+        apply_agents=apply_agents,
+        all_agents=all_agents,
+    )
+    touched = _prime_touched_paths(
+        target_dir,
+        apply_agents=apply_agents,
+        all_agents=all_agents,
+    )
     if dry_run:
-        return {"ok": True, "dry_run": True, "snapshot_dir": str(snapshot_dir)}
+        return {
+            "ok": True,
+            "dry_run": True,
+            "snapshot_dir": str(snapshot_dir),
+            "ide_dirs": [str(p.relative_to(target_dir)) for p in ide_dirs],
+            "touched_paths": touched,
+        }
+
     snapshot_dir.mkdir(parents=True, exist_ok=True)
-    copied = 0
-    for src in tracked:
-        if not src.exists():
+    archives: list[dict[str, str]] = []
+    for d in ide_dirs:
+        archive_name = f"{d.name.lstrip('.')}.tar.gz"
+        archive_path = snapshot_dir / archive_name
+        _create_dir_archive(d, archive_path)
+        archives.append(
+            {
+                "name": archive_name,
+                "source": str(d.relative_to(target_dir)),
+                "path": str(archive_path),
+            }
+        )
+    manifest = {
+        "timestamp": ts,
+        "target": str(target_dir),
+        "ide_dirs": [str(p.relative_to(target_dir)) for p in ide_dirs],
+        "archives": archives,
+        "touched_paths": touched,
+        "retention_max": MAX_ROLLBACK_SNAPSHOTS,
+    }
+    manifest_path = snapshot_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+    pruned = _prune_old_snapshots(rollback_root, keep=MAX_ROLLBACK_SNAPSHOTS)
+    return {
+        "ok": True,
+        "snapshot_dir": str(snapshot_dir),
+        "manifest_path": str(manifest_path),
+        "archives": archives,
+        "archive_count": len(archives),
+        "pruned": pruned,
+    }
+
+
+def _restore_cursor_agents_from_snapshot(
+    target_dir: Path,
+    snapshot: dict[str, object],
+) -> dict[str, object]:
+    """
+    Restore `.cursor/agents` from the snapshot archive when a downstream step
+    (for example ruler apply) unexpectedly removes the directory.
+    """
+    result: dict[str, object] = {
+        "attempted": False,
+        "restored": False,
+        "reason": "",
+        "files_restored": 0,
+    }
+    archives = snapshot.get("archives")
+    if not isinstance(archives, list):
+        result["reason"] = "no_archives"
+        return result
+    cursor_archive = None
+    for item in archives:
+        if not isinstance(item, dict):
             continue
-        rel = src.relative_to(target_dir)
-        dst = snapshot_dir / rel
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
-        copied += 1
-    return {"ok": True, "snapshot_dir": str(snapshot_dir), "files_copied": copied}
+        if item.get("name") == "cursor.tar.gz" and isinstance(item.get("path"), str):
+            cursor_archive = Path(str(item["path"]))
+            break
+    if not cursor_archive or not cursor_archive.exists():
+        result["reason"] = "cursor_archive_missing"
+        return result
+
+    result["attempted"] = True
+    restored = 0
+    agents_dir = target_dir / ".cursor" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(cursor_archive, "r:gz") as tf:
+        members = [m for m in tf.getmembers() if m.isfile() and m.name.startswith(".cursor/agents/")]
+        if not members:
+            result["reason"] = "no_agents_in_archive"
+            return result
+        for member in members:
+            rel = member.name.removeprefix(".cursor/")
+            dest = (target_dir / ".cursor" / rel).resolve()
+            try:
+                dest.relative_to((target_dir / ".cursor").resolve())
+            except ValueError:
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            src = tf.extractfile(member)
+            if src is None:
+                continue
+            dest.write_bytes(src.read())
+            restored += 1
+    result["restored"] = restored > 0
+    result["files_restored"] = restored
+    if restored == 0 and not result.get("reason"):
+        result["reason"] = "restore_noop"
+    return result
 
 
 def verify_prime_install(target_dir: Path, bundle_manifest: dict) -> dict:
@@ -1264,6 +1582,9 @@ def prime(
     cursor_in_scope = bool(
         all_agents or apply_agents is None or "cursor" in (apply_agents or [])
     )
+    codex_in_scope = bool(
+        all_agents or apply_agents is None or "codex" in (apply_agents or [])
+    )
 
     launcher_path = _get_launcher_path()
     try:
@@ -1274,7 +1595,13 @@ def prime(
     codex_targets = codex_agent_targets or [".codex/agents"]
 
     # Step 1: deploy templates.
-    snapshot = create_prime_snapshot(target_dir, dry_run=dry_run)
+    cursor_agents_preexisting = (target_dir / ".cursor" / "agents").is_dir()
+    snapshot = create_prime_snapshot(
+        target_dir,
+        apply_agents=apply_agents,
+        all_agents=all_agents,
+        dry_run=dry_run,
+    )
     if not dry_run:
         template_results = deploy_templates(
             target_dir,
@@ -1286,6 +1613,8 @@ def prime(
         subagent_results = deploy_subagent_templates(
             target_dir,
             sync_subagents=sync_subagents,
+            to_cursor=cursor_in_scope,
+            to_codex=codex_in_scope,
         )
         cursor_hook_results = (
             deploy_cursor_hook_templates(
@@ -1304,7 +1633,7 @@ def prime(
         subagent_results = {
             str(f.name): {"action": "dry_run", "backup": ""}
             for f in AGENT_TEMPLATES_DIR.glob("*.md")
-        } if AGENT_TEMPLATES_DIR.exists() else {}
+        } if (cursor_in_scope or codex_in_scope) and AGENT_TEMPLATES_DIR.exists() else {}
         cursor_hook_results = (
             deploy_cursor_hook_templates(
                 target_dir,
@@ -1322,6 +1651,11 @@ def prime(
         dry_run=dry_run,
         local_only=local_only,
     )
+    cursor_agents_guard: dict[str, object] = {"attempted": False, "restored": False}
+    if cursor_in_scope and not dry_run and cursor_agents_preexisting:
+        cursor_agents_dir = target_dir / ".cursor" / "agents"
+        if not cursor_agents_dir.is_dir():
+            cursor_agents_guard = _restore_cursor_agents_from_snapshot(target_dir, snapshot)
 
     # Step 3: .gitignore protocol (braindrain-owned; Ruler --gitignore off by default).
     gitignore_protocol = ensure_gitignore_braindrain_protocol(
@@ -1363,9 +1697,6 @@ def prime(
             cursor_mcp_json = proj_mcp
 
     # Step 6: codex subagent config policy (after ruler apply to avoid overwrite).
-    codex_in_scope = bool(
-        all_agents or apply_agents is None or "codex" in (apply_agents or [])
-    )
     codex_subagent_config: dict[str, str | bool] = {"skipped": True}
     if codex_in_scope:
         codex_subagent_config = ensure_codex_subagent_config(
@@ -1425,9 +1756,12 @@ def prime(
         },
         "detect_method": detect_method,
         "rollback_snapshot": snapshot,
+        "rollback_manifest_path": snapshot.get("manifest_path", ""),
+        "rollback_archives": snapshot.get("archives", []),
         "gitignore_protocol": gitignore_protocol,
         "cursor_rules": cursor_rules,
         "cursor_mcp_json": cursor_mcp_json,
+        "cursor_agents_guard": cursor_agents_guard,
         "codex_subagent_config": codex_subagent_config,
         "templates": {
             "source": str(TEMPLATES_DIR),

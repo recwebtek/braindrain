@@ -107,6 +107,7 @@ class Config:
             lessons=raw.get("lessons", {}),
             dreaming=raw.get("dreaming", {}),
             provider_context=raw.get("provider_context", {}),
+            provenance=raw.get("provenance", {}),
         )
 
     def reload(self) -> None:

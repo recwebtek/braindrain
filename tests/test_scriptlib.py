@@ -212,12 +212,14 @@ def test_librarian_templates_require_reuse_decision():
     agent = (project_root / "config/templates/agents/librarian.md").read_text(
         encoding="utf-8"
     )
-    cursor_agent = (project_root / "config/templates/cursor-subagents/librarian.md").read_text(encoding="utf-8")
+    cursor_agent_path = project_root / "config/templates/cursor-subagents/librarian.md"
 
     assert "reuseDecision" in skill
     assert "must not be written until" in skill
     assert "approvalRequired" in agent
-    assert "approvalRequired" in cursor_agent
+    if cursor_agent_path.exists():
+        cursor_agent = cursor_agent_path.read_text(encoding="utf-8")
+        assert "approvalRequired" in cursor_agent
 
 
 def test_deploy_templates_includes_guidance_only_when_enabled(tmp_path, monkeypatch):
