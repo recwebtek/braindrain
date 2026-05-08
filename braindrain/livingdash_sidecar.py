@@ -902,12 +902,12 @@ def create_app(
               p { color: var(--muted); margin-bottom: 2rem; font-size: 1.1rem; }
               .cmd-box { background: #00000050; padding: 1.25rem; border-radius: 0.5rem; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.9rem; text-align: left; border: 1px solid #ffffff08; position: relative; }
               .cmd-label { position: absolute; top: -0.7rem; left: 1rem; background: var(--accent); color: var(--bg); font-size: 0.7rem; font-weight: 800; padding: 0.1rem 0.5rem; border-radius: 0.2rem; text-transform: uppercase; }
+              .copy-btn { position: absolute; top: 0.5rem; right: 0.5rem; background: #ffffff10; border: 1px solid #ffffff20; color: var(--muted); padding: 0.25rem 0.5rem; border-radius: 0.25rem; font-size: 0.7rem; cursor: pointer; transition: all 0.2s; font-family: ui-sans-serif, system-ui, sans-serif; }
+              .copy-btn:hover { background: #ffffff20; color: var(--text); }
+              .copy-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+              .copy-btn.success { background: var(--accent); color: var(--bg); border-color: var(--accent); }
               code { color: #e2e8f0; display: block; white-space: pre-wrap; }
               .footer { margin-top: 2rem; font-size: 0.8rem; color: #ffffff20; }
-              .copy-btn { position: absolute; top: 0.75rem; right: 0.75rem; background: transparent; border: 1px solid #ffffff20; color: var(--muted); padding: 0.4rem; border-radius: 0.4rem; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; }
-              .copy-btn:hover { background: #ffffff10; color: var(--accent); border-color: var(--accent); }
-              .copy-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-              .copy-btn svg { width: 1.1rem; height: 1.1rem; }
             </style>
           </head>
           <body>
@@ -916,36 +916,31 @@ def create_app(
               <p>The dashboard UI build is not found. Run the following to generate it:</p>
               <div class="cmd-box">
                 <span class="cmd-label">Quick Build</span>
-                <button class="copy-btn" id="copyBtn" aria-label="Copy build commands">
-                  <svg id="copyIcon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 0 0-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 0 1-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 0 0-3.375-3.375h-1.5a1.125 1.125 0 0 1-1.125-1.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H9.75" /></svg>
-                  <svg id="checkIcon" style="display:none" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
-                </button>
-                <code id="cmdCode">cd .ldash/ui
+                <button type="button" class="copy-btn" aria-label="Copy build command" aria-live="polite" onclick="copyCmd(this)">Copy</button>
+                <code>cd .ldash/ui
 pnpm install
 pnpm run build</code>
               </div>
               <div class="footer">Waiting for production artifacts in .ldash/ui/dist</div>
             </div>
             <script>
-              const copyBtn = document.getElementById('copyBtn');
-              const copyIcon = document.getElementById('copyIcon');
-              const checkIcon = document.getElementById('checkIcon');
-              const cmdCode = document.getElementById('cmdCode');
-
-              copyBtn.addEventListener('click', () => {
-                navigator.clipboard.writeText(cmdCode.innerText).then(() => {
-                  copyIcon.style.display = 'none';
-                  checkIcon.style.display = 'block';
-                  copyBtn.style.color = 'var(--accent)';
-                  copyBtn.style.borderColor = 'var(--accent)';
+              function copyCmd(btn) {
+                if (!navigator.clipboard || !window.isSecureContext) {
+                  btn.innerText = 'N/A';
+                  setTimeout(() => { btn.innerText = 'Copy'; }, 1500);
+                  return;
+                }
+                const code = btn.nextElementSibling.innerText;
+                navigator.clipboard.writeText(code).then(() => {
+                  const originalText = btn.innerText;
+                  btn.innerText = 'Copied!';
+                  btn.classList.add('success');
                   setTimeout(() => {
-                    copyIcon.style.display = 'block';
-                    checkIcon.style.display = 'none';
-                    copyBtn.style.color = '';
-                    copyBtn.style.borderColor = '';
+                    btn.innerText = originalText;
+                    btn.classList.remove('success');
                   }, 2000);
                 });
-              });
+              }
             </script>
           </body>
         </html>
