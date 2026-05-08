@@ -902,6 +902,10 @@ def create_app(
               p { color: var(--muted); margin-bottom: 2rem; font-size: 1.1rem; }
               .cmd-box { background: #00000050; padding: 1.25rem; border-radius: 0.5rem; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.9rem; text-align: left; border: 1px solid #ffffff08; position: relative; }
               .cmd-label { position: absolute; top: -0.7rem; left: 1rem; background: var(--accent); color: var(--bg); font-size: 0.7rem; font-weight: 800; padding: 0.1rem 0.5rem; border-radius: 0.2rem; text-transform: uppercase; }
+              .copy-btn { position: absolute; top: 0.5rem; right: 0.5rem; background: #ffffff10; border: 1px solid #ffffff20; color: var(--muted); padding: 0.25rem 0.5rem; border-radius: 0.25rem; font-size: 0.7rem; cursor: pointer; transition: all 0.2s; font-family: ui-sans-serif, system-ui, sans-serif; }
+              .copy-btn:hover { background: #ffffff20; color: var(--text); }
+              .copy-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+              .copy-btn.success { background: var(--accent); color: var(--bg); border-color: var(--accent); }
               code { color: #e2e8f0; display: block; white-space: pre-wrap; }
               .footer { margin-top: 2rem; font-size: 0.8rem; color: #ffffff20; }
             </style>
@@ -912,12 +916,28 @@ def create_app(
               <p>The dashboard UI build is not found. Run the following to generate it:</p>
               <div class="cmd-box">
                 <span class="cmd-label">Quick Build</span>
+                <button type="button" class="copy-btn" aria-label="Copy build command" aria-live="polite" onclick="copyCmd(this)">Copy</button>
                 <code>cd .ldash/ui
 pnpm install
 pnpm run build</code>
               </div>
               <div class="footer">Waiting for production artifacts in .ldash/ui/dist</div>
             </div>
+            <script>
+              function copyCmd(btn) {
+                if (!navigator.clipboard) return;
+                const code = btn.nextElementSibling.innerText;
+                navigator.clipboard.writeText(code).then(() => {
+                  const originalText = btn.innerText;
+                  btn.innerText = 'Copied!';
+                  btn.classList.add('success');
+                  setTimeout(() => {
+                    btn.innerText = originalText;
+                    btn.classList.remove('success');
+                  }, 2000);
+                });
+              }
+            </script>
           </body>
         </html>
         """
