@@ -192,6 +192,35 @@ def test_prime_result_exposes_rollback_manifest(tmp_project_dir: Path) -> None:
     assert isinstance(result["rollback_archives"], list)
 
 
+def test_prime_restores_cursor_agents_if_ruler_removes_directory(tmp_project_dir: Path) -> None:
+    agents_dir = tmp_project_dir / ".cursor" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    custom = agents_dir / "custom.md"
+    custom.write_text("# keep me\n", encoding="utf-8")
+
+    def _ruler_side_effect(*args, **kwargs):
+        shutil.rmtree(agents_dir, ignore_errors=True)
+        return {"ok": True, "stdout": "", "stderr": "", "command": "x", "returncode": 0}
+
+    with patch("braindrain.workspace_primer.run_ruler_apply", side_effect=_ruler_side_effect), patch(
+        "braindrain.workspace_primer.initialize_project_memory",
+        return_value={"ok": True, "dry_run": False, "artifacts": {}, "migration": {}},
+    ), patch(
+        "braindrain.workspace_primer.seed_if_enabled",
+        return_value={"ok": True, "enabled": False},
+    ), patch(
+        "braindrain.workspace_primer.verify_prime_install",
+        return_value={"ok": True, "checks": {"dry_run": False}},
+    ):
+        result = prime(path=str(tmp_project_dir), agents=["cursor"], local_only=True)
+
+    assert result["ok"] is True
+    guard = result.get("cursor_agents_guard") or {}
+    assert guard.get("attempted") is True
+    assert guard.get("restored") is True
+    assert custom.is_file()
+
+
 def test_compact_prime_result_includes_cursor_hooks_summary() -> None:
     prime_like = {
         "ok": True,

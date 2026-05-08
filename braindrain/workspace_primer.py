@@ -1143,6 +1143,64 @@ def create_prime_snapshot(
     }
 
 
+def _restore_cursor_agents_from_snapshot(
+    target_dir: Path,
+    snapshot: dict[str, object],
+) -> dict[str, object]:
+    """
+    Restore `.cursor/agents` from the snapshot archive when a downstream step
+    (for example ruler apply) unexpectedly removes the directory.
+    """
+    result: dict[str, object] = {
+        "attempted": False,
+        "restored": False,
+        "reason": "",
+        "files_restored": 0,
+    }
+    archives = snapshot.get("archives")
+    if not isinstance(archives, list):
+        result["reason"] = "no_archives"
+        return result
+    cursor_archive = None
+    for item in archives:
+        if not isinstance(item, dict):
+            continue
+        if item.get("name") == "cursor.tar.gz" and isinstance(item.get("path"), str):
+            cursor_archive = Path(str(item["path"]))
+            break
+    if not cursor_archive or not cursor_archive.exists():
+        result["reason"] = "cursor_archive_missing"
+        return result
+
+    result["attempted"] = True
+    restored = 0
+    agents_dir = target_dir / ".cursor" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(cursor_archive, "r:gz") as tf:
+        members = [m for m in tf.getmembers() if m.isfile() and m.name.startswith(".cursor/agents/")]
+        if not members:
+            result["reason"] = "no_agents_in_archive"
+            return result
+        for member in members:
+            rel = member.name.removeprefix(".cursor/")
+            dest = (target_dir / ".cursor" / rel).resolve()
+            try:
+                dest.relative_to((target_dir / ".cursor").resolve())
+            except ValueError:
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            src = tf.extractfile(member)
+            if src is None:
+                continue
+            dest.write_bytes(src.read())
+            restored += 1
+    result["restored"] = restored > 0
+    result["files_restored"] = restored
+    if restored == 0 and not result.get("reason"):
+        result["reason"] = "restore_noop"
+    return result
+
+
 def verify_prime_install(target_dir: Path, bundle_manifest: dict) -> dict:
     """Run a lightweight verification checklist after prime."""
     checks = {
@@ -1537,6 +1595,7 @@ def prime(
     codex_targets = codex_agent_targets or [".codex/agents"]
 
     # Step 1: deploy templates.
+    cursor_agents_preexisting = (target_dir / ".cursor" / "agents").is_dir()
     snapshot = create_prime_snapshot(
         target_dir,
         apply_agents=apply_agents,
@@ -1592,6 +1651,11 @@ def prime(
         dry_run=dry_run,
         local_only=local_only,
     )
+    cursor_agents_guard: dict[str, object] = {"attempted": False, "restored": False}
+    if cursor_in_scope and not dry_run and cursor_agents_preexisting:
+        cursor_agents_dir = target_dir / ".cursor" / "agents"
+        if not cursor_agents_dir.is_dir():
+            cursor_agents_guard = _restore_cursor_agents_from_snapshot(target_dir, snapshot)
 
     # Step 3: .gitignore protocol (braindrain-owned; Ruler --gitignore off by default).
     gitignore_protocol = ensure_gitignore_braindrain_protocol(
@@ -1697,6 +1761,7 @@ def prime(
         "gitignore_protocol": gitignore_protocol,
         "cursor_rules": cursor_rules,
         "cursor_mcp_json": cursor_mcp_json,
+        "cursor_agents_guard": cursor_agents_guard,
         "codex_subagent_config": codex_subagent_config,
         "templates": {
             "source": str(TEMPLATES_DIR),
