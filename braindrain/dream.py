@@ -6,7 +6,7 @@ import hashlib
 import json
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +27,19 @@ class ConsolidationPlan:
     scoring_weights: dict[str, float]
     fingerprint: str
 
+    def to_dict(self) -> dict[str, Any]:
+        """Manual serialization to avoid asdict() overhead."""
+        return {
+            "plan_id": self.plan_id,
+            "created_at": self.created_at,
+            "mode": self.mode,
+            "source_handles": self.source_handles,
+            "policy_version": self.policy_version,
+            "provider_config": self.provider_config,
+            "scoring_weights": self.scoring_weights,
+            "fingerprint": self.fingerprint,
+        }
+
 
 @dataclass
 class DreamCandidate:
@@ -46,6 +59,27 @@ class DreamCandidate:
     confidence: float = 0.5
     importance: float = 0.5
     episode_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Manual serialization to avoid asdict() overhead."""
+        return {
+            "candidate_id": self.candidate_id,
+            "title": self.title,
+            "content": self.content,
+            "record_class": self.record_class,
+            "category": self.category,
+            "source": self.source,
+            "evidence_refs": self.evidence_refs,
+            "tags": self.tags,
+            "frequency": self.frequency,
+            "query_diversity": self.query_diversity,
+            "consolidation": self.consolidation,
+            "conceptual_richness": self.conceptual_richness,
+            "recency_anchor": self.recency_anchor,
+            "confidence": self.confidence,
+            "importance": self.importance,
+            "episode_id": self.episode_id,
+        }
 
 
 class DreamEngine:
@@ -92,14 +126,14 @@ class DreamEngine:
 
         plan = self._build_consolidation_plan(mode=mode, episodes=episodes, recent_events=recent_events)
 
-        result: dict[str, Any] = {"plan": asdict(plan)}
+        result: dict[str, Any] = {"plan": plan.to_dict()}
         candidates: list[DreamCandidate] = []
 
         if mode in {"full", "light"}:
             candidates = self._light_phase(episodes=episodes, sessions=sessions, recent_events=recent_events)
             result["light"] = {
                 "candidate_count": len(candidates),
-                "candidates": [asdict(candidate) for candidate in candidates[:10]],
+                "candidates": [candidate.to_dict() for candidate in candidates[:10]],
             }
 
         if mode in {"full", "rem"}:
@@ -346,7 +380,7 @@ class DreamEngine:
 
     def _write_plan(self, plan: ConsolidationPlan) -> None:
         plan_path = self.plan_dir / f"{int(plan.created_at)}-{plan.plan_id}.json"
-        plan_path.write_text(json.dumps(asdict(plan), indent=2, ensure_ascii=False))
+        plan_path.write_text(json.dumps(plan.to_dict(), indent=2, ensure_ascii=False))
 
     def _write_status(self, result: dict[str, Any]) -> None:
         status_path = self.storage_dir / "last_status.json"
