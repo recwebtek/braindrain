@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +19,19 @@ class BrainEvent:
     token_cost: int = 0
     duration_ms: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Performance-optimized alternative to asdict()."""
+        return {
+            "timestamp": self.timestamp,
+            "session_id": self.session_id,
+            "event_type": self.event_type,
+            "tool_name": self.tool_name,
+            "files_touched": self.files_touched,
+            "token_cost": self.token_cost,
+            "duration_ms": self.duration_ms,
+            "metadata": self.metadata,
+        }
 
 
 class ObserverStore:
@@ -75,7 +88,7 @@ class ObserverStore:
             )
 
     def record_event(self, event: BrainEvent) -> dict[str, Any]:
-        payload = asdict(event)
+        payload = event.to_dict()
         with self._connect() as conn:
             cursor = conn.execute(
                 """

@@ -4,7 +4,6 @@ import os
 import yaml
 from pathlib import Path
 from typing import Optional, Any
-from dataclasses import asdict
 
 try:
     from watchfiles import watch
