@@ -65,11 +65,36 @@ class TelemetrySession:
                 self.log_file = fallback
                 self.log_file.parent.mkdir(parents=True, exist_ok=True)
 
+    def _sanitize_data(self, data: Any) -> Any:
+        """Recursive redaction of sensitive paths and API keys."""
+        import re
+
+        # Regex patterns for redaction
+        # Paths: /Users/..., /Volumes/..., /home/...
+        PATH_PATTERN = r"(/Users/[^\s'\"]+|/Volumes/[^\s'\"]+|/home/[^\s'\"]+)"
+        # API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_)
+        KEY_PATTERN = r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,})"
+
+        def _do_sanitize(val: Any) -> Any:
+            if isinstance(val, str):
+                val = re.sub(PATH_PATTERN, "[REDACTED_PATH]", val)
+                val = re.sub(KEY_PATTERN, "[REDACTED_KEY]", val)
+                return val
+            if isinstance(val, dict):
+                return {k: _do_sanitize(v) for k, v in val.items()}
+            if isinstance(val, list):
+                return [_do_sanitize(i) for i in val]
+            return val
+
+        return _do_sanitize(data)
+
     def _append_jsonl(self, obj: dict[str, Any]) -> None:
         self._ensure_parent()
+        # Ensure all data written to disk is sanitized
+        sanitized_obj = self._sanitize_data(obj)
         try:
             with open(self.log_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+                f.write(json.dumps(sanitized_obj, ensure_ascii=False) + "\n")
         except PermissionError:
             # Last resort: just ignore or print to stderr if even fallback fails
             import sys
@@ -80,19 +105,18 @@ class TelemetrySession:
         Log an error or bad response to a daily debug report.
         Sanitizes personal information (device paths, usernames).
         """
-        import re
         from datetime import datetime
 
-        # 1. Sanitize error string
-        # Mask absolute paths starting with /Users/ or /Volumes/
-        sanitized = re.sub(r"(/Users/[^/\s]+|/Volumes/[^/\s]+)", "[REDACTED_PATH]", error)
+        # 1. Sanitize error string and context
+        sanitized_error = self._sanitize_data(error)
+        sanitized_context = self._sanitize_data(context or {})
         
         # 2. Prepare event
         event = {
             "ts": time.time(),
             "type": "error",
-            "message": sanitized,
-            "context": context or {},
+            "message": sanitized_error,
+            "context": sanitized_context,
         }
 
         # 3. Write to daily debug report in .logs/
@@ -110,12 +134,12 @@ class TelemetrySession:
                 f.write(f"# BRAINDRAIN Debug Report — {date_str}\n\n")
             
             f.write(f"### [{datetime.now().strftime('%H:%M:%S')}] Error\n")
-            f.write(f"- **Message**: {sanitized}\n")
-            if context:
-                f.write(f"- **Context**: `{json.dumps(context)}`\n")
+            f.write(f"- **Message**: {sanitized_error}\n")
+            if sanitized_context:
+                f.write(f"- **Context**: `{json.dumps(sanitized_context)}`\n")
             f.write("\n---\n\n")
 
-        # Also append to session JSONL
+        # Also append to session JSONL (via _append_jsonl which handles sanitization)
         self._append_jsonl(event)
 
     def record(
@@ -147,8 +171,10 @@ class TelemetrySession:
             "tokens_saved_est": saved,
             "meta": meta or {},
         }
-        self._append_jsonl(event)
-        return event
+        # Sanitize event before returning and before appending to JSONL
+        sanitized_event = self._sanitize_data(event)
+        self._append_jsonl(sanitized_event)
+        return sanitized_event
 
     def snapshot(self) -> dict[str, Any]:
         totals_raw = sum(a.tokens_in_raw_est for a in self.tools.values())
