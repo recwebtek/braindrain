@@ -71,9 +71,10 @@ class TelemetrySession:
 
         # Regex patterns for redaction
         # Paths: /Users/..., /Volumes/..., /home/...
-        PATH_PATTERN = r"(/Users/[^\s'\"]+|/Volumes/[^\s'\"]+|/home/[^\s'\"]+)"
+        # Improved to support spaces while avoiding over-redaction of log context
+        PATH_PATTERN = r"((?:/Users/|/Volumes/|/home/)[^\s'\",]+(?:\s[^\s'\",]+)*)"
         # API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_)
-        KEY_PATTERN = r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,})"
+        KEY_PATTERN = r"((?:sk-|gsk_|hf_)[a-zA-Z0-9-]{20,})"
 
         def _do_sanitize(val: Any) -> Any:
             if isinstance(val, str):
