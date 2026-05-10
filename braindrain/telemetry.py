@@ -9,10 +9,18 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
+
+
+# Regex patterns for redaction (pre-compiled for performance)
+# Paths: /Users/..., /Volumes/..., /home/...
+_PATH_PATTERN = re.compile(r"(/Users/[^\s'\"]+|/Volumes/[^\s'\"]+|/home/[^\s'\"]+)")
+# API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_)
+_KEY_PATTERN = re.compile(r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,})")
 
 
 def estimate_claude_tokens(text: str) -> int:
@@ -67,18 +75,11 @@ class TelemetrySession:
 
     def _sanitize_data(self, data: Any) -> Any:
         """Recursive redaction of sensitive paths and API keys."""
-        import re
-
-        # Regex patterns for redaction
-        # Paths: /Users/..., /Volumes/..., /home/...
-        PATH_PATTERN = r"(/Users/[^\s'\"]+|/Volumes/[^\s'\"]+|/home/[^\s'\"]+)"
-        # API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_)
-        KEY_PATTERN = r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,})"
 
         def _do_sanitize(val: Any) -> Any:
             if isinstance(val, str):
-                val = re.sub(PATH_PATTERN, "[REDACTED_PATH]", val)
-                val = re.sub(KEY_PATTERN, "[REDACTED_KEY]", val)
+                val = _PATH_PATTERN.sub("[REDACTED_PATH]", val)
+                val = _KEY_PATTERN.sub("[REDACTED_KEY]", val)
                 return val
             if isinstance(val, dict):
                 return {k: _do_sanitize(v) for k, v in val.items()}
