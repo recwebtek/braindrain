@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import socket
 import subprocess
 import sys
 import time
@@ -896,8 +895,9 @@ def create_app(
             <title>LivingDash — Build Required</title>
             <style>
               :root { --bg: #0f0a13; --card: #1a141f; --text: #f1e9f5; --accent: #c084fc; --muted: #94a3b8; }
+              @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
               body { font-family: ui-sans-serif, system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; display: flex; align-items: center; justify-content: center; min-height: 100vh; line-height: 1.6; }
-              .card { background: var(--card); padding: 2.5rem; border-radius: 1rem; border: 1px solid #ffffff10; max-width: 500px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); text-align: center; }
+              .card { background: var(--card); padding: 2.5rem; border-radius: 1rem; border: 1px solid #ffffff10; max-width: 500px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); text-align: center; animation: fadeIn 0.6s ease-out; }
               h1 { margin: 0 0 1rem; font-size: 1.875rem; font-weight: 700; color: var(--accent); }
               p { color: var(--muted); margin-bottom: 2rem; font-size: 1.1rem; }
               .cmd-box { background: #00000050; padding: 1.25rem; border-radius: 0.5rem; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.9rem; text-align: left; border: 1px solid #ffffff08; position: relative; }
@@ -907,20 +907,24 @@ def create_app(
               .copy-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
               .copy-btn.success { background: var(--accent); color: var(--bg); border-color: var(--accent); }
               code { color: #e2e8f0; display: block; white-space: pre-wrap; }
+              .refresh-btn { margin-top: 2rem; display: inline-block; background: #ffffff05; border: 1px solid #ffffff10; color: var(--text); padding: 0.75rem 1.5rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer; transition: all 0.2s; text-decoration: none; font-size: 0.9rem; font-family: ui-sans-serif, system-ui, sans-serif; }
+              .refresh-btn:hover { background: #ffffff10; border-color: var(--accent); color: var(--accent); }
+              .refresh-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
               .footer { margin-top: 2rem; font-size: 0.8rem; color: #ffffff20; }
             </style>
           </head>
           <body>
             <div class="card">
-              <h1>LivingDash</h1>
+              <h1>LivingDash <span aria-hidden="true">🎨</span></h1>
               <p>The dashboard UI build is not found. Run the following to generate it:</p>
               <div class="cmd-box">
                 <span class="cmd-label">Quick Build</span>
-                <button type="button" class="copy-btn" aria-label="Copy build command" aria-live="polite" onclick="copyCmd(this)">Copy</button>
-                <code>cd .ldash/ui
+                <button type="button" class="copy-btn" aria-label="Copy build command to clipboard" aria-describedby="build-cmd" aria-live="polite" onclick="copyCmd(this)">Copy</button>
+                <code id="build-cmd">cd .ldash/ui
 pnpm install
 pnpm run build</code>
               </div>
+              <button type="button" class="refresh-btn" onclick="window.location.reload()">Check for Build</button>
               <div class="footer">Waiting for production artifacts in .ldash/ui/dist</div>
             </div>
             <script>
