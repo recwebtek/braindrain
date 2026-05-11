@@ -600,9 +600,11 @@ def record_model_trace_event(
         "cursor_mode": _effective_cursor_mode(),
         "metadata": metadata or {},
     }
+    # Ensure sensitive information in trace payload is redacted
+    sanitized_payload = telemetry.sanitize(payload)
     with open(trace_path, "a", encoding="utf-8") as handle:
-        handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    return {"ok": True, "trace_path": str(trace_path), "event": payload}
+        handle.write(json.dumps(sanitized_payload, ensure_ascii=False) + "\n")
+    return {"ok": True, "trace_path": str(trace_path), "event": sanitized_payload}
 
 
 @mcp.tool()
