@@ -348,9 +348,15 @@ def main() -> int:
     for target, before, after in planned:
         if isinstance(target, CliCommandTarget):
             print(f"\n--- {target.display} ---")
+
+            # Use shlex.split to run without shell=True for better security
+            # if the 'after' command is already fully formed.
+            # In this script, 'after' is interpolated with launcher.
+            # We'll stick to quoting launcher in _build_targets/planned or here.
+
             print(f"Running: {after}")
             try:
-                result = subprocess.run(after, shell=True, capture_output=True, text=True, timeout=30)
+                result = subprocess.run(shlex.split(after), shell=False, capture_output=True, text=True, timeout=30)
                 if result.returncode == 0:
                     print(f"{GREEN}✓ APPLIED:{RESET} {target.display}")
                     applied += 1

@@ -6,7 +6,7 @@ import json
 import sqlite3
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +23,21 @@ class SessionSummary:
     errors: list[str] = field(default_factory=list)
     token_total: int = 0
     updated_at: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        """Performance-optimized alternative to asdict()."""
+        return {
+            "session_id": self.session_id,
+            "start_time": self.start_time,
+            "end_time": self.end_time,
+            "events_count": self.events_count,
+            "tools_used": self.tools_used,
+            "files_modified": self.files_modified,
+            "key_decisions": self.key_decisions,
+            "errors": self.errors,
+            "token_total": self.token_total,
+            "updated_at": self.updated_at,
+        }
 
 
 @dataclass
@@ -41,6 +56,24 @@ class EpisodeRecord:
     created_at: float = 0.0
     promoted_lesson_id: str | None = None
 
+    def to_dict(self) -> dict[str, Any]:
+        """Performance-optimized alternative to asdict()."""
+        return {
+            "episode_id": self.episode_id,
+            "session_id": self.session_id,
+            "problem": self.problem,
+            "context": self.context,
+            "action": self.action,
+            "outcome": self.outcome,
+            "evidence_refs": self.evidence_refs,
+            "local_critique": self.local_critique,
+            "global_reflection": self.global_reflection,
+            "confidence": self.confidence,
+            "tags": self.tags,
+            "created_at": self.created_at,
+            "promoted_lesson_id": self.promoted_lesson_id,
+        }
+
 
 class SessionStore:
     """Tracks session summaries and grounded episodes."""
@@ -54,6 +87,9 @@ class SessionStore:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        # Enable WAL mode for better write performance
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
         return conn
 
     def _init_schema(self) -> None:
@@ -141,7 +177,7 @@ class SessionStore:
         return existing
 
     def upsert_session(self, summary: SessionSummary) -> None:
-        payload = asdict(summary)
+        payload = summary.to_dict()
         with self._connect() as conn:
             conn.execute(
                 """
@@ -234,7 +270,7 @@ class SessionStore:
         return (current - latest) >= quiet * 60
 
     def record_episode(self, episode: EpisodeRecord) -> dict[str, Any]:
-        payload = asdict(episode)
+        payload = episode.to_dict()
         if not payload["episode_id"]:
             payload["episode_id"] = str(uuid.uuid4())
         if not payload["created_at"]:

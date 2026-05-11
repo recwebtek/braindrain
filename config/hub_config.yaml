@@ -252,3 +252,17 @@ cost_tracking:
     - module_attribution
   alert_threshold_usd_per_session: 0.50
   dashboard: true
+
+# ─── MODEL PROVENANCE ───────────────────────────────────────────
+# Controls model/date attribution in chat, plans, and subagent traces.
+provenance:
+  enabled: true
+  date_format: "%Y-%m-%d"
+  chat_footer:
+    enabled: true
+    scope: all_agents # all_agents | planning_only | off
+  plan_metadata:
+    enabled: true
+  subagent_trace:
+    enabled: true
+    path: ".braindrain/plan-reports/model-trace.jsonl"
