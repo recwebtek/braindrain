@@ -315,10 +315,11 @@ async def run_workflow(name: str, args: dict = None) -> dict:
         }
 
     try:
-        return await engine.run(name=name, args=args)
+        result = await engine.run(name=name, args=args)
+        return telemetry.sanitize(result)
     except Exception as e:
         telemetry.log_error(f"Workflow '{name}' failed: {e}", context={"name": name, "args": args})
-        return {"error": str(e), "workflow": name}
+        return telemetry.sanitize({"error": str(e), "workflow": name})
 
 
 @mcp.tool()
@@ -511,7 +512,7 @@ async def route_output(
         module="output_sandbox",
         meta={"handle": routed.handle, "source": source},
     )
-    return resp
+    return telemetry.sanitize(resp)
 
 
 @mcp.tool()
@@ -537,7 +538,7 @@ async def search_index(query: str, limit: int = 5) -> dict:
             raw_text=query,
             actual_text=json.dumps(resp, ensure_ascii=False),
         )
-        return resp
+        return telemetry.sanitize(resp)
     except MCPProtocolError as e:
         resp = {"error": f"context-mode search failed: {e}"}
         telemetry.record(
@@ -545,7 +546,7 @@ async def search_index(query: str, limit: int = 5) -> dict:
             raw_text=query,
             actual_text=json.dumps(resp, ensure_ascii=False),
         )
-        return resp
+        return telemetry.sanitize(resp)
 
 
 @mcp.tool()
@@ -1032,7 +1033,7 @@ def scriptlib_run(
         module="tool_gate",
         meta={"path": path, "variant": variant, "dry_run": dry_run},
     )
-    return result
+    return telemetry.sanitize(result)
 
 
 @mcp.tool()
@@ -1355,7 +1356,7 @@ async def prime_workspace(
                 "bundle": bundle,
             },
         )
-        return result
+        return telemetry.sanitize(result)
     except Exception as e:
         telemetry.log_error(
             f"prime_workspace exception: {e}",
@@ -1371,7 +1372,7 @@ async def prime_workspace(
                 "bundle": bundle,
             },
         )
-        return {"ok": False, "error": str(e)}
+        return telemetry.sanitize({"ok": False, "error": str(e)})
 
 
 @mcp.tool()
@@ -1398,13 +1399,13 @@ def init_project_memory(path: str = ".", dry_run: bool = False) -> dict:
             module="tool_gate",
             meta={"target": str(target), "dry_run": dry_run},
         )
-        return result
+        return telemetry.sanitize(result)
     except Exception as e:
         telemetry.log_error(
             f"init_project_memory exception: {e}",
             context={"path": path, "dry_run": dry_run},
         )
-        return {"ok": False, "error": str(e)}
+        return telemetry.sanitize({"ok": False, "error": str(e)})
 
 
 def main():
