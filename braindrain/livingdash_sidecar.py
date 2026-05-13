@@ -901,9 +901,10 @@ def create_app(
               @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
               h1 { margin: 0 0 1rem; font-size: 1.875rem; font-weight: 700; color: var(--accent); }
               p { color: var(--muted); margin-bottom: 2rem; font-size: 1.1rem; }
-              .cmd-box { background: #00000050; padding: 1.25rem; border-radius: 0.5rem; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.9rem; text-align: left; border: 1px solid #ffffff08; position: relative; }
+              .cmd-box { background: #00000050; padding: 1.25rem; border-radius: 0.5rem; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.9rem; text-align: left; border: 1px solid #ffffff08; position: relative; transition: all 0.3s; }
+              .cmd-box:hover { background: #00000070; border-color: #ffffff15; }
               .cmd-label { position: absolute; top: -0.7rem; left: 1rem; background: var(--accent); color: var(--bg); font-size: 0.7rem; font-weight: 800; padding: 0.1rem 0.5rem; border-radius: 0.2rem; text-transform: uppercase; }
-              .copy-btn { position: absolute; top: 0.5rem; right: 0.5rem; background: #ffffff10; border: 1px solid #ffffff20; color: var(--muted); padding: 0.25rem 0.5rem; border-radius: 0.25rem; font-size: 0.7rem; cursor: pointer; transition: all 0.2s; font-family: ui-sans-serif, system-ui, sans-serif; }
+              .copy-btn { position: absolute; top: 0.5rem; right: 0.5rem; background: #ffffff10; border: 1px solid #ffffff20; color: var(--muted); padding: 0.25rem 0.5rem; border-radius: 0.25rem; font-size: 0.7rem; cursor: pointer; transition: all 0.2s; font-family: ui-sans-serif, system-ui, sans-serif; min-width: 4.5rem; }
               .copy-btn:hover { background: #ffffff20; color: var(--text); }
               .copy-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
               .copy-btn.success { background: var(--accent); color: var(--bg); border-color: var(--accent); }
@@ -911,7 +912,7 @@ def create_app(
               .refresh-btn:hover { background: var(--accent); color: var(--bg); }
               .refresh-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
               code { color: #e2e8f0; display: block; white-space: pre-wrap; }
-              .footer { margin-top: 2rem; font-size: 0.8rem; color: #ffffff20; }
+              .footer { margin-top: 2rem; font-size: 0.8rem; color: var(--muted); opacity: 0.5; }
             </style>
           </head>
           <body>
@@ -925,7 +926,7 @@ def create_app(
 pnpm install
 pnpm run build</code>
               </div>
-              <button type="button" class="refresh-btn" onclick="location.reload()">Check for Build</button>
+              <button type="button" class="refresh-btn" onclick="this.innerText='Checking...';this.disabled=true;this.setAttribute('aria-busy','true');location.reload()">Check for Build</button>
               <div class="footer">Waiting for production artifacts in .ldash/ui/dist</div>
             </div>
             <script>
