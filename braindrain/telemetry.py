@@ -25,10 +25,12 @@ def estimate_claude_tokens(text: str) -> int:
 
 
 # Regex patterns for redaction (pre-compiled for performance)
-# Paths: /Users/..., /Volumes/..., /home/...
-_PATH_RE = re.compile(r"(/Users/[^\s'\"]+|/Volumes/[^\s'\"]+|/home/[^\s'\"]+)")
-# API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_)
-_KEY_RE = re.compile(r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,})")
+# Paths: /Users/..., /Volumes/..., /home/..., /root/...
+_PATH_RE = re.compile(r"(/Users/[^\s'\"]+|/Volumes/[^\s'\"]+|/home/[^\s'\"]+|/root/[^\s'\"]+)")
+# API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_), Google AI (AIza)
+_KEY_RE = re.compile(
+    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,})"
+)
 
 
 @dataclass
@@ -89,6 +91,7 @@ class TelemetrySession:
                     and "sk-" not in val
                     and "gsk_" not in val
                     and "hf_" not in val
+                    and "AIza" not in val
                 ):
                     return val
 
