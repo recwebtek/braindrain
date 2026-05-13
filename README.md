@@ -31,6 +31,36 @@ OS environment data is probed once, cached locally, and served instantly on ever
 
 ---
 
+## LivingDash storage boundary
+
+LivingDash uses a split layout so scaffold code can be versioned while runtime state stays local-only:
+
+- `.ldash/` contains dashboard scaffold and UI source/build files.
+- `.braindrain/ldash/data/` contains runtime and sensitive state (`auth.json`, `status.json`, `snapshot.json`, `livingdash.pid`).
+
+This keeps passwords/session secrets out of shareable dashboard scaffold paths and aligns with the project rule that `.braindrain/` is machine-local.
+
+### Cursor command: start LivingDash
+
+If you are in Cursor, you can run the custom command:
+
+- `/livingdash`
+
+Command file:
+
+- `.cursor/commands/livingdash.md`
+
+What it does:
+
+- Starts LivingDash if not already running (or reuses the active instance)
+- Prints the runtime URL and login credentials
+- Verifies `GET /health` so startup is confirmed
+
+Credential/state location:
+
+- `.braindrain/ldash/data/auth.json`
+- `.braindrain/ldash/data/status.json`
+- `.braindrain/ldash/data/livingdash.pid`
 ---
 
 ## Tools
