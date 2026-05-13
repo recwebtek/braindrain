@@ -134,3 +134,75 @@ def test_report_includes_model_provenance_frontmatter(tmp_project_dir: Path) -> 
     assert 'subagent_models_used:' in report
     assert '    - "composer-2"' in report
     assert '    - "gpt-5.4-medium"' in report
+
+
+def test_master_mirror_shows_frontmatter_branch(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    plan_path = plans / "alpha.plan.md"
+    plan_path.write_text(
+        "---\nbranch: feature/alpha\nowner: @ettienne\n---\n# Alpha\n- [ ] todo\n",
+        encoding="utf-8",
+    )
+    item = m.PlanItem(
+        item="todo",
+        source=".cursor/plans/alpha.plan.md",
+        status="Outstanding",
+        confidence="high",
+        evidence=[".cursor/plans/alpha.plan.md#item"],
+        why="test",
+        tokens={"todo"},
+    )
+    cards = m.build_cards_index(tmp_project_dir, [plan_path], [item], default_owner="@ettienne")
+    mirror = m.render_master_mirror(list(cards.values()), {"frontmatter": {}, "children": []})
+    assert "| Plan | Owner | Branch | Priority |" in mirror
+    assert "`feature/alpha`" in mirror
+
+
+def test_branch_resolves_from_gitops_queue_when_frontmatter_missing(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    queue_file = tmp_project_dir / ".cursor" / ".gitops-queue.json"
+    queue_file.parent.mkdir(parents=True, exist_ok=True)
+    queue_file.write_text(
+        '[{"action":"branch-setup","branchName":"feature/admin-ops-tool-draft-flow","status":"pending"}]',
+        encoding="utf-8",
+    )
+    plan_path = plans / "admin-ops-tool-draft-flow_d75bcec7.plan.md"
+    plan_path.write_text("# Admin Ops Plan\n- [ ] todo\n", encoding="utf-8")
+    item = m.PlanItem(
+        item="todo",
+        source=".cursor/plans/admin-ops-tool-draft-flow_d75bcec7.plan.md",
+        status="Outstanding",
+        confidence="high",
+        evidence=[".cursor/plans/admin-ops-tool-draft-flow_d75bcec7.plan.md#item"],
+        why="test",
+        tokens={"todo"},
+    )
+    cards = m.build_cards_index(tmp_project_dir, [plan_path], [item], default_owner="@ettienne")
+    card = cards[".cursor/plans/admin-ops-tool-draft-flow_d75bcec7.plan.md"]
+    assert card.branch == "feature/admin-ops-tool-draft-flow"
+    assert card.branch_source == "gitops_queue"
+
+
+def test_branch_falls_back_to_dash_when_no_sources(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    plan_path = plans / "lonely.plan.md"
+    plan_path.write_text("# Lonely Plan\n- [ ] todo\n", encoding="utf-8")
+    item = m.PlanItem(
+        item="todo",
+        source=".cursor/plans/lonely.plan.md",
+        status="Outstanding",
+        confidence="high",
+        evidence=[".cursor/plans/lonely.plan.md#item"],
+        why="test",
+        tokens={"todo"},
+    )
+    cards = m.build_cards_index(tmp_project_dir, [plan_path], [item], default_owner="@ettienne")
+    card = cards[".cursor/plans/lonely.plan.md"]
+    assert card.branch == "—"
+    assert card.branch_source == "none"

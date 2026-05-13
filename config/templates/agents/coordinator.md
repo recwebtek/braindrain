@@ -37,6 +37,23 @@ For each stage:
 5. **Checkpoint** — update `.cursor/PROGRESS.md` after each task
 6. **Advance** — when all stage tasks pass, move to next stage
 
+## Plan Execution Branch Invariant
+
+For any task mapped to a concrete plan file (`*.plan.md`), dispatch gitops with plan context:
+
+- `context.planSource` -> absolute or repo-relative plan path
+- `context.planBranch` -> resolved branch (from plan frontmatter first, then planning-audit mirror)
+- `context.auditSnapshot` -> paths for `master-plan.md`, `next-actions.md`, optional `latest.md`
+
+Mandatory sequence before delegating build/implementation work:
+
+1. resolve target branch for selected plan
+2. compare with active branch
+3. if different, checkout target branch
+4. only then proceed with task execution
+
+If no branch exists yet for the plan, dispatch gitops `branch-setup` first, then continue.
+
 ## Model provenance requirements
 
 - Respect `config/hub_config.yaml` `provenance.*` toggles.
