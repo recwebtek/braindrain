@@ -512,10 +512,17 @@ Memory artifacts and paths:
   - `.braindrain/plan-reports/plan-audit-YYYY-MM-DD.md` (full report, now plan-centric cards grouped by IDE -> disposition)
   - `.braindrain/plan-reports/latest.md` (latest mirror)
   - `.braindrain/plan-reports/plan-task-board.md` (active item board with IDE + inherited owner)
-  - `.braindrain/plan-reports/master-plan.md` (generated master mirror + drift detection)
+  - `.braindrain/plan-reports/master-plan.md` (generated master mirror + drift detection + resolved branch column)
   - `.braindrain/plan-reports/next-actions.md` (verb queue: `MERGE`, `FIX`, `REPLAN`, `RESEARCH`, `IMPLEMENT`, `BACKLOG`)
   - Primary plan discovery now scans known IDE plan dirs (`.cursor/plans`, `.codex/plans`, `.kiro/plans`, `.windsurf/plans`, etc.), and each plan/action is tagged with its IDE source.
+  - Branch resolution for each plan is hybrid by precedence: frontmatter `branch:` -> `.cursor/.gitops-queue.json` -> `.cursor/.gitops-memory.jsonl` -> `—`.
+  - When a branch is resolved from gitops queue/history and the plan lacks `branch:`, the auditor writes `branch:` into that plan's frontmatter during the audit run.
   - Ownership defaults to `@<current username>` from `get_env_context()` when `owner:`/`dri:` are absent. Explicit item-level owner markers (`@name`, `owner:`, `assignee:`, `dri:`) still work and override inherited ownership.
+
+Plan execution branch invariant (coordinator/gitops contract):
+
+- For every plan execution/build path, enforce: `check branch -> checkout correct branch -> proceed`.
+- If a selected plan has no associated branch, run `branch-setup` first, then continue execution on that branch.
 - Dream artifacts path: `~/.braindrain/dreaming/` (`plans/`, `daily/`, `DREAMS.md`, `last_status.json`).
 - `init_project_memory(path, dry_run)` bootstraps memory artifacts and is idempotent.
 - `prime_workspace()` includes memory initialization in onboarding.

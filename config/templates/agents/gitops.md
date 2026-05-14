@@ -41,6 +41,13 @@ Coordinator and manual invocations must pass this JSON structure:
   "context": {
     "branch": "feature/auth-system",
     "baseBranch": "main",
+    "planSource": ".cursor/plans/my-plan.plan.md",
+    "planBranch": "feature/my-plan",
+    "auditSnapshot": {
+      "masterPlan": ".braindrain/plan-reports/master-plan.md",
+      "nextActions": ".braindrain/plan-reports/next-actions.md",
+      "latestAudit": ".braindrain/plan-reports/latest.md"
+    },
     "files": ["src/auth.ts", "tests/auth.test.ts"],
     "overviewMessage": "optional: human-readable summary for commit body",
     "featureBranches": ["feature/stage-1", "feature/stage-2"],
@@ -51,6 +58,21 @@ Coordinator and manual invocations must pass this JSON structure:
 ```
 
 If `mode` is absent, infer from `taskId` and `instruction` context.
+
+## Planning-Aware Branch Guardrail
+
+For any execution tied to a plan (`context.planSource` present), enforce:
+
+1. Resolve target branch:
+   - Prefer `context.planBranch`,
+   - Else read `context.auditSnapshot.masterPlan` to find plan->branch mapping,
+   - Else in `branch-setup` mode create a branch using project naming conventions.
+2. Ensure branch correctness before any work:
+   - `check current branch -> if mismatch checkout target branch -> then proceed`.
+3. For new plans with no branch association:
+   - run `branch-setup`,
+   - return the created branch in `branchCreated`,
+   - include a summary note indicating the plan should be linked with this branch by the planning auditor.
 
 ## Response Format
 
