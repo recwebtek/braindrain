@@ -99,9 +99,11 @@ class TelemetrySession:
                 val = _KEY_RE.sub("[REDACTED_KEY]", val)
                 return val
             if isinstance(val, dict):
-                return {k: _do_sanitize(v) for k, v in val.items()}
+                return {_do_sanitize(k): _do_sanitize(v) for k, v in val.items()}
             if isinstance(val, list):
                 return [_do_sanitize(i) for i in val]
+            if isinstance(val, tuple):
+                return tuple(_do_sanitize(i) for i in val)
             return val
 
         return _do_sanitize(data)
