@@ -12,6 +12,7 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -64,10 +65,15 @@ class TelemetrySession:
             "context_database": 0,
         }
     )
+    _parent_ensured: bool = field(default=False, init=False, repr=False)
+    _logs_ensured: bool = field(default=False, init=False, repr=False)
 
     def _ensure_parent(self) -> None:
+        if self._parent_ensured:
+            return
         try:
             self.log_file.parent.mkdir(parents=True, exist_ok=True)
+            self._parent_ensured = True
         except PermissionError:
             # Fallback to current working directory if home dir is restricted
             fallback = Path(".logs") / self.log_file.name
@@ -79,32 +85,28 @@ class TelemetrySession:
         """Public entry point for recursive redaction of sensitive paths and API keys."""
         return self._sanitize_data(data)
 
-    def _sanitize_data(self, data: Any) -> Any:
+    def _sanitize_data(self, val: Any) -> Any:
         """Recursive redaction of sensitive paths and API keys."""
-
-        def _do_sanitize(val: Any) -> Any:
-            if isinstance(val, str):
-                # Optimization: skip regex overhead if the string has no characters indicating
-                # a potential sensitive path or API key. ~3.5x speedup for clean strings.
-                if (
-                    "/" not in val
-                    and "sk-" not in val
-                    and "gsk_" not in val
-                    and "hf_" not in val
-                    and "AIza" not in val
-                ):
-                    return val
-
-                val = _PATH_RE.sub("[REDACTED_PATH]", val)
-                val = _KEY_RE.sub("[REDACTED_KEY]", val)
+        if isinstance(val, str):
+            # Optimization: skip regex overhead if the string has no characters indicating
+            # a potential sensitive path or API key. ~3.5x speedup for clean strings.
+            if (
+                "/" not in val
+                and "sk-" not in val
+                and "gsk_" not in val
+                and "hf_" not in val
+                and "AIza" not in val
+            ):
                 return val
-            if isinstance(val, dict):
-                return {k: _do_sanitize(v) for k, v in val.items()}
-            if isinstance(val, list):
-                return [_do_sanitize(i) for i in val]
-            return val
 
-        return _do_sanitize(data)
+            val = _PATH_RE.sub("[REDACTED_PATH]", val)
+            val = _KEY_RE.sub("[REDACTED_KEY]", val)
+            return val
+        if isinstance(val, dict):
+            return {k: self._sanitize_data(v) for k, v in val.items()}
+        if isinstance(val, list):
+            return [self._sanitize_data(i) for i in val]
+        return val
 
     def _append_jsonl(self, obj: dict[str, Any]) -> None:
         self._ensure_parent()
@@ -127,8 +129,6 @@ class TelemetrySession:
         Log an error or bad response to a daily debug report.
         Sanitizes personal information (device paths, usernames).
         """
-        from datetime import datetime
-
         # 1. Sanitize error string and context
         sanitized_error = self._sanitize_data(error)
         sanitized_context = self._sanitize_data(context or {})
@@ -143,11 +143,14 @@ class TelemetrySession:
 
         # 3. Write to daily debug report in .logs/
         # Use project root for .logs/ (assumed to be current working directory or relative to it)
-        date_str = datetime.now().strftime("%Y-%m-%d")
+        now = datetime.now()
+        date_str = now.strftime("%Y-%m-%d")
         debug_log_path = Path(".logs") / f"braindrain_debug_report_{date_str}.md"
 
         # Ensure .logs exists
-        debug_log_path.parent.mkdir(parents=True, exist_ok=True)
+        if not self._logs_ensured:
+            debug_log_path.parent.mkdir(parents=True, exist_ok=True)
+            self._logs_ensured = True
 
         # Append to markdown report
         header_exists = debug_log_path.exists()
@@ -155,7 +158,7 @@ class TelemetrySession:
             if not header_exists:
                 f.write(f"# BRAINDRAIN Debug Report — {date_str}\n\n")
 
-            f.write(f"### [{datetime.now().strftime('%H:%M:%S')}] Error\n")
+            f.write(f"### [{now.strftime('%H:%M:%S')}] Error\n")
             f.write(f"- **Message**: {sanitized_error}\n")
             if sanitized_context:
                 f.write(f"- **Context**: `{json.dumps(sanitized_context)}`\n")

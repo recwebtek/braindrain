@@ -87,13 +87,14 @@ class WikiBrain:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        # Enable WAL mode for better write performance
-        conn.execute("PRAGMA journal_mode=WAL")
+        # Persistent PRAGMAs like journal_mode=WAL are set in _init_schema
         conn.execute("PRAGMA synchronous=NORMAL")
         return conn
 
     def _init_schema(self) -> None:
         with self._connect() as conn:
+            # Enable WAL mode once during initialization (it is persistent in DB header)
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS brain_records (
