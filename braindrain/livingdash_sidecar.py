@@ -901,31 +901,33 @@ def create_app(
               @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
               h1 { margin: 0 0 1rem; font-size: 1.875rem; font-weight: 700; color: var(--accent); }
               p { color: var(--muted); margin-bottom: 2rem; font-size: 1.1rem; }
-              .cmd-box { background: #00000050; padding: 1.25rem; border-radius: 0.5rem; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.9rem; text-align: left; border: 1px solid #ffffff08; position: relative; }
+              .cmd-box { background: #00000050; padding: 1.25rem; border-radius: 0.5rem; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.9rem; text-align: left; border: 1px solid #ffffff08; position: relative; transition: border-color 0.2s; }
+              .cmd-box:hover { border-color: #ffffff20; }
               .cmd-label { position: absolute; top: -0.7rem; left: 1rem; background: var(--accent); color: var(--bg); font-size: 0.7rem; font-weight: 800; padding: 0.1rem 0.5rem; border-radius: 0.2rem; text-transform: uppercase; }
-              .copy-btn { position: absolute; top: 0.5rem; right: 0.5rem; background: #ffffff10; border: 1px solid #ffffff20; color: var(--muted); padding: 0.25rem 0.5rem; border-radius: 0.25rem; font-size: 0.7rem; cursor: pointer; transition: all 0.2s; font-family: ui-sans-serif, system-ui, sans-serif; }
+              .copy-btn { position: absolute; top: 0.5rem; right: 0.5rem; background: #ffffff10; border: 1px solid #ffffff20; color: var(--muted); padding: 0.25rem 0.5rem; border-radius: 0.25rem; font-size: 0.7rem; cursor: pointer; transition: all 0.2s; font-family: ui-sans-serif, system-ui, sans-serif; min-width: 4.5rem; }
               .copy-btn:hover { background: #ffffff20; color: var(--text); }
               .copy-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
               .copy-btn.success { background: var(--accent); color: var(--bg); border-color: var(--accent); }
-              .refresh-btn { margin-top: 2rem; background: transparent; border: 1px solid var(--accent); color: var(--accent); padding: 0.5rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; cursor: pointer; transition: all 0.2s; font-weight: 600; }
-              .refresh-btn:hover { background: var(--accent); color: var(--bg); }
+              .refresh-btn { margin-top: 2rem; background: transparent; border: 1px solid var(--accent); color: var(--accent); padding: 0.5rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; cursor: pointer; transition: all 0.2s; font-weight: 600; min-width: 10rem; }
+              .refresh-btn:hover:not(:disabled) { background: var(--accent); color: var(--bg); }
               .refresh-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+              .refresh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
               code { color: #e2e8f0; display: block; white-space: pre-wrap; }
-              .footer { margin-top: 2rem; font-size: 0.8rem; color: #ffffff20; }
+              .footer { margin-top: 2rem; font-size: 0.8rem; color: var(--muted); opacity: 0.7; }
             </style>
           </head>
           <body>
             <div class="card">
               <h1><span aria-hidden="true">🧠</span> LivingDash</h1>
-              <p>The dashboard UI build is not found. Run the following to generate it:</p>
+              <p style="color: var(--text); opacity: 0.9;">The dashboard UI build is not found. Run the following to generate it:</p>
               <div class="cmd-box">
                 <span id="quick-build-label" class="cmd-label">Quick Build</span>
                 <button type="button" class="copy-btn" aria-label="Copy build command" aria-describedby="quick-build-label" aria-live="polite" onclick="copyCmd(this)">Copy</button>
-                <code>cd .ldash/ui
+                <code id="build-cmd">cd .ldash/ui
 pnpm install
 pnpm run build</code>
               </div>
-              <button type="button" class="refresh-btn" onclick="location.reload()">Check for Build</button>
+              <button type="button" class="refresh-btn" onclick="checkBuild(this)">Check for Build</button>
               <div class="footer">Waiting for production artifacts in .ldash/ui/dist</div>
             </div>
             <script>
@@ -935,7 +937,7 @@ pnpm run build</code>
                   setTimeout(() => { btn.innerText = 'Copy'; }, 1500);
                   return;
                 }
-                const code = btn.nextElementSibling.innerText;
+                const code = document.getElementById('build-cmd').innerText;
                 navigator.clipboard.writeText(code).then(() => {
                   const originalText = btn.innerText;
                   btn.innerText = 'Copied!';
@@ -945,6 +947,14 @@ pnpm run build</code>
                     btn.classList.remove('success');
                   }, 2000);
                 });
+              }
+              function checkBuild(btn) {
+                btn.disabled = true;
+                btn.innerText = 'Checking...';
+                btn.setAttribute('aria-busy', 'true');
+                setTimeout(() => {
+                  location.reload();
+                }, 600);
               }
             </script>
           </body>
