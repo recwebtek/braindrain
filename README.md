@@ -521,17 +521,21 @@ Memory artifacts and paths:
   - `.braindrain/plan-reports/plan-audit-YYYY-MM-DD.md` (full report, now plan-centric cards grouped by IDE -> disposition)
   - `.braindrain/plan-reports/latest.md` (latest mirror)
   - `.braindrain/plan-reports/plan-task-board.md` (active item board with IDE + inherited owner)
-  - `.braindrain/plan-reports/master-plan.md` (generated master mirror + drift detection + resolved branch column)
+  - `.braindrain/plan-reports/master-plan.md` (generated master mirror + drift detection + **Branch** and **PR** columns)
   - `.braindrain/plan-reports/next-actions.md` (verb queue: `MERGE`, `FIX`, `REPLAN`, `RESEARCH`, `IMPLEMENT`, `BACKLOG`)
   - Primary plan discovery now scans known IDE plan dirs (`.cursor/plans`, `.codex/plans`, `.kiro/plans`, `.windsurf/plans`, etc.), and each plan/action is tagged with its IDE source.
-  - Branch resolution for each plan is hybrid by precedence: frontmatter `branch:` -> `.cursor/.gitops-queue.json` -> `.cursor/.gitops-memory.jsonl` -> `—`.
+  - Branch resolution for each plan is hybrid by precedence: frontmatter `branch:` -> `.cursor/.gitops-queue.json` (`planSource` exact match, then fuzzy) -> `.cursor/.gitops-memory.jsonl` -> local git branch slug match (`git_local`) -> `—`.
+  - PR column: `gh pr list --head <branch> --state all` when `gh` is available (`none` if no PR; `—` if gh unavailable).
   - When a branch is resolved from gitops queue/history and the plan lacks `branch:`, the auditor writes `branch:` into that plan's frontmatter during the audit run.
+  - Optional `--bootstrap-branches` persists high-confidence `git_local` matches into `branch:` for `active` / `merge-ready` plans only.
   - Ownership defaults to `@<current username>` from `get_env_context()` when `owner:`/`dri:` are absent. Explicit item-level owner markers (`@name`, `owner:`, `assignee:`, `dri:`) still work and override inherited ownership.
 
 Plan execution branch invariant (coordinator/gitops contract):
 
 - For every plan execution/build path, enforce: `check branch -> checkout correct branch -> proceed`.
 - If a selected plan has no associated branch, run `branch-setup` first, then continue execution on that branch.
+- Cursor Plan **Build** runs in the current workspace on the current git HEAD unless agents follow the plan implementation guardrail in Ruler `RULES.md` / `.cursor/rules/braindrain.mdc`.
+- Stop hook `.cursor/hooks/on-stop-gitops-plans.sh` queues `branch-setup` for recently edited `*.plan.md` files with `planSource` linkage.
 - Dream artifacts path: `~/.braindrain/dreaming/` (`plans/`, `daily/`, `DREAMS.md`, `last_status.json`).
 - `init_project_memory(path, dry_run)` bootstraps memory artifacts and is idempotent.
 - `prime_workspace()` includes memory initialization in onboarding.

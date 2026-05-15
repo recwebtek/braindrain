@@ -55,8 +55,10 @@ Return JSON only:
 ## Rules
 
 - Prefer the generated reports under `.braindrain/plan-reports/` over re-deriving scores in chat.
-- Resolve plan branch mapping with hybrid precedence: plan frontmatter `branch:` -> gitops queue/history -> `—`.
+- Resolve plan branch mapping with hybrid precedence: plan frontmatter `branch:` -> gitops queue (`planSource` exact match, then fuzzy) -> gitops memory -> local git slug match (`git_local`) -> `—`.
+- Populate PR column via `gh pr list --head <branch>` when `gh` is available; show `none` when no PR exists; `—` when gh is unavailable.
 - When a plan is resolved from gitops context and `branch:` is missing, persist that `branch:` into plan frontmatter during the run.
+- Optional `--bootstrap-branches` writes `branch:` from high-confidence `git_local` matches for `active` / `merge-ready` plans only.
 - Replan work: prefer a **new** plan file and link supersession in `_master.plan.md` rather than silently overwriting history (see coordinator / architect guidance).
 - Research-heavy follow-ups: delegate to the `research` subagent, then fold findings back into the parent plan.
 - Ensure plan/report frontmatter contains model provenance fields:

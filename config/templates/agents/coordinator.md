@@ -42,7 +42,7 @@ For each stage:
 For any task mapped to a concrete plan file (`*.plan.md`), dispatch gitops with plan context:
 
 - `context.planSource` -> absolute or repo-relative plan path
-- `context.planBranch` -> resolved branch (from plan frontmatter first, then planning-audit mirror)
+- `context.planBranch` -> resolved branch (from plan frontmatter first, then planning-audit mirror **Branch** column; PR column for merge triage)
 - `context.auditSnapshot` -> paths for `master-plan.md`, `next-actions.md`, optional `latest.md`
 
 Mandatory sequence before delegating build/implementation work:

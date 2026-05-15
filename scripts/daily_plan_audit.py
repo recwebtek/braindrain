@@ -16,9 +16,11 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
+from typing import Callable
 
 
 SCHEMA_VERSION = "1.1"
@@ -384,6 +386,8 @@ class PlanCard:
     counts: dict[str, int] = dataclasses.field(default_factory=dict)
     branch: str = "—"
     branch_source: str = "none"
+    pr: str = "—"
+    pr_source: str = "none"
 
     @property
     def is_active_for_triage(self) -> bool:
@@ -509,6 +513,14 @@ def parse_args() -> argparse.Namespace:
         "--skip-archive",
         action="store_true",
         help="Do not move plans marked archived into .plan.archives/ (for tests).",
+    )
+    parser.add_argument(
+        "--bootstrap-branches",
+        action="store_true",
+        help=(
+            "Write branch: into plan frontmatter for active/merge-ready plans when "
+            "resolved via git_local (high-confidence local git match only)."
+        ),
     )
     return parser.parse_args()
 
@@ -1199,6 +1211,7 @@ def render_plan_cards(
             lines.append(
                 f"  - Branch: `{card.branch}` (source: `{card.branch_source}`)"
             )
+            lines.append(f"  - PR: {card.pr} (source: `{card.pr_source}`)")
             lines.append(f"  - Delegated to: {delegated}")
             lines.append(f"  - Items: {' / '.join(rollup_parts)}")
             lines.append(f"  - Next action: {top_verb}")
@@ -1232,6 +1245,7 @@ def build_cards_index(
         )
         cards[rel] = card
     apply_branch_resolution(cards, repo_root)
+    apply_pr_resolution(cards, repo_root)
     return cards
 
 
@@ -1315,14 +1329,76 @@ def _best_matching_branch(card: "PlanCard", branch_names: list[str]) -> str:
     return best
 
 
+def _normalize_plan_source_path(path: str) -> str:
+    return path.strip().lstrip("./").replace("\\", "/")
+
+
+def _queue_branch_for_card(
+    card: "PlanCard", queue_entries: list[dict[str, object]]
+) -> str:
+    """Match gitops queue entry by explicit planSource when present."""
+    card_source = _normalize_plan_source_path(card.source)
+    for entry in queue_entries:
+        plan_source = entry.get("planSource")
+        if not isinstance(plan_source, str) or not plan_source.strip():
+            continue
+        ps = _normalize_plan_source_path(plan_source)
+        if ps == card_source or ps.endswith("/" + card_source) or card_source.endswith("/" + ps):
+            value = entry.get("branchName") or entry.get("branch")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return ""
+
+
+def _list_repo_branches(repo_root: Path) -> list[str]:
+    """List local and origin remote branch short names (read-only)."""
+    try:
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo_root),
+                "for-each-ref",
+                "refs/heads",
+                "refs/remotes/origin",
+                "--format=%(refname:short)",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if proc.returncode != 0:
+        return []
+    names: list[str] = []
+    seen: set[str] = set()
+    for line in proc.stdout.splitlines():
+        name = line.strip()
+        if not name or name == "origin/HEAD":
+            continue
+        if name.startswith("origin/"):
+            short = name[len("origin/") :]
+            if short and short not in seen:
+                seen.add(short)
+                names.append(short)
+            continue
+        if name not in seen:
+            seen.add(name)
+            names.append(name)
+    return names
+
+
 def apply_branch_resolution(cards: dict[str, "PlanCard"], repo_root: Path) -> None:
     """Resolve plan branch using hybrid precedence.
 
     Precedence:
     1) Frontmatter `branch:` (when present),
-    2) `.cursor/.gitops-queue.json`,
+    2) `.cursor/.gitops-queue.json` (planSource exact match, then fuzzy),
     3) `.cursor/.gitops-memory.jsonl`,
-    4) `—`.
+    4) Local git branch names (fuzzy slug match),
+    5) `—`.
     """
     queue_entries = _read_gitops_queue(repo_root)
     queue_branches: list[str] = []
@@ -1338,6 +1414,8 @@ def apply_branch_resolution(cards: dict[str, "PlanCard"], repo_root: Path) -> No
         if value:
             memory_branches.append(value)
 
+    local_branches = _list_repo_branches(repo_root)
+
     for card in cards.values():
         plan_path = repo_root / card.source
         fm = parse_plan_frontmatter(plan_path) if plan_path.is_file() else {}
@@ -1345,6 +1423,11 @@ def apply_branch_resolution(cards: dict[str, "PlanCard"], repo_root: Path) -> No
         if fm_branch:
             card.branch = fm_branch
             card.branch_source = "frontmatter"
+            continue
+        direct_queue = _queue_branch_for_card(card, queue_entries)
+        if direct_queue:
+            card.branch = direct_queue
+            card.branch_source = "gitops_queue"
             continue
         queue_match = _best_matching_branch(card, queue_branches)
         if queue_match:
@@ -1356,8 +1439,121 @@ def apply_branch_resolution(cards: dict[str, "PlanCard"], repo_root: Path) -> No
             card.branch = memory_match
             card.branch_source = "gitops_memory"
             continue
+        git_match = _best_matching_branch(card, local_branches)
+        if git_match:
+            card.branch = git_match
+            card.branch_source = "git_local"
+            continue
         card.branch = "—"
         card.branch_source = "none"
+
+
+def _run_gh_pr_lookup(repo_root: Path, branch: str) -> list[dict[str, object]] | None:
+    """Return parsed gh JSON list or None when gh is unavailable."""
+    try:
+        proc = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "list",
+                "--head",
+                branch,
+                "--state",
+                "all",
+                "--json",
+                "number,state,url",
+                "--limit",
+                "1",
+            ],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        payload = json.loads(proc.stdout or "[]")
+    except json.JSONDecodeError:
+        return None
+    if isinstance(payload, list):
+        return [x for x in payload if isinstance(x, dict)]
+    return None
+
+
+def format_pr_cell(pr_data: list[dict[str, object]] | None) -> tuple[str, str]:
+    """Format PR table cell and pr_source from gh lookup result."""
+    if pr_data is None:
+        return "—", "unavailable"
+    if not pr_data:
+        return "none", "none"
+    row = pr_data[0]
+    number = row.get("number")
+    state = str(row.get("state") or "").strip().lower()
+    url = str(row.get("url") or "").strip()
+    if number is None:
+        return "none", "none"
+    label = f"#{number} {state}" if state else f"#{number}"
+    if url:
+        return f"[{label}]({url})", "gh"
+    return label, "gh"
+
+
+def resolve_pr_for_branch(
+    repo_root: Path,
+    branch: str,
+    *,
+    gh_runner: Callable[[Path, str], list[dict[str, object]] | None] | None = None,
+) -> tuple[str, str]:
+    """Resolve PR display cell for a branch via gh CLI."""
+    if not branch or branch == "—":
+        return "—", "none"
+    runner = gh_runner or _run_gh_pr_lookup
+    return format_pr_cell(runner(repo_root, branch))
+
+
+def apply_pr_resolution(
+    cards: dict[str, "PlanCard"],
+    repo_root: Path,
+    *,
+    gh_runner: Callable[[Path, str], list[dict[str, object]] | None] | None = None,
+) -> None:
+    for card in cards.values():
+        pr_cell, pr_source = resolve_pr_for_branch(
+            repo_root, card.branch, gh_runner=gh_runner
+        )
+        card.pr = pr_cell
+        card.pr_source = pr_source
+
+
+def bootstrap_plan_branches_from_git_local(
+    repo_root: Path,
+    cards: dict[str, "PlanCard"],
+) -> list[str]:
+    """Persist git_local branch matches into frontmatter for active/merge-ready plans."""
+    bootstrap_dispositions = {"active", "merge-ready"}
+    updated: list[str] = []
+    for source, card in cards.items():
+        if card.disposition not in bootstrap_dispositions:
+            continue
+        if card.branch_source != "git_local":
+            continue
+        if not card.branch or card.branch == "—":
+            continue
+        path = repo_root / source
+        if not path.is_file():
+            continue
+        current = path.read_text(encoding="utf-8", errors="ignore")
+        if re.search(r"(?m)^branch\s*:", current):
+            continue
+        new_text = _inject_frontmatter_key(current, "branch", card.branch)
+        if new_text != current:
+            path.write_text(new_text, encoding="utf-8")
+            updated.append(source)
+    return updated
 
 
 def _inject_frontmatter_key(text: str, key: str, value: str) -> str:
@@ -1666,10 +1862,10 @@ def render_master_mirror(
                 lines.append(f"### Disposition: `{current_disp}`")
                 lines.append("")
                 lines.append(
-                    "| Plan | Owner | Branch | Priority | Items (Impl/Active/Blocked/Out/Unk) | Source |"
+                    "| Plan | Owner | Branch | PR | Priority | Items (Impl/Active/Blocked/Out/Unk) | Source |"
                 )
                 lines.append(
-                    "|------|-------|--------|----------|--------------------------------------|--------|"
+                    "|------|-------|--------|----|----------|--------------------------------------|--------|"
                 )
             counts = card.counts or {}
             items_cell = (
@@ -1686,6 +1882,7 @@ def render_master_mirror(
                 f"| [{title_cell}]({card.source}) "
                 f"| {card.owner} "
                 f"| `{card.branch}` "
+                f"| {card.pr} "
                 f"| {card.priority} "
                 f"| {items_cell} "
                 f"| `{card.source}` |"
@@ -1974,6 +2171,11 @@ def main() -> int:
     cards_by_source = build_cards_index(
         repo_root, primary, items, default_owner=default_owner
     )
+    if getattr(args, "bootstrap_branches", False):
+        bootstrap_plan_branches_from_git_local(repo_root, cards_by_source)
+        # Re-resolve so frontmatter picks up bootstrapped branches.
+        apply_branch_resolution(cards_by_source, repo_root)
+        apply_pr_resolution(cards_by_source, repo_root)
     branch_links = persist_resolved_plan_branches(repo_root, cards_by_source)
 
     report = build_report(
