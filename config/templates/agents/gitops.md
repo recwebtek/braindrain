@@ -65,8 +65,10 @@ For any execution tied to a plan (`context.planSource` present), enforce:
 
 1. Resolve target branch:
    - Prefer `context.planBranch`,
-   - Else read `context.auditSnapshot.masterPlan` to find plan->branch mapping,
+   - Else read `context.auditSnapshot.masterPlan` to find plan->branch and PR columns,
+   - Else match `.cursor/.gitops-queue.json` entry by `planSource` (from plan stop hook),
    - Else in `branch-setup` mode create a branch using project naming conventions.
+   - When queueing branch-setup from hooks, always set `planSource` to the repo-relative `*.plan.md` path.
 2. Ensure branch correctness before any work:
    - `check current branch -> if mismatch checkout target branch -> then proceed`.
 3. For new plans with no branch association:

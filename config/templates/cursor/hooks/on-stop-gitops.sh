@@ -83,6 +83,7 @@ NEW_ENTRY=$(cat <<EOF
     "planType": "${PLAN_TYPE}",
     "branchName": "${BRANCH_NAME}",
     "baseBranch": "${BASE_BRANCH}",
+    "planSource": ".cursor/TASK-GRAPH.md",
     "planHash": "${PLAN_HASH}",
     "detectedAt": "${DETECTED_AT}",
     "status": "pending"
