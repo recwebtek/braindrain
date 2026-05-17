@@ -239,10 +239,25 @@ embeddings:
       model: "${MIXEDBREAD_EMBED_MODEL:-mxbai-embed-large-v1}"
       priority: 40
 
+# ─── OBSERVER (episodic tool_call events) ─────────────────────────
+observer:
+  enabled: true
+  storage_path: ~/.braindrain/events.db
+  ring_buffer_max: 10000
+  wrap_all_tools: true
+  hash_args: true
+
 # ─── COST TRACKING ─────────────────────────────────────────────
 cost_tracking:
   enabled: true
   log_file: ~/.braindrain/costs/session.jsonl
+  estimator: chars # chars | tiktoken
+  route_threshold_chars: 4096
+  auto_route_output: false # P1.1 enforces threshold; keep false until routed
+  rates:
+    input_per_1m: 1.25
+    output_per_1m: 6.0
+    cache_read_per_1m: 0.25
   track_fields:
     - tokens_in_raw
     - tokens_in_actual
