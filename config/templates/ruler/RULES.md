@@ -62,6 +62,15 @@ Keep generated agent rules lean after priming:
 - Deferred MCP tool definitions belong in `.braindrain/mcp-catalog/`, not inlined into rules.
 - Checklist: no duplicate checkpoint tables; link to this section instead of copying.
 
+### Subagent token budget (coordinator / Task tool)
+
+- **Parallel cap:** max **3** concurrent Task/subagent dispatches (use **2** under token pressure).
+- **Before a subagent batch:** `get_token_dashboard()` + `record_token_checkpoint(phase="pre_high_cost", context_tags=["subagent"])`.
+- **After a subagent batch:** `get_token_dashboard()` + `record_token_checkpoint(phase="post_high_cost", context_tags=["subagent"])`.
+- **Cheaper models:** `testops` → flash/fast tier; `toolcall` / `research` / `embedding` → `fast`; reserve heavier models for `[BUILD]` and architect/coordinator planning.
+- **`models.tier_local`** in `config/hub_config.yaml` is for routing/extraction/simple tasks (local LM Studio), not primary implementation agents.
+- Route large subagent output via `route_output()` → `search_index()`; do not inline into coordinator chat.
+
 ### Token Checkpoint Protocol (required)
 
 Use this protocol when capturing token observability data:
