@@ -46,6 +46,16 @@ Use this sequence to avoid wasting context tokens on environment probing and lar
 - Discover capabilities with `rg` on catalog markdown (mirrors Cursor per-server tool folders).
 - Native braindrain tools are listed under `.braindrain/mcp-catalog/braindrain/tools/`.
 
+### Search and embeddings (no cloud required by default)
+
+- **`search_index`** → context-mode FTS5 only. **No** embedding API and **no** Mixedbread unless you opt in.
+- **`search_tools`** → BM25 over the hub tool registry.
+- **Optional rerank** (`modules.tool_gate.rerank_on_search`, default `false`):
+  - `rerank_provider: none | lexical | mixedbread | auto`
+  - `lexical` = offline; `auto` = Mixedbread when `MIXEDBREAD_API_KEY` is set, else lexical.
+- **Embeddings** (`embeddings` in `hub_config.yaml`) are for future semantic workflows — local-first: `lmstudio_local`, `ollama_local`, then cloud. Not used by default `search_index`.
+- Token-light workflows: `ingest_codebase` (conditional `ai_distiller`), `refactor_prep_token_light` (filescope + editor before heavy map when budget is low).
+
 ### Session compaction
 
 - During work: `touch_session(session_id, tool_name=..., files_modified=..., key_decision=...)`.

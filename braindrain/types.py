@@ -33,6 +33,7 @@ class WorkflowConfig:
     input_examples: list[dict] = field(default_factory=list)
     required_roles: list[str] = field(default_factory=list)
     output_mode: str = "compact"
+    options: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -69,3 +70,4 @@ class ConfigData:
     dreaming: dict = field(default_factory=dict)
     provider_context: dict = field(default_factory=dict)
     provenance: dict = field(default_factory=dict)
+    embeddings: dict = field(default_factory=dict)

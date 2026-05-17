@@ -69,7 +69,46 @@ This keeps passwords/session secrets out of shareable dashboard scaffold paths a
 | Tool                                 | When to use                                                                                                                                                  |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `route_output(text, source, intent)` | When a tool returns a large blob. Indexes it into a local FTS5 store and returns a handle + suggested queries. The raw text never enters the context window. |
-| `search_index(query, limit=5)`       | Retrieve relevant chunks from a previously routed output. Use the suggested queries from `route_output` as a starting point.                                 |
+| `search_index(query, limit=5)`       | Retrieve relevant chunks from a previously routed output. Uses **context-mode FTS5** — no embedding API required. Optional `rerank=true` only when rerank is enabled in config (see below). |
+
+
+### Search, embeddings, and rerank (P2)
+
+**No Mixedbread or cloud API is required** for normal search:
+
+| Path | Engine | API keys |
+| ---- | ------ | -------- |
+| `search_index` | context-mode `ctx_search` (FTS5) | None |
+| `search_tools` | BM25 over `hub_config` tools | None |
+| Optional rerank on `search_index` | Off by default (`rerank_on_search: false`) | Only if you enable cloud or `auto` rerank |
+
+**Optional rerank** (`config/hub_config.yaml` → `modules.tool_gate`):
+
+| `rerank_provider` | Behavior |
+| ----------------- | -------- |
+| `none` (default) | No rerank pass |
+| `lexical` | Offline token overlap — no network |
+| `mixedbread` | Cloud `/reranking` API (`MIXEDBREAD_API_KEY`) |
+| `auto` | Mixedbread when key is set, else `lexical` |
+
+Enable only after benchmarking: set `rerank_on_search: true` and choose a provider. Per-call override: `search_index(query, rerank=True)`.
+
+**Embeddings** (`embeddings` in `hub_config.yaml`) are for future semantic workflows — **not** used by default `search_index`. Local-first providers (priority order):
+
+| Provider | Kind | Endpoint |
+| -------- | ---- | -------- |
+| `lmstudio_local` | `openai_compat` | `POST {LMSTUDIO_BASE_URL}/embeddings` |
+| `ollama_local` | `ollama` | `POST {OLLAMA_HOST}/api/embed` |
+| Cloud fallbacks | `openai_compat` / `hf_inference` | Google AI Studio, Hugging Face, Mixedbread |
+
+Set `embeddings.default_provider` (default: `lmstudio_local`). Programmatic helper: `braindrain.embeddings_client.embed_texts()`.
+
+**Token-efficient workflows** (also in `hub_config.yaml`):
+
+- `ingest_codebase` — runs `ai_distiller` first only when repo file count exceeds `options.distiller_when_file_count_gt` (default 200).
+- `refactor_prep_token_light` — `filescope` + `text_editor` before `repo_mapper` / `jcodemunch` when `token_budget` &lt; 2000.
+
+**Benchmark harness** (machine-local): `python3 .scriptlib/benchmark_token_savings_brain_mcp_hub_v1.py --repo-root .` → writes `.braindrain/plan-reports/token-benchmark-*.md`.
 
 
 ### Workflows
@@ -380,8 +419,11 @@ Environment variables (copy `.env.example` to `.env.dev` to start):
 | `BRAINDRAIN_CONFIG`                 | Override config file path                                                                                                                     |
 | `BRAINDRAIN_LAUNCHER_PATH`          | Absolute path to the `config/braindrain` launcher. Set automatically by `install.sh`. Required by `prime_workspace()` and `configure_mcp.py`. |
 | `GITHUB_TOKEN`                      | Enables the deferred GitHub MCP tool                                                                                                          |
-| `LMSTUDIO_BASE_URL`                 | LM Studio endpoint (default: `http://localhost:1234/v1`)                                                                                      |
-| `OLLAMA_HOST`                       | Ollama endpoint (default: `http://localhost:11434`)                                                                                           |
+| `LMSTUDIO_BASE_URL`                 | LM Studio OpenAI-compatible API (default: `http://localhost:1234/v1`)                                                                         |
+| `LMSTUDIO_EMBED_MODEL`              | Embedding model name for LM Studio (see `embeddings.providers.lmstudio_local`)                                                                |
+| `OLLAMA_HOST`                       | Ollama API base (default: `http://localhost:11434`)                                                                                           |
+| `OLLAMA_EMBED_MODEL`              | Ollama embed model (default: `nomic-embed-text`)                                                                                                |
+| `MIXEDBREAD_API_KEY`                | Optional — cloud rerank/embeddings only when explicitly enabled in config                                                                     |
 | `OPENAI_API_KEY`                    | Optional — cloud embeddings / semantic search                                                                                                 |
 | `BRAINDRAIN_DISABLE_DOCKER_SANDBOX` | Set to `1` to skip the Docker workflow sandbox                                                                                                |
 
@@ -429,6 +471,10 @@ braindrain/
 │   ├── telemetry.py            # token telemetry + JSONL logging
 │   ├── workflow_engine.py      # multi-step workflow execution + sandbox
 │   ├── tool_registry.py        # BM25 search + defer_loading
+│   ├── rerank.py               # optional search_index rerank (lexical / mixedbread / auto)
+│   ├── embeddings_client.py    # local-first embeddings (LM Studio, Ollama, cloud)
+│   ├── embeddings_router.py    # provider priority + quota backoff
+│   ├── repo_stats.py           # file-count gating for workflows
 │   └── types.py
 ├── config/
 │   ├── bundles/                # bundle manifests (`core`, `comms`, …) for prime_workspace

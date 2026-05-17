@@ -72,8 +72,8 @@ class EmbeddingsRouter:
         for p in self.providers:
             st = self._state[p.name]
 
-            # Require key for cloud providers if configured that way.
-            if p.api_key_env:
+            # Require key for cloud providers; local LM Studio / Ollama often need none.
+            if p.api_key_env and p.kind not in ("ollama", "openai_compat", "local_lmstudio", "local_ollama"):
                 if not os.environ.get(p.api_key_env):
                     continue
 

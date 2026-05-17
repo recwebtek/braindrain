@@ -46,6 +46,7 @@ from braindrain.scriptlib import (
 from braindrain.instrumentation import make_observe_mcp_tool
 from braindrain.telemetry import telemetry_from_config
 from braindrain.mcp_catalog import export_mcp_catalog_async
+from braindrain.rerank import maybe_rerank_search_results
 from braindrain.session_compaction import (
     build_compact_package,
     index_package_in_context_mode,
@@ -599,17 +600,40 @@ async def route_output(
 
 
 @mcp.tool()
-async def search_index(query: str, limit: int = 5) -> dict:
+async def search_index(query: str, limit: int = 5, rerank: bool | None = None) -> dict:
     """
     Convenience wrapper for context-mode ctx_search.
     Use when you have a handle/source and want to retrieve only relevant chunks.
+
+    Primary retrieval is context-mode FTS5 — no embedding API required.
+
+    Optional rerank when `modules.tool_gate.rerank_on_search` is true (or `rerank=True`):
+    `rerank_provider` none (default) | lexical (offline) | mixedbread | auto.
     """
     client = _get_context_mode_client()
     if client is None:
         return {"error": "context_mode is not configured; cannot search"}
     try:
         results = await client.search(query=query, limit=limit)
-        return {"query": query, "limit": limit, "results": results}
+        modules = config.get("modules", {}) or {}
+        tool_gate = modules.get("tool_gate", {}) if isinstance(modules, dict) else {}
+        embeddings_cfg = getattr(config.data, "embeddings", None) or config.get("embeddings", {}) or {}
+        do_rerank = rerank if rerank is not None else bool(tool_gate.get("rerank_on_search", False))
+        rerank_meta: dict = {"requested": bool(do_rerank)}
+        if do_rerank:
+            results, rerank_meta = maybe_rerank_search_results(
+                query=query,
+                results=results,
+                embeddings_cfg=embeddings_cfg if isinstance(embeddings_cfg, dict) else {},
+                tool_gate_cfg=tool_gate if isinstance(tool_gate, dict) else {},
+                limit=limit,
+            )
+        return {
+            "query": query,
+            "limit": limit,
+            "results": results,
+            "rerank": rerank_meta,
+        }
     except MCPProtocolError as e:
         return {"error": f"context-mode search failed: {e}"}
 
