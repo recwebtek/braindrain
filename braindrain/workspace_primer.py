@@ -953,12 +953,23 @@ def create_prime_snapshot(target_dir: Path, *, dry_run: bool = False) -> dict[st
 
 def verify_prime_install(target_dir: Path, bundle_manifest: dict) -> dict:
     """Run a lightweight verification checklist after prime."""
+    bundle_agents = bundle_manifest.get("agents") or []
+    cursor_agents_dir = target_dir / ".cursor" / "agents"
+    template_count = len(list(AGENT_TEMPLATES_DIR.glob("*.md"))) if AGENT_TEMPLATES_DIR.exists() else 0
+    deployed_agent_files = (
+        len(list(cursor_agents_dir.glob("*.md"))) if cursor_agents_dir.is_dir() else 0
+    )
+
     checks = {
         "bundle_manifest_loaded": bool(bundle_manifest),
         "ruler_config_exists": (target_dir / ".ruler" / "ruler.toml").exists(),
         "memory_file_exists": (target_dir / DEFAULT_MEMORY_FILE).exists(),
         "index_file_exists": (target_dir / DEFAULT_INDEX_FILE).exists(),
     }
+    if "cursor" in bundle_agents and template_count > 0:
+        checks["cursor_agents_dir_exists"] = cursor_agents_dir.is_dir()
+        checks["cursor_agents_deployed"] = deployed_agent_files >= template_count
+
     return {
         "ok": all(checks.values()),
         "checks": checks,

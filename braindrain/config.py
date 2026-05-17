@@ -71,6 +71,7 @@ class Config:
                     input_examples=wf.get("input_examples", []),
                     required_roles=wf.get("required_roles", []),
                     output_mode=wf.get("output_mode", "compact"),
+                    options=wf.get("options", {}) or {},
                 )
             )
 
@@ -108,6 +109,7 @@ class Config:
             dreaming=raw.get("dreaming", {}),
             provider_context=raw.get("provider_context", {}),
             provenance=raw.get("provenance", {}),
+            embeddings=raw.get("embeddings", {}) or {},
         )
 
     def reload(self) -> None:
@@ -171,7 +173,10 @@ class Config:
                     "name": wf.name,
                     "description": wf.description,
                     "token_budget": wf.token_budget,
+                    "model": wf.model,
+                    "plan_before_run": wf.plan_before_run,
                     "steps": wf.steps,
+                    "options": wf.options,
                 }
                 for wf in self._config.workflows
             ],
