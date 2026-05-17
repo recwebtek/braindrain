@@ -13,15 +13,50 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Protocol
+
+
+class TokenEstimator(Protocol):
+    def estimate(self, text: str) -> int: ...
+
+
+class CharDiv4Estimator:
+    def estimate(self, text: str) -> int:
+        if not text:
+            return 0
+        return max(1, len(text) // 4)
+
+
+class TiktokenEstimator:
+    def __init__(self, model: str = "cl100k_base") -> None:
+        import tiktoken
+
+        self._enc = tiktoken.get_encoding(model)
+
+    def estimate(self, text: str) -> int:
+        if not text:
+            return 0
+        return max(1, len(self._enc.encode(text)))
+
+
+def build_estimator(cost_tracking: dict[str, Any]) -> TokenEstimator:
+    name = str(cost_tracking.get("estimator", "chars") or "chars").lower()
+    if name == "tiktoken":
+        try:
+            return TiktokenEstimator()
+        except Exception:
+            pass
+    return CharDiv4Estimator()
+
+
+def estimate_tokens(text: str, estimator: Optional[TokenEstimator] = None) -> int:
+    est = estimator or CharDiv4Estimator()
+    return est.estimate(text)
 
 
 def estimate_claude_tokens(text: str) -> int:
-    # Simple, fast approximation (~4 chars/token English-ish). Good enough to
-    # prove directionality; can be replaced with provider-native counts later.
-    if not text:
-        return 0
-    return max(1, len(text) // 4)
+    """Backward-compatible char/4 estimator."""
+    return CharDiv4Estimator().estimate(text)
 
 
 # Regex patterns for redaction (pre-compiled for performance)
@@ -56,6 +91,10 @@ class TelemetrySession:
     started_at: float = field(default_factory=time.time)
     tools: dict[str, ToolAggregate] = field(default_factory=dict)
     cache_hits: int = 0
+    cost_avoided_usd: float = 0.0
+    estimator: TokenEstimator = field(default_factory=CharDiv4Estimator)
+    rates: dict[str, float] = field(default_factory=dict)
+    _env_context_hash: str | None = None
     module_attribution: dict[str, int] = field(
         default_factory=lambda: {
             "tool_gate": 0,
@@ -69,7 +108,6 @@ class TelemetrySession:
         try:
             self.log_file.parent.mkdir(parents=True, exist_ok=True)
         except PermissionError:
-            # Fallback to current working directory if home dir is restricted
             fallback = Path(".logs") / self.log_file.name
             if self.log_file != fallback:
                 self.log_file = fallback
@@ -114,13 +152,18 @@ class TelemetrySession:
             with open(self.log_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(sanitized_obj, ensure_ascii=False) + "\n")
         except PermissionError:
-            # Last resort: just ignore or print to stderr if even fallback fails
             import sys
 
             print(
                 f"Telemetry warning: could not write to {self.log_file}",
                 file=sys.stderr,
             )
+
+    def _cost_avoided_usd(self, saved_tokens: int) -> float:
+        if saved_tokens <= 0:
+            return 0.0
+        input_rate = float(self.rates.get("input_per_1m", 1.25) or 1.25)
+        return (saved_tokens / 1_000_000.0) * input_rate
 
     def log_error(self, error: str, context: Optional[dict[str, Any]] = None) -> None:
         """
@@ -129,11 +172,9 @@ class TelemetrySession:
         """
         from datetime import datetime
 
-        # 1. Sanitize error string and context
         sanitized_error = self._sanitize_data(error)
         sanitized_context = self._sanitize_data(context or {})
 
-        # 2. Prepare event
         event = {
             "ts": time.time(),
             "type": "error",
@@ -141,28 +182,42 @@ class TelemetrySession:
             "context": sanitized_context,
         }
 
-        # 3. Write to daily debug report in .logs/
-        # Use project root for .logs/ (assumed to be current working directory or relative to it)
         date_str = datetime.now().strftime("%Y-%m-%d")
         debug_log_path = Path(".logs") / f"braindrain_debug_report_{date_str}.md"
-
-        # Ensure .logs exists
         debug_log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Append to markdown report
         header_exists = debug_log_path.exists()
         with open(debug_log_path, "a", encoding="utf-8") as f:
             if not header_exists:
                 f.write(f"# BRAINDRAIN Debug Report — {date_str}\n\n")
-
             f.write(f"### [{datetime.now().strftime('%H:%M:%S')}] Error\n")
             f.write(f"- **Message**: {sanitized_error}\n")
             if sanitized_context:
                 f.write(f"- **Context**: `{json.dumps(sanitized_context)}`\n")
             f.write("\n---\n\n")
 
-        # Also append to session JSONL (via _append_jsonl which handles sanitization)
         self._append_jsonl(event)
+
+    def record_cache_hit(
+        self,
+        *,
+        tool_name: str,
+        payload_hash: str,
+    ) -> bool:
+        """Increment cache_hits when prefix-stable payload is unchanged (e.g. env context)."""
+        prior = self._env_context_hash
+        self._env_context_hash = payload_hash
+        if prior is not None and prior == payload_hash:
+            self.cache_hits += 1
+            event = {
+                "ts": time.time(),
+                "type": "cache_hit",
+                "tool": tool_name,
+                "payload_hash": payload_hash,
+            }
+            self._append_jsonl(event)
+            return True
+        return False
 
     def record(
         self,
@@ -173,8 +228,8 @@ class TelemetrySession:
         module: str = "output_sandbox",
         meta: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
-        raw_tokens = estimate_claude_tokens(raw_text)
-        actual_tokens = estimate_claude_tokens(actual_text)
+        raw_tokens = self.estimator.estimate(raw_text)
+        actual_tokens = self.estimator.estimate(actual_text)
 
         agg = self.tools.setdefault(tool_name, ToolAggregate())
         agg.calls += 1
@@ -183,6 +238,7 @@ class TelemetrySession:
 
         saved = max(0, raw_tokens - actual_tokens)
         self.module_attribution[module] = self.module_attribution.get(module, 0) + saved
+        self.cost_avoided_usd += self._cost_avoided_usd(saved)
 
         event = {
             "ts": time.time(),
@@ -191,6 +247,7 @@ class TelemetrySession:
             "tokens_in_raw_est": raw_tokens,
             "tokens_in_actual_est": actual_tokens,
             "tokens_saved_est": saved,
+            "cost_avoided_usd_est": round(self._cost_avoided_usd(saved), 6),
             "meta": meta or {},
         }
         # Sanitize event before returning and before appending to JSONL
@@ -211,6 +268,7 @@ class TelemetrySession:
             "tokens_saved_est": totals_saved,
             "saved_pct_est": round(pct, 2),
             "cache_hits": self.cache_hits,
+            "cost_avoided_usd": round(self.cost_avoided_usd, 6),
             "module_attribution": self.module_attribution,
             "tools": {
                 name: {
@@ -230,4 +288,15 @@ class TelemetrySession:
 def telemetry_from_config(cost_tracking: dict[str, Any]) -> TelemetrySession:
     log_path = cost_tracking.get("log_file") or "~/.braindrain/costs/session.jsonl"
     expanded = os.path.expanduser(str(log_path))
-    return TelemetrySession(log_file=Path(expanded))
+    rates = cost_tracking.get("rates") or {}
+    if not isinstance(rates, dict):
+        rates = {}
+    return TelemetrySession(
+        log_file=Path(expanded),
+        estimator=build_estimator(cost_tracking),
+        rates={
+            "input_per_1m": float(rates.get("input_per_1m", 1.25) or 1.25),
+            "output_per_1m": float(rates.get("output_per_1m", 6.0) or 6.0),
+            "cache_read_per_1m": float(rates.get("cache_read_per_1m", 0.25) or 0.25),
+        },
+    )
