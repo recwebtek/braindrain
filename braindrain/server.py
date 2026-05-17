@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from fastmcp import FastMCP
 
 from braindrain.config import Config
+from braindrain.exec_path import ensure_node_path_in_environ
 from braindrain.context_mode_client import ContextModeClient, MCPProtocolError
 from braindrain.dream import DreamEngine
 from braindrain.env_probe import get_env_context as _probe_env_context
@@ -82,6 +83,8 @@ for _env_name in (".env.dev", ".env.prod", ".env"):
     if _env_path.exists():
         load_dotenv(dotenv_path=_env_path, override=False)
         break
+
+ensure_node_path_in_environ()
 
 config = Config(CONFIG_PATH)
 registry = ToolRegistry(config.data)

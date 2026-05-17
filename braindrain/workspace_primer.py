@@ -1149,7 +1149,11 @@ def run_ruler_apply(
             "stderr": "",
         }
 
-    cmd = ["npx", "--yes", "@intellectronica/ruler", "apply",
+    from braindrain.exec_path import ensure_node_path_in_environ, resolve_executable
+
+    ensure_node_path_in_environ()
+    npx = resolve_executable("npx") or "npx"
+    cmd = [npx, "--yes", "@intellectronica/ruler", "apply",
            "--config", str(ruler_config)]
     if dry_run:
         cmd.append("--dry-run")
