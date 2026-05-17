@@ -43,6 +43,7 @@ from braindrain.scriptlib import (
 )
 from braindrain.instrumentation import make_observe_mcp_tool
 from braindrain.telemetry import telemetry_from_config
+from braindrain.mcp_catalog import export_mcp_catalog_async
 from braindrain.token_checkpoints import append_checkpoint as _append_token_checkpoint
 from braindrain.tool_registry import ToolRegistry
 from braindrain.workflow_engine import WorkflowEngine
@@ -631,6 +632,23 @@ def record_token_checkpoint(
         context_tags=context_tags,
         telemetry=telemetry,
         tool="record_token_checkpoint",
+    )
+
+
+@mcp.tool()
+async def export_mcp_catalog(path: str = ".", dry_run: bool = False) -> dict:
+    """
+    Export MCP tool catalog markdown for folder-discovery.
+
+    Writes `.braindrain/mcp-catalog/<server>/tools/*.md` from hub_config external
+    servers plus native braindrain MCP tools. Use `rg` on the catalog before loading
+    heavy deferred servers.
+    """
+    return await export_mcp_catalog_async(
+        config=config,
+        mcp_server=mcp,
+        project_root=Path(path).resolve(),
+        dry_run=dry_run,
     )
 
 

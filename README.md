@@ -51,6 +51,7 @@ OS environment data is probed once, cached locally, and served instantly on ever
 | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `search_tools(query, top_k=5)` | Before loading any external MCP tool. Searches the configured tool registry by capability. Returns lightweight references — not full definitions. Prevents loading 26K-token tool schemas unnecessarily. |
 | `get_available_tools()`        | Lists all configured tools and whether they are HOT (always loaded) or deferred (loaded on demand).                                                                                                      |
+| `export_mcp_catalog(path=".")` | Writes `.braindrain/mcp-catalog/<server>/tools/*.md` for folder-discovery. Run after `hub_config.yaml` changes; use `rg` on the catalog before loading heavy deferred MCP servers.                      |
 
 
 ### Output routing
