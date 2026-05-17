@@ -253,7 +253,7 @@ cost_tracking:
   log_file: ~/.braindrain/costs/session.jsonl
   estimator: chars # chars | tiktoken
   route_threshold_chars: 4096
-  auto_route_output: false # P1.1 enforces threshold; keep false until routed
+  auto_route_output: true
   rates:
     input_per_1m: 1.25
     output_per_1m: 6.0

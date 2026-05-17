@@ -317,6 +317,28 @@ def _mcp_tool_with_observer(*args, **kwargs):
 mcp.tool = _mcp_tool_with_observer
 
 
+def _cost_tracking_cfg() -> dict:
+    return config.get("cost_tracking", {}) or {}
+
+
+def _route_threshold_chars(min_chars: int) -> int:
+    cfg = _cost_tracking_cfg()
+    configured = cfg.get("route_threshold_chars")
+    if configured is not None:
+        return int(configured)
+    return min_chars
+
+
+def _should_route_output(text: str, *, min_chars: int, force_inline: bool) -> bool:
+    if force_inline:
+        return False
+    threshold = _route_threshold_chars(min_chars)
+    cfg = _cost_tracking_cfg()
+    if bool(cfg.get("auto_route_output", False)):
+        return len(text) >= threshold
+    return should_route(text, min_chars=threshold)
+
+
 session_stats = {
     "note": "deprecated: use telemetry snapshot"
 }  # kept for backwards compatibility
@@ -496,6 +518,7 @@ async def route_output(
     intent: str | None = None,
     min_chars: int = 5000,
     force_index: bool = False,
+    force_inline: bool = False,
 ) -> dict:
     """
     Route large text outputs through context-mode's FTS5 index to avoid dumping
@@ -504,8 +527,10 @@ async def route_output(
     - If content is small, returns it directly.
     - If large (or force_index), indexes into context-mode via ctx_index and returns a handle
       plus suggested ctx_search queries.
+    - When cost_tracking.auto_route_output is true, uses route_threshold_chars from config.
+    - Set force_inline=true to skip auto-routing and return inline text when allowed.
     """
-    if not force_index and not should_route(text, min_chars=min_chars):
+    if not force_index and not _should_route_output(text, min_chars=min_chars, force_inline=force_inline):
         return {
             "routed": False,
             "source": source,
@@ -541,9 +566,13 @@ async def route_output(
         "routed": True,
         "source": source,
         "handle": routed.handle,
+        "index_id": routed.handle,
         "bytes_raw": routed.bytes_raw,
         "preview": routed.preview,
         "suggested_queries": routed.suggested_queries,
+        "retrieval_hint": (
+            f"Call search_index with query handle:{routed.handle} or a suggested_queries entry."
+        ),
         "context_mode": {
             "indexed_via": "ctx_index",
             "index_result": index_result,
@@ -551,7 +580,7 @@ async def route_output(
         "next_steps": {
             "use_ctx_search": True,
             "examples": [
-                {"tool": "ctx_search", "query": q} for q in routed.suggested_queries[:3]
+                {"tool": "search_index", "query": q} for q in routed.suggested_queries[:3]
             ],
         },
     }
