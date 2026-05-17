@@ -1222,6 +1222,28 @@ and stable workspace facts. Do not store secrets or one-off transient notes here
 - (add stable, long-lived facts only)
 """
 
+    ops_template = """# BRAINDRAIN OPS
+
+Machine-local operational notes for this workspace. Do not commit `.braindrain/`.
+
+## Session compaction (context-mode)
+
+- End turns with `touch_session(..., end_session=true)` to emit a ≤2 KB structured package:
+  decisions, files_touched, failures, open_todos.
+- When context-mode is configured, the package is indexed for `search_index` retrieval
+  (`context_index_handle` + `retrieval_hint` in the tool response).
+- Pair with Cursor/context-mode **SessionStart** / **PreCompact** hooks: load the latest
+  `get_session_summary()` or `search_index` by handle before starting a new thread.
+- Re-run `export_mcp_catalog()` after `hub_config.yaml` MCP server changes.
+
+## Token telemetry
+
+- Checkpoints: `record_token_checkpoint(phase, task, note, context_tags)`.
+- Dashboard: `get_token_dashboard()` / `get_token_stats()`.
+- Source-of-truth JSONL: `~/.braindrain/costs/session.jsonl` (optional mirror:
+  `.braindrain/token-metrics.jsonl`).
+"""
+
     results: dict[str, dict[str, str | bool]] = {
         "memory_file": {
             "path": str(memory_file),
@@ -1233,6 +1255,11 @@ and stable workspace facts. Do not store secrets or one-off transient notes here
             "created": False,
             "exists": index_file.exists(),
         },
+        "ops_file": {
+            "path": str(target_dir / BRAINDRAIN_DIR / "OPS.md"),
+            "created": False,
+            "exists": (target_dir / BRAINDRAIN_DIR / "OPS.md").exists(),
+        },
     }
 
     if dry_run:
@@ -1240,6 +1267,8 @@ and stable workspace facts. Do not store secrets or one-off transient notes here
             results["memory_file"]["would_create"] = True
         if not index_file.exists():
             results["index_file"]["would_create"] = True
+        if not results["ops_file"]["exists"]:
+            results["ops_file"]["would_create"] = True
         return {"ok": True, "dry_run": True, "artifacts": results}
 
     # One-time migration from legacy .devdocs/ to .braindrain/.
@@ -1256,6 +1285,12 @@ and stable workspace facts. Do not store secrets or one-off transient notes here
         index_file.write_text("{}\n", encoding="utf-8")
         results["index_file"]["created"] = True
         results["index_file"]["exists"] = True
+    ops_file = target_dir / BRAINDRAIN_DIR / "OPS.md"
+    if not ops_file.exists():
+        ops_file.parent.mkdir(parents=True, exist_ok=True)
+        ops_file.write_text(ops_template, encoding="utf-8")
+        results["ops_file"]["created"] = True
+        results["ops_file"]["exists"] = True
     else:
         # Validate index JSON and preserve existing content.
         try:
