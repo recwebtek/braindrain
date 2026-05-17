@@ -43,6 +43,7 @@ from braindrain.scriptlib import (
 )
 from braindrain.instrumentation import make_observe_mcp_tool
 from braindrain.telemetry import telemetry_from_config
+from braindrain.token_checkpoints import append_checkpoint as _append_token_checkpoint
 from braindrain.tool_registry import ToolRegistry
 from braindrain.workflow_engine import WorkflowEngine
 from braindrain.session import EpisodeRecord, SessionStore
@@ -577,6 +578,31 @@ async def search_index(query: str, limit: int = 5) -> dict:
 async def get_token_dashboard() -> dict:
     """Compact token-savings dashboard (estimated tokens, Claude-focused)."""
     return telemetry.snapshot()
+
+
+@mcp.tool()
+def record_token_checkpoint(
+    phase: str,
+    task: str,
+    note: str = "",
+    context_tags: list[str] | None = None,
+) -> dict:
+    """
+    Append a schema 1.0 token checkpoint to `.braindrain/token-metrics.jsonl`.
+
+    Phases: start | pre_high_cost | post_high_cost | milestone_close | end
+    """
+    cost_cfg = config.get("cost_tracking", {}) or {}
+    if not bool(cost_cfg.get("enabled", True)):
+        return {"ok": False, "status": "disabled", "message": "cost_tracking.enabled is false"}
+    return _append_token_checkpoint(
+        phase=phase,
+        task=task,
+        note=note,
+        context_tags=context_tags,
+        telemetry=telemetry,
+        tool="record_token_checkpoint",
+    )
 
 
 @mcp.tool()
