@@ -33,6 +33,11 @@ For each stage:
    - `[BUILD]` → handle directly or delegate to `toolcall` subagent
    - Any new freestanding reusable ops, test-helper, or command script is implicitly `[SCRIPTLIB]` first, even if the implementation task is otherwise `[BUILD]`
 3. **Execute** — spawn sub-agents for parallel-safe tasks; serialize dependent ones
+   - **Token budget:** max **3** parallel Task/subagent dispatches (prefer **2** under pressure)
+   - **Before batch:** `get_token_dashboard()` + `record_token_checkpoint(phase="pre_high_cost", context_tags=["subagent"])`
+   - **After batch:** `get_token_dashboard()` + `record_token_checkpoint(phase="post_high_cost", context_tags=["subagent"])`
+   - **Models:** `testops` → flash/fast; `toolcall`/`research`/`embedding` → `fast`; `models.tier_local` for simple local tasks only
+   - **Large output:** `route_output()` → `search_index()` — never paste raw subagent blobs into coordinator context
 4. **Verify** — check each sub-agent's result object before marking complete
 5. **Checkpoint** — update `.cursor/PROGRESS.md` after each task
 6. **Advance** — when all stage tasks pass, move to next stage
