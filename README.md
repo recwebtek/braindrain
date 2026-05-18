@@ -51,6 +51,7 @@ OS environment data is probed once, cached locally, and served instantly on ever
 | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `search_tools(query, top_k=5)` | Before loading any external MCP tool. Searches the configured tool registry by capability. Returns lightweight references — not full definitions. Prevents loading 26K-token tool schemas unnecessarily. |
 | `get_available_tools()`        | Lists all configured tools and whether they are HOT (always loaded) or deferred (loaded on demand).                                                                                                      |
+| `export_mcp_catalog(path=".")` | Writes `.braindrain/mcp-catalog/<server>/tools/*.md` for folder-discovery. Run after `hub_config.yaml` changes; use `rg` on the catalog before loading heavy deferred MCP servers.                      |
 
 
 ### Output routing
@@ -96,6 +97,9 @@ OS environment data is probed once, cached locally, and served instantly on ever
 | ----------------------- | ---------------------------------------------------------------- |
 | `get_token_dashboard()` | Quick snapshot of estimated tokens saved vs raw in this session. |
 | `get_token_stats()`     | Full breakdown: per-tool savings, cache hits, cost avoided.      |
+| `record_token_checkpoint(phase, task, note, context_tags, path=".")` | Append schema `1.0` rows to `<path>/.braindrain/token-metrics.jsonl`. Use the **workspace root** for `path` (same as `export_mcp_catalog`), not the JSONL file path. |
+
+Async MCP tools record observer `tool_call` rows via `asyncio.to_thread` so SQLite writes do not block the event loop.
 
 
 ### Token Checkpoint Protocol
@@ -125,7 +129,7 @@ Bad vs good large-output handling:
 
 ### Token Metrics Contract (schema `1.0`)
 
-Use `.braindrain/token-metrics.jsonl` as an optional machine-local checkpoint stream for checkpoint records. Required fields per line:
+Use `<workspace>/.braindrain/token-metrics.jsonl` as an optional machine-local checkpoint stream for checkpoint records (pass workspace root via `record_token_checkpoint(..., path=".")` or `export_mcp_catalog(path=".")`). Required fields per line:
 
 - `schema_version` (`1.0`)
 - `timestamp` (ISO-8601 UTC)

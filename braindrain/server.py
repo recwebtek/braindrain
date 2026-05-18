@@ -41,7 +41,10 @@ from braindrain.scriptlib import (
     run_maintenance as _scriptlib_run_maintenance,
     search as _scriptlib_search,
 )
+from braindrain.instrumentation import make_observe_mcp_tool
 from braindrain.telemetry import telemetry_from_config
+from braindrain.mcp_catalog import export_mcp_catalog_async
+from braindrain.token_checkpoints import append_checkpoint as _append_token_checkpoint
 from braindrain.tool_registry import ToolRegistry
 from braindrain.workflow_engine import WorkflowEngine
 from braindrain.session import EpisodeRecord, SessionStore
@@ -248,6 +251,95 @@ def _get_dream_engine() -> DreamEngine:
     return _dream_engine
 
 
+_DEFAULT_HOT_TOOLS = frozenset(
+    {
+        "route_output",
+        "search_index",
+        "search_tools",
+        "get_env_context",
+        "refresh_env_context",
+        "touch_session",
+        "get_session_summary",
+        "record_episode",
+        "list_episodes",
+        "store_fact",
+        "query_facts",
+        "cognitive_recall",
+        "get_memory_metrics",
+    }
+)
+
+
+def _observer_enabled() -> bool:
+    cfg = config.get("observer", {}) or {}
+    return bool(cfg.get("enabled", True))
+
+
+def _observer_hash_args() -> bool:
+    cfg = config.get("observer", {}) or {}
+    return bool(cfg.get("hash_args", True))
+
+
+def _should_wrap_tool(tool_name: str) -> bool:
+    cfg = config.get("observer", {}) or {}
+    if not _observer_enabled():
+        return False
+    if bool(cfg.get("wrap_all_tools", True)):
+        return True
+    hot = cfg.get("hot_tools")
+    if hot:
+        return tool_name in set(hot)
+    return tool_name in _DEFAULT_HOT_TOOLS
+
+
+observe_mcp_tool = make_observe_mcp_tool(
+    telemetry=telemetry,
+    observer_enabled=_observer_enabled,
+    observer_store_getter=_get_observer_store,
+    hash_args_enabled=_observer_hash_args,
+    wrap_tool=_should_wrap_tool,
+)
+
+_original_mcp_tool = mcp.tool
+
+
+def _mcp_tool_with_observer(*args, **kwargs):
+    def decorator(fn):
+        wrapped = observe_mcp_tool(fn) if _should_wrap_tool(fn.__name__) else fn
+        return _original_mcp_tool(*args, **kwargs)(wrapped)
+
+    if args and callable(args[0]) and not kwargs:
+        fn = args[0]
+        wrapped = observe_mcp_tool(fn) if _should_wrap_tool(fn.__name__) else fn
+        return _original_mcp_tool(wrapped)
+    return decorator
+
+
+mcp.tool = _mcp_tool_with_observer
+
+
+def _cost_tracking_cfg() -> dict:
+    return config.get("cost_tracking", {}) or {}
+
+
+def _route_threshold_chars(min_chars: int) -> int:
+    cfg = _cost_tracking_cfg()
+    configured = cfg.get("route_threshold_chars")
+    if configured is not None:
+        return int(configured)
+    return min_chars
+
+
+def _should_route_output(text: str, *, min_chars: int, force_inline: bool) -> bool:
+    if force_inline:
+        return False
+    threshold = _route_threshold_chars(min_chars)
+    cfg = _cost_tracking_cfg()
+    if bool(cfg.get("auto_route_output", False)):
+        return len(text) >= threshold
+    return should_route(text, min_chars=threshold)
+
+
 session_stats = {
     "note": "deprecated: use telemetry snapshot"
 }  # kept for backwards compatibility
@@ -427,6 +519,7 @@ async def route_output(
     intent: str | None = None,
     min_chars: int = 5000,
     force_index: bool = False,
+    force_inline: bool = False,
 ) -> dict:
     """
     Route large text outputs through context-mode's FTS5 index to avoid dumping
@@ -435,36 +528,26 @@ async def route_output(
     - If content is small, returns it directly.
     - If large (or force_index), indexes into context-mode via ctx_index and returns a handle
       plus suggested ctx_search queries.
+    - When cost_tracking.auto_route_output is true, uses route_threshold_chars from config.
+    - Set force_inline=true to skip auto-routing and return inline text when allowed.
     """
-    if not force_index and not should_route(text, min_chars=min_chars):
-        resp = {
+    if not force_index and not _should_route_output(text, min_chars=min_chars, force_inline=force_inline):
+        return {
             "routed": False,
             "source": source,
             "bytes_raw": len(text.encode("utf-8", errors="ignore")),
             "text": text,
         }
-        telemetry.record(
-            tool_name="route_output",
-            raw_text=text,
-            actual_text=json.dumps(resp, ensure_ascii=False),
-        )
-        return resp
 
     client = _get_context_mode_client()
     if client is None:
-        resp = {
+        return {
             "routed": False,
             "error": "context_mode is not configured; cannot index",
             "source": source,
             "bytes_raw": len(text.encode("utf-8", errors="ignore")),
             "text_preview": text[:400],
         }
-        telemetry.record(
-            tool_name="route_output",
-            raw_text=text,
-            actual_text=json.dumps(resp, ensure_ascii=False),
-        )
-        return resp
 
     routed, md = build_routed_output(source=source, content=text, intent=intent)
     try:
@@ -472,27 +555,25 @@ async def route_output(
             content_md=md, source=source, intent=intent
         )
     except MCPProtocolError as e:
-        resp = {
+        return {
             "routed": False,
             "error": f"context-mode indexing failed: {e}",
             "source": source,
             "bytes_raw": routed.bytes_raw,
             "text_preview": routed.preview,
         }
-        telemetry.record(
-            tool_name="route_output",
-            raw_text=text,
-            actual_text=json.dumps(resp, ensure_ascii=False),
-        )
-        return resp
 
     resp = {
         "routed": True,
         "source": source,
         "handle": routed.handle,
+        "index_id": routed.handle,
         "bytes_raw": routed.bytes_raw,
         "preview": routed.preview,
         "suggested_queries": routed.suggested_queries,
+        "retrieval_hint": (
+            f"Call search_index with query handle:{routed.handle} or a suggested_queries entry."
+        ),
         "context_mode": {
             "indexed_via": "ctx_index",
             "index_result": index_result,
@@ -500,17 +581,10 @@ async def route_output(
         "next_steps": {
             "use_ctx_search": True,
             "examples": [
-                {"tool": "ctx_search", "query": q} for q in routed.suggested_queries[:3]
+                {"tool": "search_index", "query": q} for q in routed.suggested_queries[:3]
             ],
         },
     }
-    telemetry.record(
-        tool_name="route_output",
-        raw_text=text,
-        actual_text=json.dumps(resp, ensure_ascii=False),
-        module="output_sandbox",
-        meta={"handle": routed.handle, "source": source},
-    )
     return resp
 
 
@@ -522,36 +596,66 @@ async def search_index(query: str, limit: int = 5) -> dict:
     """
     client = _get_context_mode_client()
     if client is None:
-        resp = {"error": "context_mode is not configured; cannot search"}
-        telemetry.record(
-            tool_name="search_index",
-            raw_text=query,
-            actual_text=json.dumps(resp, ensure_ascii=False),
-        )
-        return resp
+        return {"error": "context_mode is not configured; cannot search"}
     try:
         results = await client.search(query=query, limit=limit)
-        resp = {"query": query, "limit": limit, "results": results}
-        telemetry.record(
-            tool_name="search_index",
-            raw_text=query,
-            actual_text=json.dumps(resp, ensure_ascii=False),
-        )
-        return resp
+        return {"query": query, "limit": limit, "results": results}
     except MCPProtocolError as e:
-        resp = {"error": f"context-mode search failed: {e}"}
-        telemetry.record(
-            tool_name="search_index",
-            raw_text=query,
-            actual_text=json.dumps(resp, ensure_ascii=False),
-        )
-        return resp
+        return {"error": f"context-mode search failed: {e}"}
 
 
 @mcp.tool()
 async def get_token_dashboard() -> dict:
     """Compact token-savings dashboard (estimated tokens, Claude-focused)."""
     return telemetry.snapshot()
+
+
+@mcp.tool()
+def record_token_checkpoint(
+    phase: str,
+    task: str,
+    note: str = "",
+    context_tags: list[str] | None = None,
+    path: str = ".",
+) -> dict:
+    """
+    Append a schema 1.0 token checkpoint to `.braindrain/token-metrics.jsonl`.
+
+    Phases: start | pre_high_cost | post_high_cost | milestone_close | end
+
+    ``path`` is the project/workspace root (same as ``export_mcp_catalog(path=...)``),
+    not the JSONL file path. Checkpoints are written to
+    ``<path>/.braindrain/token-metrics.jsonl``.
+    """
+    cost_cfg = config.get("cost_tracking", {}) or {}
+    if not bool(cost_cfg.get("enabled", True)):
+        return {"ok": False, "status": "disabled", "message": "cost_tracking.enabled is false"}
+    return _append_token_checkpoint(
+        phase=phase,
+        task=task,
+        note=note,
+        context_tags=context_tags,
+        telemetry=telemetry,
+        project_root=Path(path).resolve(),
+        tool="record_token_checkpoint",
+    )
+
+
+@mcp.tool()
+async def export_mcp_catalog(path: str = ".", dry_run: bool = False) -> dict:
+    """
+    Export MCP tool catalog markdown for folder-discovery.
+
+    Writes `.braindrain/mcp-catalog/<server>/tools/*.md` from hub_config external
+    servers plus native braindrain MCP tools. Use `rg` on the catalog before loading
+    heavy deferred servers.
+    """
+    return await export_mcp_catalog_async(
+        config=config,
+        mcp_server=mcp,
+        project_root=Path(path).resolve(),
+        dry_run=dry_run,
+    )
 
 
 @mcp.tool()
@@ -904,15 +1008,7 @@ def scriptlib_enable(
     dry_run: bool = False,
 ) -> dict:
     """Enable scriptlib for the project or global scope. Project enable harvests scripts by default."""
-    result = _scriptlib_enable(path, scope=scope, harvest=harvest, dry_run=dry_run)
-    telemetry.record(
-        tool_name="scriptlib_enable",
-        raw_text=path,
-        actual_text=json.dumps(result, ensure_ascii=False),
-        module="tool_gate",
-        meta={"scope": scope, "harvest": harvest, "dry_run": dry_run},
-    )
-    return result
+    return _scriptlib_enable(path, scope=scope, harvest=harvest, dry_run=dry_run)
 
 
 @mcp.tool()
@@ -922,15 +1018,7 @@ def scriptlib_disable(
     dry_run: bool = False,
 ) -> dict:
     """Disable scriptlib for the project or global scope without removing harvested files."""
-    result = _scriptlib_disable(path, scope=scope, dry_run=dry_run)
-    telemetry.record(
-        tool_name="scriptlib_disable",
-        raw_text=path,
-        actual_text=json.dumps(result, ensure_ascii=False),
-        module="tool_gate",
-        meta={"scope": scope, "dry_run": dry_run},
-    )
-    return result
+    return _scriptlib_disable(path, scope=scope, dry_run=dry_run)
 
 
 @mcp.tool()
@@ -939,15 +1027,7 @@ def scriptlib_harvest_workspace(
     dry_run: bool = False,
 ) -> dict:
     """Copy useful script-like files from the workspace into the local scriptlib catalog."""
-    result = _scriptlib_harvest_workspace(project_path=path, dry_run=dry_run)
-    telemetry.record(
-        tool_name="scriptlib_harvest_workspace",
-        raw_text=path,
-        actual_text=json.dumps(result, ensure_ascii=False),
-        module="tool_gate",
-        meta={"dry_run": dry_run},
-    )
-    return result
+    return _scriptlib_harvest_workspace(project_path=path, dry_run=dry_run)
 
 
 @mcp.tool()
@@ -961,7 +1041,7 @@ def scriptlib_search(
     limit: int = 5,
 ) -> dict:
     """Search project and global scriptlib entries with lightweight lexical ranking."""
-    result = _scriptlib_search(
+    return _scriptlib_search(
         query,
         project_path=path,
         capability=capability,
@@ -970,14 +1050,6 @@ def scriptlib_search(
         effect_tier=effect_tier,
         limit=limit,
     )
-    telemetry.record(
-        tool_name="scriptlib_search",
-        raw_text=query,
-        actual_text=json.dumps(result, ensure_ascii=False),
-        module="tool_gate",
-        meta={"path": path, "language": language, "harness": harness, "limit": limit},
-    )
-    return result
 
 
 @mcp.tool()
@@ -987,15 +1059,7 @@ def scriptlib_describe(
     variant: str | None = None,
 ) -> dict:
     """Return full metadata for a scriptlib entry."""
-    result = _scriptlib_describe(script_id, project_path=path, variant=variant)
-    telemetry.record(
-        tool_name="scriptlib_describe",
-        raw_text=script_id,
-        actual_text=json.dumps(result, ensure_ascii=False),
-        module="tool_gate",
-        meta={"path": path, "variant": variant},
-    )
-    return result
+    return _scriptlib_describe(script_id, project_path=path, variant=variant)
 
 
 @mcp.tool()
@@ -1008,7 +1072,7 @@ def scriptlib_run(
     timeout_seconds: int = 60,
 ) -> dict:
     """Run a scriptlib entry using native copy or restored source context."""
-    result = _scriptlib_run(
+    return _scriptlib_run(
         script_id,
         project_path=path,
         variant=variant,
@@ -1016,23 +1080,6 @@ def scriptlib_run(
         dry_run=dry_run,
         timeout_seconds=timeout_seconds,
     )
-    telemetry.record(
-        tool_name="scriptlib_run",
-        raw_text=script_id,
-        actual_text=json.dumps(
-            {
-                "ok": result.get("ok"),
-                "script_id": result.get("script_id"),
-                "execution_mode": result.get("execution_mode"),
-                "returncode": result.get("returncode"),
-                "error": result.get("error"),
-            },
-            ensure_ascii=False,
-        ),
-        module="tool_gate",
-        meta={"path": path, "variant": variant, "dry_run": dry_run},
-    )
-    return result
 
 
 @mcp.tool()
@@ -1042,19 +1089,11 @@ def scriptlib_fork(
     path: str = ".",
 ) -> dict:
     """Fork an existing scriptlib entry into a new version for safe modification."""
-    result = _scriptlib_fork(
+    return _scriptlib_fork(
         script_id,
         project_path=path,
         new_variant_or_version=new_variant_or_version,
     )
-    telemetry.record(
-        tool_name="scriptlib_fork",
-        raw_text=script_id,
-        actual_text=json.dumps(result, ensure_ascii=False),
-        module="tool_gate",
-        meta={"path": path, "new_variant_or_version": new_variant_or_version},
-    )
-    return result
 
 
 @mcp.tool()
@@ -1069,7 +1108,7 @@ def scriptlib_record_result(
     validate_native_copy: bool = False,
 ) -> dict:
     """Record a run result and update success score, mistakes, and validation state."""
-    result = _scriptlib_record_result(
+    return _scriptlib_record_result(
         script_id,
         project_path=path,
         variant=variant,
@@ -1079,20 +1118,6 @@ def scriptlib_record_result(
         promote_status=promote_status,
         validate_native_copy=validate_native_copy,
     )
-    telemetry.record(
-        tool_name="scriptlib_record_result",
-        raw_text=script_id,
-        actual_text=json.dumps(result, ensure_ascii=False),
-        module="tool_gate",
-        meta={
-            "path": path,
-            "variant": variant,
-            "outcome": outcome,
-            "promote_status": promote_status,
-            "validate_native_copy": validate_native_copy,
-        },
-    )
-    return result
 
 
 @mcp.tool()
@@ -1105,7 +1130,7 @@ def scriptlib_promote(
     dry_run: bool = False,
 ) -> dict:
     """Promote a validated project script into the shared personal scriptlib catalog."""
-    result = _scriptlib_promote(
+    return _scriptlib_promote(
         script_id,
         project_path=path,
         variant=variant,
@@ -1113,14 +1138,6 @@ def scriptlib_promote(
         approved=approved,
         dry_run=dry_run,
     )
-    telemetry.record(
-        tool_name="scriptlib_promote",
-        raw_text=script_id,
-        actual_text=json.dumps(result, ensure_ascii=False),
-        module="tool_gate",
-        meta={"path": path, "variant": variant, "channel": channel, "approved": approved, "dry_run": dry_run},
-    )
-    return result
 
 
 @mcp.tool()
@@ -1128,15 +1145,7 @@ def scriptlib_list_updates(
     path: str = ".",
 ) -> dict:
     """List pinned shared script artifacts with available updates for this workspace."""
-    result = _scriptlib_list_updates(project_path=path)
-    telemetry.record(
-        tool_name="scriptlib_list_updates",
-        raw_text=path,
-        actual_text=json.dumps(result, ensure_ascii=False),
-        module="tool_gate",
-        meta={"path": path},
-    )
-    return result
+    return _scriptlib_list_updates(project_path=path)
 
 
 @mcp.tool()
@@ -1149,7 +1158,7 @@ def scriptlib_apply_update(
     dry_run: bool = False,
 ) -> dict:
     """Pin or upgrade a shared script artifact in the current workspace."""
-    result = _scriptlib_apply_update(
+    return _scriptlib_apply_update(
         script_id,
         project_path=path,
         channel=channel,
@@ -1157,20 +1166,6 @@ def scriptlib_apply_update(
         approved=approved,
         dry_run=dry_run,
     )
-    telemetry.record(
-        tool_name="scriptlib_apply_update",
-        raw_text=script_id,
-        actual_text=json.dumps(result, ensure_ascii=False),
-        module="tool_gate",
-        meta={
-            "path": path,
-            "channel": channel,
-            "target_revision": target_revision,
-            "approved": approved,
-            "dry_run": dry_run,
-        },
-    )
-    return result
 
 
 @mcp.tool()
@@ -1181,20 +1176,12 @@ def scriptlib_run_maintenance(
     add_ignore_dirs: list[str] | None = None,
 ) -> dict:
     """Refresh indexes, surface duplicates and promotion candidates, and optionally persist ignore dirs."""
-    result = _scriptlib_run_maintenance(
+    return _scriptlib_run_maintenance(
         project_path=path,
         scope=scope,
         dry_run=dry_run,
         add_ignore_dirs=add_ignore_dirs,
     )
-    telemetry.record(
-        tool_name="scriptlib_run_maintenance",
-        raw_text=path,
-        actual_text=json.dumps(result, ensure_ascii=False),
-        module="tool_gate",
-        meta={"scope": scope, "dry_run": dry_run, "add_ignore_dirs": add_ignore_dirs or []},
-    )
-    return result
 
 
 @mcp.tool()
@@ -1204,15 +1191,7 @@ def scriptlib_catalog_status(
     limit: int = 20,
 ) -> dict:
     """Summarize local/shared scriptlib state, promotion candidates, pins, and updates."""
-    result = _scriptlib_catalog_status(project_path=path, include_entries=include_entries, limit=limit)
-    telemetry.record(
-        tool_name="scriptlib_catalog_status",
-        raw_text=path,
-        actual_text=json.dumps(result, ensure_ascii=False),
-        module="tool_gate",
-        meta={"include_entries": include_entries, "limit": limit},
-    )
-    return result
+    return _scriptlib_catalog_status(project_path=path, include_entries=include_entries, limit=limit)
 
 
 @mcp.tool()
@@ -1237,15 +1216,7 @@ def scriptlib_refresh_index(
             continue
         results.append(_scriptlib_refresh_index(root, dry_run=dry_run))
 
-    payload = {"ok": all(item.get("ok", False) for item in results), "scope": scope, "results": results}
-    telemetry.record(
-        tool_name="scriptlib_refresh_index",
-        raw_text=path,
-        actual_text=json.dumps(payload, ensure_ascii=False),
-        module="tool_gate",
-        meta={"scope": scope, "dry_run": dry_run},
-    )
-    return payload
+    return {"ok": all(item.get("ok", False) for item in results), "scope": scope, "results": results}
 
 
 @mcp.tool()
@@ -1324,37 +1295,6 @@ async def prime_workspace(
                 f"prime_workspace failed: {result.get('error') or result.get('ruler', {}).get('stderr')}",
                 context={"path": path, "agents": agents, "dry_run": dry_run},
             )
-
-        telemetry.record(
-            tool_name="prime_workspace",
-            raw_text=path,
-            actual_text=json.dumps(
-                {
-                    "new_files": result.get("templates", {}).get("new_files", 0),
-                    "updated_files": result.get("templates", {}).get("updated_files", 0),
-                },
-                ensure_ascii=False,
-            ),
-            module="tool_gate",
-            meta={
-                "target": path,
-                "dry_run": dry_run,
-                "sync_templates": sync_templates,
-                "sync_subagents": sync_subagents,
-                "all_agents": all_agents,
-                "local_only": local_only,
-                "resolved_agents": result.get("resolved_agents"),
-                "detect_method": result.get("detect_method"),
-                "cursor_rules": result.get("cursor_rules"),
-                "gitignore_protocol": result.get("gitignore_protocol"),
-                "cursor_mcp_json": result.get("cursor_mcp_json"),
-                "subagents": result.get("subagents"),
-                "codex_subagent_config": result.get("codex_subagent_config"),
-                "patch_user_cursor_mcp": patch_user_cursor_mcp,
-                "compact_mcp_response": compact_mcp_response,
-                "bundle": bundle,
-            },
-        )
         return result
     except Exception as e:
         telemetry.log_error(
@@ -1390,15 +1330,7 @@ def init_project_memory(path: str = ".", dry_run: bool = False) -> dict:
         if not target.exists():
             return {"ok": False, "error": f"Path does not exist: {target}"}
 
-        result = _initialize_project_memory(target, dry_run=dry_run)
-        telemetry.record(
-            tool_name="init_project_memory",
-            raw_text=path,
-            actual_text=json.dumps(result, ensure_ascii=False),
-            module="tool_gate",
-            meta={"target": str(target), "dry_run": dry_run},
-        )
-        return result
+        return _initialize_project_memory(target, dry_run=dry_run)
     except Exception as e:
         telemetry.log_error(
             f"init_project_memory exception: {e}",
