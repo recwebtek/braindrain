@@ -26,11 +26,16 @@ def estimate_claude_tokens(text: str) -> int:
 
 # Regex patterns for redaction (pre-compiled for performance)
 # Paths: /Users/..., /Volumes/..., /home/..., /root/...
-_PATH_RE = re.compile(r"(/Users/[^\s'\"]+|/Volumes/[^\s'\"]+|/home/[^\s'\"]+|/root/[^\s'\"]+)")
-# API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_), Google AI (AIza)
-_KEY_RE = re.compile(
-    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,})"
+# Stops at common delimiters: quotes, commas, newlines, tabs, semicolons, colons
+_PATH_RE = re.compile(
+    r"(/Users/[^'\",\n\t;:]+|/Volumes/[^'\",\n\t;:]+|/home/[^'\",\n\t;:]+|/root/[^'\",\n\t;:]+)"
 )
+# API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_), Google AI (AIza), AWS (AKIA), Slack (xox)
+_KEY_RE = re.compile(
+    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,}|AKIA[A-Z0-9]{16}|xox[baprs]-[a-zA-Z0-9-]{5,})"
+)
+# Generic secrets: redact values for keys matching these patterns
+_GENERIC_SECRET_RE = re.compile(r"password|secret|api_?key|token", re.IGNORECASE)
 
 
 @dataclass
@@ -82,16 +87,27 @@ class TelemetrySession:
     def _sanitize_data(self, data: Any) -> Any:
         """Recursive redaction of sensitive paths and API keys."""
 
-        def _do_sanitize(val: Any) -> Any:
+        def _do_sanitize(val: Any, key_name: str | None = None) -> Any:
             if isinstance(val, str):
+                # 1. Redact values for sensitive keys (e.g. password: "...")
+                if key_name and _GENERIC_SECRET_RE.search(key_name):
+                    return "[REDACTED_SECRET]"
+
                 # Optimization: skip regex overhead if the string has no characters indicating
-                # a potential sensitive path or API key. ~3.5x speedup for clean strings.
+                # a potential sensitive path or API key.
                 if (
                     "/" not in val
                     and "sk-" not in val
                     and "gsk_" not in val
                     and "hf_" not in val
                     and "AIza" not in val
+                    and "AKIA" not in val
+                    and "xox" not in val
+                    and "password" not in val.lower()
+                    and "secret" not in val.lower()
+                    and "apikey" not in val.lower()
+                    and "api_key" not in val.lower()
+                    and "token" not in val.lower()
                 ):
                     return val
 
@@ -99,9 +115,17 @@ class TelemetrySession:
                 val = _KEY_RE.sub("[REDACTED_KEY]", val)
                 return val
             if isinstance(val, dict):
-                return {k: _do_sanitize(v) for k, v in val.items()}
+                # Recursively sanitize keys (if strings) and values
+                return {
+                    _do_sanitize(k): _do_sanitize(
+                        v, key_name=str(k) if isinstance(k, (str, bytes)) else None
+                    )
+                    for k, v in val.items()
+                }
             if isinstance(val, list):
                 return [_do_sanitize(i) for i in val]
+            if isinstance(val, tuple):
+                return tuple(_do_sanitize(i) for i in val)
             return val
 
         return _do_sanitize(data)
