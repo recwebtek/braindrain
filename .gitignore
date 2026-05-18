@@ -60,6 +60,7 @@ tests/*
 !tests/test_telemetry_observer_bridge.py
 !tests/test_route_output_records_savings.py
 !tests/test_token_checkpoints.py
+!tests/test_exec_path.py
 
 # Ruler outputs at repo root (no leading dot)
 /AGENTS.md

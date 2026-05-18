@@ -29,6 +29,48 @@ Use this sequence to avoid wasting context tokens on environment probing and lar
 3. **Don’t paste big blobs into chat**: `route_output()` for large text; retrieve later with `search_index()`.
 4. **Checkpoint**: `get_token_dashboard()` at milestones to track savings.
 
+### Chat vs Agent mode (cost)
+
+- **Chat**: best for short Q&A and review; avoid pasting full plans, audit reports, or large tool dumps into the thread.
+- **Agent**: multi-step implementation; use `search_tools()` and the MCP catalog before loading deferred servers.
+- **Reset chat after plan stages**: when architect/coordinator planning finishes, start a **new chat** for build work. Carry state via `*.plan.md`, `_master.plan.md`, `get_session_summary()`, and `.braindrain/` memory — not the full planning transcript.
+
+### Output routing (enforced)
+
+- When `cost_tracking.auto_route_output` is enabled, payloads **>4096 chars** are indexed unless `force_inline=true`.
+- Always pair `route_output()` → `search_index()` using the returned `handle`, `index_id`, or `retrieval_hint` — never re-paste the raw blob into chat.
+
+### MCP catalog (folder discovery)
+
+- Run `export_mcp_catalog()` (or read `.braindrain/mcp-catalog/` after priming) before attaching heavy deferred MCP servers.
+- Discover capabilities with `rg` on catalog markdown (mirrors Cursor per-server tool folders).
+- Native braindrain tools are listed under `.braindrain/mcp-catalog/braindrain/tools/`.
+
+### Session compaction
+
+- During work: `touch_session(session_id, tool_name=..., files_modified=..., key_decision=...)`.
+- On stage end: `touch_session(..., end_session=true)` — emits a **≤2 KB** package (`decisions`, `files_touched`, `failures`, `open_todos`).
+- Retrieve via `get_session_summary(session_id)` or `search_index` when a `context_index_handle` is returned.
+- Pair with context-mode **SessionStart** / **PreCompact** hooks when configured.
+
+### Rule bulk cap (post-`prime_workspace` audit)
+
+Keep generated agent rules lean after priming:
+
+- One always-apply protocol surface (`braindrain.mdc` / `RULES.md`) — do **not** duplicate the full token table in every agent file.
+- Project-only facts stay in `project-rules.mdc` (from `.braindrain/AGENT_MEMORY.md`, `OPS.md`).
+- Deferred MCP tool definitions belong in `.braindrain/mcp-catalog/`, not inlined into rules.
+- Checklist: no duplicate checkpoint tables; link to this section instead of copying.
+
+### Subagent token budget (coordinator / Task tool)
+
+- **Parallel cap:** max **3** concurrent Task/subagent dispatches (use **2** under token pressure).
+- **Before a subagent batch:** `get_token_dashboard()` + `record_token_checkpoint(phase="pre_high_cost", context_tags=["subagent"])`.
+- **After a subagent batch:** `get_token_dashboard()` + `record_token_checkpoint(phase="post_high_cost", context_tags=["subagent"])`.
+- **Cheaper models:** `testops` → flash/fast tier; `toolcall` / `research` / `embedding` → `fast`; reserve heavier models for `[BUILD]` and architect/coordinator planning.
+- **`models.tier_local`** in `config/hub_config.yaml` is for routing/extraction/simple tasks (local LM Studio), not primary implementation agents.
+- Route large subagent output via `route_output()` → `search_index()`; do not inline into coordinator chat.
+
 ### Token Checkpoint Protocol (required)
 
 Use this protocol when capturing token observability data:
@@ -84,6 +126,10 @@ Example JSONL row:
 | `init_project_memory(path, dry_run=False)` | Initialize project memory artifacts |
 | `get_token_dashboard()` | Token savings snapshot |
 | `get_token_stats()` | Full session cost breakdown |
+| `record_token_checkpoint(phase, task, ...)` | Append schema 1.0 row to `.braindrain/token-metrics.jsonl` |
+| `export_mcp_catalog(dry_run=False)` | Write `.braindrain/mcp-catalog/` for `rg` discovery |
+| `touch_session(session_id, ...)` | Session telemetry; `end_session=true` for compact package |
+| `get_session_summary(session_id)` | Latest ≤2 KB session summary + retrieval hint |
 | `get_available_tools()` | Show hot vs deferred tools |
 | `ping()` | Health check |
 | `refresh_env_context()` | Re-probe OS environment (deferred) |

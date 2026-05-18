@@ -21,8 +21,11 @@ class SessionSummary:
     files_modified: list[str] = field(default_factory=list)
     key_decisions: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    open_todos: list[str] = field(default_factory=list)
     token_total: int = 0
     updated_at: float = 0.0
+    context_index_handle: str | None = None
+    compact_package_json: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Performance-optimized alternative to asdict()."""
@@ -141,6 +144,18 @@ class SessionStore:
                 ON episode_records(session_id, created_at DESC)
                 """
             )
+            self._migrate_schema(conn)
+
+    def _migrate_schema(self, conn: sqlite3.Connection) -> None:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(session_summaries)")}
+        additions = {
+            "open_todos": "TEXT NOT NULL DEFAULT '[]'",
+            "context_index_handle": "TEXT",
+            "compact_package_json": "TEXT",
+        }
+        for name, ddl in additions.items():
+            if name not in columns:
+                conn.execute(f"ALTER TABLE session_summaries ADD COLUMN {name} {ddl}")
 
     def touch_session(
         self,
@@ -150,6 +165,7 @@ class SessionStore:
         files_modified: list[str] | None = None,
         key_decision: str | None = None,
         error: str | None = None,
+        open_todos: list[str] | None = None,
         token_delta: int = 0,
         timestamp: float | None = None,
     ) -> SessionSummary:
@@ -172,9 +188,33 @@ class SessionStore:
             existing.key_decisions.append(key_decision)
         if error and error not in existing.errors:
             existing.errors.append(error)
+        if open_todos:
+            for todo in open_todos:
+                item = str(todo).strip()
+                if item and item not in existing.open_todos:
+                    existing.open_todos.append(item)
         existing.token_total += token_delta
         self.upsert_session(existing)
         return existing
+
+    def end_session(
+        self,
+        session_id: str,
+        *,
+        compact_package: dict[str, Any] | None = None,
+        context_index_handle: str | None = None,
+        timestamp: float | None = None,
+    ) -> SessionSummary | None:
+        """Finalize session and persist compact package + optional context-mode handle."""
+        summary = self.finalize_session(session_id, timestamp=timestamp)
+        if summary is None:
+            return None
+        if compact_package is not None:
+            summary.compact_package_json = json.dumps(compact_package, ensure_ascii=False)
+        if context_index_handle:
+            summary.context_index_handle = context_index_handle
+        self.upsert_session(summary)
+        return summary
 
     def upsert_session(self, summary: SessionSummary) -> None:
         payload = summary.to_dict()
@@ -190,9 +230,12 @@ class SessionStore:
                     files_modified,
                     key_decisions,
                     errors,
+                    open_todos,
                     token_total,
-                    updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    updated_at,
+                    context_index_handle,
+                    compact_package_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET
                     start_time = excluded.start_time,
                     end_time = excluded.end_time,
@@ -201,8 +244,11 @@ class SessionStore:
                     files_modified = excluded.files_modified,
                     key_decisions = excluded.key_decisions,
                     errors = excluded.errors,
+                    open_todos = excluded.open_todos,
                     token_total = excluded.token_total,
-                    updated_at = excluded.updated_at
+                    updated_at = excluded.updated_at,
+                    context_index_handle = excluded.context_index_handle,
+                    compact_package_json = excluded.compact_package_json
                 """,
                 (
                     payload["session_id"],
@@ -213,8 +259,11 @@ class SessionStore:
                     json.dumps(payload["files_modified"]),
                     json.dumps(payload["key_decisions"]),
                     json.dumps(payload["errors"]),
+                    json.dumps(payload.get("open_todos", [])),
                     payload["token_total"],
                     payload["updated_at"],
+                    payload.get("context_index_handle"),
+                    payload.get("compact_package_json"),
                 ),
             )
 
@@ -347,6 +396,7 @@ class SessionStore:
         return [self._row_to_episode(row) for row in rows]
 
     def _row_to_session(self, row: sqlite3.Row) -> SessionSummary:
+        keys = set(row.keys())
         return SessionSummary(
             session_id=row["session_id"],
             start_time=float(row["start_time"]),
@@ -356,8 +406,11 @@ class SessionStore:
             files_modified=json.loads(row["files_modified"] or "[]"),
             key_decisions=json.loads(row["key_decisions"] or "[]"),
             errors=json.loads(row["errors"] or "[]"),
+            open_todos=json.loads(row["open_todos"] or "[]") if "open_todos" in keys else [],
             token_total=int(row["token_total"] or 0),
             updated_at=float(row["updated_at"]),
+            context_index_handle=row["context_index_handle"] if "context_index_handle" in keys else None,
+            compact_package_json=row["compact_package_json"] if "compact_package_json" in keys else None,
         )
 
     def _row_to_episode(self, row: sqlite3.Row) -> EpisodeRecord:
