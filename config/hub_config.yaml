@@ -12,6 +12,12 @@ modules:
       advanced_tool_use: true
       defer_loading: true
       prompt_caching: true
+    # Optional rerank on search_index (OFF by default — search uses context-mode FTS only)
+    rerank_on_search: false
+    # none | lexical (offline) | mixedbread (cloud) | auto (cloud if key else lexical)
+    rerank_provider: none
+    rerank_model: "mixedbread-ai/mxbai-rerank-base-v2"
+    rerank_top_k: 5
 
   output_sandbox:
     enabled: true
@@ -159,8 +165,12 @@ workflows:
   - name: ingest_codebase
     description: "Full codebase indexing. Run once per project, then use incremental."
     steps:
+      - ai_distiller.distill
       - repo_mapper.generate
       - jcodemunch.index
+    options:
+      # Run distiller first only when the tree is large enough to benefit
+      distiller_when_file_count_gt: 200
     executes_in: sandbox
     model: tier_local
     token_budget: 2000
@@ -168,6 +178,23 @@ workflows:
     input_examples:
       - { path: "./src", mode: "new_project" }
       - { path: "./src", mode: "incremental", since_commit: "HEAD~10" }
+
+  - name: refactor_prep_token_light
+    description: "Token-light prep: filescope + line editor; heavy map only when budget allows."
+    steps:
+      - filescope.analyze
+      - text_editor.get_project_structure
+      - repo_mapper.dependency_graph
+      - jcodemunch.get_affected_symbols
+    options:
+      include_repo_mapper_when_token_budget_gte: 2000
+    executes_in: sandbox
+    model: tier_local
+    token_budget: 1500
+    plan_before_run: true
+    input_examples:
+      - { path: ".", token_budget: 1200, change_description: "rename auth helper" }
+      - { path: "./src", token_budget: 2500, files: ["./src/auth/"] }
 
   - name: refactor_prep
     description: "Blast radius analysis: affected files/symbols for a proposed change."
@@ -200,19 +227,31 @@ models:
     cost_per_1k: 0.0
     max_tokens: 8192
 
-# ─── EMBEDDINGS (Phase 3 wiring) ─────────────────────────────────
-# Configure providers via env vars (.env.dev / .env.prod). Order is local-first.
-# This section is consumed by future semantic search / rerank workflows.
+# ─── EMBEDDINGS (optional — NOT required for search_index / search_tools) ─────
+# search_index → context-mode FTS5. search_tools → BM25 over MCP catalog.
+# Embeddings below are for future semantic workflows only; local providers are tried first.
 embeddings:
+  default_provider: lmstudio_local
   default_model: "${EMBEDDINGS_MODEL:-text-embedding-3-small}"
+  rerank:
+    # Matches tool_gate.rerank_provider when set; see rerank.py
+    provider: none
+    model: "${MIXEDBREAD_RERANK_MODEL:-mixedbread-ai/mxbai-rerank-base-v2}"
   providers:
-    # Local-first (LM Studio OpenAI-compatible embeddings endpoint)
+    # Local-first: LM Studio OpenAI-compatible /v1/embeddings
     - name: lmstudio_local
       kind: openai_compat
       base_url: "${LMSTUDIO_BASE_URL:-http://localhost:1234/v1}"
-      api_key_env: "LMSTUDIO_API_KEY" # usually not required; can be empty
+      api_key_env: "LMSTUDIO_API_KEY"
       model: "${LMSTUDIO_EMBED_MODEL:-text-embedding-3-small}"
       priority: 10
+
+    # Local: Ollama /api/embed (e.g. nomic-embed-text, mxbai-embed-large)
+    - name: ollama_local
+      kind: ollama
+      base_url: "${OLLAMA_HOST:-http://localhost:11434}"
+      model: "${OLLAMA_EMBED_MODEL:-nomic-embed-text}"
+      priority: 15
 
     # Google AI Studio (generous free tier) via OpenAI-compatible gateway if you run one,
     # or wire directly in Phase 3 if not.

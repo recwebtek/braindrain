@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -16,6 +17,7 @@ from dotenv import load_dotenv
 from fastmcp import FastMCP
 
 from braindrain.config import Config
+from braindrain.exec_path import ensure_node_path_in_environ
 from braindrain.context_mode_client import ContextModeClient, MCPProtocolError
 from braindrain.dream import DreamEngine
 from braindrain.env_probe import get_env_context as _probe_env_context
@@ -44,6 +46,13 @@ from braindrain.scriptlib import (
 from braindrain.instrumentation import make_observe_mcp_tool
 from braindrain.telemetry import telemetry_from_config
 from braindrain.mcp_catalog import export_mcp_catalog_async
+from braindrain.rerank import maybe_rerank_search_results
+from braindrain.session_compaction import (
+    build_compact_package,
+    index_package_in_context_mode,
+    retrieval_hint,
+    session_index_handle,
+)
 from braindrain.token_checkpoints import append_checkpoint as _append_token_checkpoint
 from braindrain.tool_registry import ToolRegistry
 from braindrain.workflow_engine import WorkflowEngine
@@ -75,6 +84,8 @@ for _env_name in (".env.dev", ".env.prod", ".env"):
     if _env_path.exists():
         load_dotenv(dotenv_path=_env_path, override=False)
         break
+
+ensure_node_path_in_environ()
 
 config = Config(CONFIG_PATH)
 registry = ToolRegistry(config.data)
@@ -589,17 +600,40 @@ async def route_output(
 
 
 @mcp.tool()
-async def search_index(query: str, limit: int = 5) -> dict:
+async def search_index(query: str, limit: int = 5, rerank: bool | None = None) -> dict:
     """
     Convenience wrapper for context-mode ctx_search.
     Use when you have a handle/source and want to retrieve only relevant chunks.
+
+    Primary retrieval is context-mode FTS5 — no embedding API required.
+
+    Optional rerank when `modules.tool_gate.rerank_on_search` is true (or `rerank=True`):
+    `rerank_provider` none (default) | lexical (offline) | mixedbread | auto.
     """
     client = _get_context_mode_client()
     if client is None:
         return {"error": "context_mode is not configured; cannot search"}
     try:
         results = await client.search(query=query, limit=limit)
-        return {"query": query, "limit": limit, "results": results}
+        modules = config.get("modules", {}) or {}
+        tool_gate = modules.get("tool_gate", {}) if isinstance(modules, dict) else {}
+        embeddings_cfg = getattr(config.data, "embeddings", None) or config.get("embeddings", {}) or {}
+        do_rerank = rerank if rerank is not None else bool(tool_gate.get("rerank_on_search", False))
+        rerank_meta: dict = {"requested": bool(do_rerank)}
+        if do_rerank:
+            results, rerank_meta = maybe_rerank_search_results(
+                query=query,
+                results=results,
+                embeddings_cfg=embeddings_cfg if isinstance(embeddings_cfg, dict) else {},
+                tool_gate_cfg=tool_gate if isinstance(tool_gate, dict) else {},
+                limit=limit,
+            )
+        return {
+            "query": query,
+            "limit": limit,
+            "results": results,
+            "rerank": rerank_meta,
+        }
     except MCPProtocolError as e:
         return {"error": f"context-mode search failed: {e}"}
 
@@ -772,33 +806,101 @@ def get_event_stats(session_id: str | None = None) -> dict:
 
 
 @mcp.tool()
-def touch_session(
+async def touch_session(
     session_id: str,
     tool_name: str | None = None,
     files_modified: list[str] | None = None,
     key_decision: str | None = None,
     error: str | None = None,
+    open_todos: list[str] | None = None,
     token_delta: int = 0,
     timestamp: float | None = None,
+    end_session: bool = False,
+    index_in_context_mode: bool = True,
 ) -> dict:
-    """Update session summary telemetry."""
-    summary = _get_session_store().touch_session(
+    """
+    Update session summary telemetry.
+
+    Set end_session=true to finalize and emit a ≤2 KB compact package
+    (decisions, files_touched, failures, open_todos). When context-mode is
+    configured and index_in_context_mode=true, indexes the package for search_index.
+    """
+    store = _get_session_store()
+    summary = store.touch_session(
         session_id=session_id,
         tool_name=tool_name,
         files_modified=files_modified,
         key_decision=key_decision,
         error=error,
+        open_todos=open_todos,
         token_delta=token_delta,
         timestamp=timestamp,
     )
-    return summary.__dict__
+    if not end_session:
+        return summary.__dict__
+
+    package = build_compact_package(summary)
+    handle = session_index_handle(session_id)
+    index_meta: dict | None = None
+
+    if index_in_context_mode:
+        client = _get_context_mode_client()
+        if client is not None:
+            try:
+                index_meta = await index_package_in_context_mode(
+                    client,
+                    session_id=session_id,
+                    package=package,
+                )
+                handle = str(index_meta.get("handle") or handle)
+            except MCPProtocolError as exc:
+                index_meta = {"indexed": False, "error": str(exc), "handle": handle}
+
+    finalized = store.end_session(
+        session_id,
+        compact_package=package,
+        context_index_handle=handle,
+        timestamp=timestamp,
+    )
+    _get_observer_store().record_event(
+        BrainEvent(
+            timestamp=timestamp or time.time(),
+            session_id=session_id,
+            event_type="session_end",
+            tool_name=None,
+            token_cost=int(package.get("token_total", 0) or 0),
+            duration_ms=0,
+            metadata={
+                "bytes": package.get("bytes"),
+                "context_index_handle": handle,
+                "indexed": bool(index_meta and index_meta.get("indexed")),
+            },
+        )
+    )
+    response = finalized.__dict__ if finalized else summary.__dict__
+    response["compact_package"] = package
+    response["context_index_handle"] = handle
+    response["retrieval_hint"] = retrieval_hint(handle)
+    if index_meta is not None:
+        response["context_mode"] = index_meta
+    return response
 
 
 @mcp.tool()
 def get_session_summary(session_id: str | None = None) -> dict:
     """Return latest session summary or a specific session."""
     summary = _get_session_store().get_session_summary(session_id=session_id)
-    return summary.__dict__ if summary else {"status": "not_found", "session_id": session_id}
+    if not summary:
+        return {"status": "not_found", "session_id": session_id}
+    payload = summary.__dict__
+    if summary.compact_package_json:
+        try:
+            payload["compact_package"] = json.loads(summary.compact_package_json)
+        except json.JSONDecodeError:
+            payload["compact_package"] = None
+    if summary.context_index_handle:
+        payload["retrieval_hint"] = retrieval_hint(summary.context_index_handle)
+    return payload
 
 
 @mcp.tool()

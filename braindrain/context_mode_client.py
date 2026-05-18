@@ -6,10 +6,10 @@ and `ctx_search` so BRAINDRAIN can keep large outputs out of the model context.
 
 from __future__ import annotations
 
-import shlex
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from braindrain.exec_path import resolve_command_argv
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
@@ -27,7 +27,7 @@ class MCPToolSpec:
 
 class ContextModeClient:
     def __init__(self, command: str) -> None:
-        argv = shlex.split(command)
+        argv = resolve_command_argv(command)
         if not argv:
             raise ValueError("context-mode command is empty")
         self._cmd = argv[0]

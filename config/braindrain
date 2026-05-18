@@ -5,4 +5,37 @@
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
+
+# GUI-launched IDEs (Cursor) often omit Homebrew/nvm from PATH; context-mode needs npx.
+_prepend_path() {
+  for dir in \
+    "/opt/homebrew/bin" \
+    "/usr/local/bin" \
+    "/opt/local/bin" \
+    "${HOME}/.fnm/current/bin" \
+    "${HOME}/.volta/bin" \
+    "${HOME}/.asdf/shims" \
+    "${HOME}/.local/share/pnpm" \
+    "${HOME}/.npm-global/bin"
+  do
+    if [[ -d "$dir" ]]; then
+      case ":${PATH}:" in
+        *":${dir}:"*) ;;
+        *) PATH="${dir}:${PATH}" ;;
+      esac
+    fi
+  done
+  if [[ -d "${NVM_DIR:-${HOME}/.nvm}/versions/node" ]]; then
+    _nvm_latest="$(ls -1 "${NVM_DIR:-${HOME}/.nvm}/versions/node" 2>/dev/null | sort -V | tail -1)"
+    if [[ -n "$_nvm_latest" ]]; then
+      _nvm_bin="${NVM_DIR:-${HOME}/.nvm}/versions/node/${_nvm_latest}/bin"
+      case ":${PATH}:" in
+        *":${_nvm_bin}:"*) ;;
+        *) PATH="${_nvm_bin}:${PATH}" ;;
+      esac
+    fi
+  fi
+}
+_prepend_path
+
 exec "$REPO/.venv/bin/python" -m braindrain.server stdio
