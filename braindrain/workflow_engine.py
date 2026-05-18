@@ -20,6 +20,7 @@ from typing import Any, Optional
 from braindrain.config import Config
 from braindrain.mcp_stdio_client import StdioMCPClient
 from braindrain.output_router import should_route
+from braindrain.repo_stats import count_repo_files
 from braindrain.telemetry import TelemetrySession
 
 try:
@@ -206,6 +207,46 @@ print(out)
         }
 
 
+def _step_tool_name(step: Any) -> str:
+    if isinstance(step, dict):
+        step_name = str(step.get("name", ""))
+    else:
+        step_name = str(step)
+    return step_name.split(".")[0] if "." in step_name else step_name
+
+
+def should_run_workflow_step(*, step: Any, workflow, args: dict[str, Any]) -> tuple[bool, str | None]:
+    """
+    Gate optional workflow steps (distiller for large repos, heavy map when budget is low).
+    """
+    options = getattr(workflow, "options", None) or {}
+    tool_name = _step_tool_name(step)
+    path = str(args.get("path") or ".")
+
+    distiller_threshold = options.get("distiller_when_file_count_gt")
+    if tool_name == "ai_distiller" and distiller_threshold is not None:
+        try:
+            threshold = int(distiller_threshold)
+        except (TypeError, ValueError):
+            threshold = 0
+        file_count = count_repo_files(path)
+        if file_count <= threshold:
+            return False, f"skipped: file_count={file_count} <= distiller_threshold={threshold}"
+
+    heavy_tools = {"repo_mapper", "jcodemunch"}
+    budget_gte = options.get("include_repo_mapper_when_token_budget_gte")
+    if tool_name in heavy_tools and budget_gte is not None:
+        try:
+            gate = int(budget_gte)
+        except (TypeError, ValueError):
+            gate = 0
+        budget = int(args.get("token_budget", getattr(workflow, "token_budget", 0)))
+        if budget < gate:
+            return False, f"skipped: token_budget={budget} < include_heavy_tools_gte={gate}"
+
+    return True, None
+
+
 class WorkflowEngine:
     def __init__(self, *, config: Config, telemetry: TelemetrySession, context_mode_client_getter) -> None:
         self._config = config
@@ -271,6 +312,20 @@ class WorkflowEngine:
 
         # Execute steps sequentially (simple, deterministic)
         for step in wf.steps:
+            run_step, skip_reason = should_run_workflow_step(step=step, workflow=wf, args=args)
+            if not run_step:
+                steps_out.append(
+                    StepResult(
+                        step=step,
+                        ok=True,
+                        started_at=datetime.now().isoformat(),
+                        finished_at=datetime.now().isoformat(),
+                        output={"skipped": True, "reason": skip_reason},
+                        routed=False,
+                    )
+                )
+                continue
+
             started = datetime.now().isoformat()
             ok = True
             step_args = dict(args)
