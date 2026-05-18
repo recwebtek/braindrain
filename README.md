@@ -97,6 +97,9 @@ OS environment data is probed once, cached locally, and served instantly on ever
 | ----------------------- | ---------------------------------------------------------------- |
 | `get_token_dashboard()` | Quick snapshot of estimated tokens saved vs raw in this session. |
 | `get_token_stats()`     | Full breakdown: per-tool savings, cache hits, cost avoided.      |
+| `record_token_checkpoint(phase, task, note, context_tags, path=".")` | Append schema `1.0` rows to `<path>/.braindrain/token-metrics.jsonl`. Use the **workspace root** for `path` (same as `export_mcp_catalog`), not the JSONL file path. |
+
+Async MCP tools record observer `tool_call` rows via `asyncio.to_thread` so SQLite writes do not block the event loop.
 
 
 ### Token Checkpoint Protocol
@@ -126,7 +129,7 @@ Bad vs good large-output handling:
 
 ### Token Metrics Contract (schema `1.0`)
 
-Use `.braindrain/token-metrics.jsonl` as an optional machine-local checkpoint stream for checkpoint records. Required fields per line:
+Use `<workspace>/.braindrain/token-metrics.jsonl` as an optional machine-local checkpoint stream for checkpoint records (pass workspace root via `record_token_checkpoint(..., path=".")` or `export_mcp_catalog(path=".")`). Required fields per line:
 
 - `schema_version` (`1.0`)
 - `timestamp` (ISO-8601 UTC)

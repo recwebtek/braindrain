@@ -15,8 +15,16 @@ VALID_PHASES = frozenset(
 )
 
 
-def default_checkpoint_path(base_dir: Path | None = None) -> Path:
-    root = base_dir if base_dir is not None else Path.cwd()
+def default_checkpoint_path(project_root: Path | str | None = None) -> Path:
+    """Resolve `.braindrain/token-metrics.jsonl` under the workspace root.
+
+    Prefer an explicit ``project_root`` (same semantics as ``export_mcp_catalog(path=...)``).
+    When omitted, falls back to ``Path.cwd()`` for CLI callers.
+    """
+    if project_root is None:
+        root = Path.cwd()
+    else:
+        root = Path(project_root).expanduser().resolve()
     return root / ".braindrain" / "token-metrics.jsonl"
 
 
@@ -36,9 +44,14 @@ def append_checkpoint(
     context_tags: Optional[list[str]] = None,
     telemetry: TelemetrySession,
     path: Path | None = None,
+    project_root: Path | str | None = None,
     tool: str = "get_token_dashboard",
 ) -> dict[str, Any]:
-    """Append a schema 1.0 checkpoint row to `.braindrain/token-metrics.jsonl`."""
+    """Append a schema 1.0 checkpoint row to `.braindrain/token-metrics.jsonl`.
+
+    ``path`` overrides the output file directly. Otherwise ``project_root`` (or cwd)
+    selects ``<root>/.braindrain/token-metrics.jsonl``.
+    """
     phase_norm = phase.strip().lower()
     if phase_norm not in VALID_PHASES:
         return {
@@ -46,7 +59,7 @@ def append_checkpoint(
             "error": f"Invalid phase '{phase}'. Expected one of: {sorted(VALID_PHASES)}",
         }
 
-    out_path = path or default_checkpoint_path()
+    out_path = path or default_checkpoint_path(project_root)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     snapshot = telemetry.snapshot()

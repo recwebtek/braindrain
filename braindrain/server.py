@@ -616,11 +616,16 @@ def record_token_checkpoint(
     task: str,
     note: str = "",
     context_tags: list[str] | None = None,
+    path: str = ".",
 ) -> dict:
     """
     Append a schema 1.0 token checkpoint to `.braindrain/token-metrics.jsonl`.
 
     Phases: start | pre_high_cost | post_high_cost | milestone_close | end
+
+    ``path`` is the project/workspace root (same as ``export_mcp_catalog(path=...)``),
+    not the JSONL file path. Checkpoints are written to
+    ``<path>/.braindrain/token-metrics.jsonl``.
     """
     cost_cfg = config.get("cost_tracking", {}) or {}
     if not bool(cost_cfg.get("enabled", True)):
@@ -631,6 +636,7 @@ def record_token_checkpoint(
         note=note,
         context_tags=context_tags,
         telemetry=telemetry,
+        project_root=Path(path).resolve(),
         tool="record_token_checkpoint",
     )
 

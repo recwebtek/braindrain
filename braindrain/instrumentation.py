@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import hashlib
 import inspect
@@ -73,6 +74,47 @@ def _result_instrumented(result: Any) -> bool:
     return False
 
 
+def _build_tool_call_event(
+    *,
+    tool_name: str,
+    module: str,
+    raw_tokens: int,
+    actual_tokens: int,
+    saved_tokens: int,
+    duration_ms: int,
+    session_id: Optional[str],
+    hash_tool_args: bool,
+    args_hash_payload: Any,
+) -> BrainEvent:
+    obs_meta: dict[str, Any] = {
+        "module": module,
+        "tokens_in_raw_est": raw_tokens,
+        "tokens_in_actual_est": actual_tokens,
+        "tokens_saved_est": saved_tokens,
+    }
+    if hash_tool_args and args_hash_payload is not None:
+        obs_meta["args_hash"] = hash_args(args_hash_payload)
+
+    return BrainEvent(
+        timestamp=time.time(),
+        session_id=session_id or _default_session_id(),
+        event_type="tool_call",
+        tool_name=tool_name,
+        token_cost=raw_tokens + actual_tokens,
+        duration_ms=duration_ms,
+        metadata=obs_meta,
+    )
+
+
+def _persist_observer_event(observer_store: ObserverStore, event: BrainEvent) -> None:
+    observer_store.record_event(event)
+
+
+async def _persist_observer_event_async(observer_store: ObserverStore, event: BrainEvent) -> None:
+    """Write observer rows off the asyncio event loop (sync sqlite3)."""
+    await asyncio.to_thread(observer_store.record_event, event)
+
+
 def record_tool_io(
     telemetry: TelemetrySession,
     *,
@@ -87,7 +129,7 @@ def record_tool_io(
     hash_tool_args: bool = True,
     args_hash_payload: Any = None,
 ) -> dict[str, Any]:
-    """Record telemetry and optional observer tool_call event."""
+    """Record telemetry and optional observer tool_call event (sync MCP tools)."""
     event_meta = dict(meta or {})
     event_meta["_instrumented"] = True
 
@@ -103,26 +145,68 @@ def record_tool_io(
     saved_tokens = int(event.get("tokens_saved_est", 0))
 
     if observer_store is not None:
-        obs_meta: dict[str, Any] = {
-            "module": module,
-            "tokens_in_raw_est": raw_tokens,
-            "tokens_in_actual_est": actual_tokens,
-            "tokens_saved_est": saved_tokens,
-        }
-        if hash_tool_args and args_hash_payload is not None:
-            obs_meta["args_hash"] = hash_args(args_hash_payload)
-
-        observer_store.record_event(
-            BrainEvent(
-                timestamp=time.time(),
-                session_id=session_id or _default_session_id(),
-                event_type="tool_call",
-                tool_name=tool_name,
-                token_cost=raw_tokens + actual_tokens,
-                duration_ms=duration_ms,
-                metadata=obs_meta,
-            )
+        brain_event = _build_tool_call_event(
+            tool_name=tool_name,
+            module=module,
+            raw_tokens=raw_tokens,
+            actual_tokens=actual_tokens,
+            saved_tokens=saved_tokens,
+            duration_ms=duration_ms,
+            session_id=session_id,
+            hash_tool_args=hash_tool_args,
+            args_hash_payload=args_hash_payload,
         )
+        _persist_observer_event(observer_store, brain_event)
+
+    return {
+        "raw_tokens": raw_tokens,
+        "actual_tokens": actual_tokens,
+        "saved_tokens": saved_tokens,
+    }
+
+
+async def record_tool_io_async(
+    telemetry: TelemetrySession,
+    *,
+    tool_name: str,
+    raw_text: str,
+    actual_text: str,
+    module: str = "tool_gate",
+    meta: Optional[dict[str, Any]] = None,
+    observer_store: Optional[ObserverStore] = None,
+    session_id: Optional[str] = None,
+    duration_ms: int = 0,
+    hash_tool_args: bool = True,
+    args_hash_payload: Any = None,
+) -> dict[str, Any]:
+    """Record telemetry and observer tool_call event without blocking the event loop."""
+    event_meta = dict(meta or {})
+    event_meta["_instrumented"] = True
+
+    event = telemetry.record(
+        tool_name=tool_name,
+        raw_text=raw_text,
+        actual_text=actual_text,
+        module=module,
+        meta=event_meta,
+    )
+    raw_tokens = int(event.get("tokens_in_raw_est", 0))
+    actual_tokens = int(event.get("tokens_in_actual_est", 0))
+    saved_tokens = int(event.get("tokens_saved_est", 0))
+
+    if observer_store is not None:
+        brain_event = _build_tool_call_event(
+            tool_name=tool_name,
+            module=module,
+            raw_tokens=raw_tokens,
+            actual_tokens=actual_tokens,
+            saved_tokens=saved_tokens,
+            duration_ms=duration_ms,
+            session_id=session_id,
+            hash_tool_args=hash_tool_args,
+            args_hash_payload=args_hash_payload,
+        )
+        await _persist_observer_event_async(observer_store, brain_event)
 
     return {
         "raw_tokens": raw_tokens,
@@ -170,7 +254,7 @@ def make_observe_mcp_tool(
             raw_text = _extract_raw_text(fn, args, kwargs)
             actual_text = _serialize_for_tokens(result)
 
-            record_tool_io(
+            await record_tool_io_async(
                 telemetry,
                 tool_name=tool_name,
                 raw_text=raw_text,
