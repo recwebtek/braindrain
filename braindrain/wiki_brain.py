@@ -399,10 +399,14 @@ class WikiBrain:
         record_class: str,
         exclude_record_id: str | None = None,
     ) -> dict[str, Any] | None:
+        """
+        Detect contradictions by comparing the new record with the last 25 records
+        of the same class. Optimized to avoid full object hydration and use short-circuiting logic.
+        """
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT *
+                SELECT record_id, title, content
                 FROM brain_records
                 WHERE record_class = ?
                   AND status = 'active'
@@ -414,11 +418,14 @@ class WikiBrain:
         for row in rows:
             if exclude_record_id and row["record_id"] == exclude_record_id:
                 continue
-            existing = self._row_to_record(row)
-            overlap = self._similarity(title, existing.title)
-            content_overlap = self._similarity(content, existing.content)
-            if overlap >= 0.78 and content_overlap < 0.55:
-                return {"record_id": existing.record_id, "title": existing.title}
+
+            # Short-circuit: only check content similarity if titles overlap significantly
+            # This avoids expensive similarity checks for unrelated records.
+            overlap = self._similarity(title, row["title"])
+            if overlap >= 0.78:
+                content_overlap = self._similarity(content, row["content"])
+                if content_overlap < 0.55:
+                    return {"record_id": row["record_id"], "title": row["title"]}
         return None
 
     def decay_records(self, *, now: float | None = None) -> dict[str, Any]:
