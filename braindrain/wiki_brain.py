@@ -399,16 +399,10 @@ class WikiBrain:
         record_class: str,
         exclude_record_id: str | None = None,
     ) -> dict[str, Any] | None:
-        """
-        Detect if new content contradicts existing active records.
-        Optimized to use selective column retrieval and short-circuit similarity checks.
-        """
         with self._connect() as conn:
-            # Performance: Select only necessary columns and bypass _row_to_record hydration
-            # to avoid expensive JSON parsing of unused fields (metadata, tags, evidence_refs).
             rows = conn.execute(
                 """
-                SELECT record_id, title, content
+                SELECT *
                 FROM brain_records
                 WHERE record_class = ?
                   AND status = 'active'
@@ -417,17 +411,14 @@ class WikiBrain:
                 """,
                 (record_class,),
             ).fetchall()
-
         for row in rows:
             if exclude_record_id and row["record_id"] == exclude_record_id:
                 continue
-
-            # Performance: Only calculate content similarity if title similarity meets threshold.
-            overlap = self._similarity(title, row["title"])
-            if overlap >= 0.78:
-                content_overlap = self._similarity(content, row["content"])
-                if content_overlap < 0.55:
-                    return {"record_id": row["record_id"], "title": row["title"]}
+            existing = self._row_to_record(row)
+            overlap = self._similarity(title, existing.title)
+            content_overlap = self._similarity(content, existing.content)
+            if overlap >= 0.78 and content_overlap < 0.55:
+                return {"record_id": existing.record_id, "title": existing.title}
         return None
 
     def decay_records(self, *, now: float | None = None) -> dict[str, Any]:
