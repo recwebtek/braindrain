@@ -62,9 +62,14 @@ def estimate_claude_tokens(text: str) -> int:
 # Regex patterns for redaction (pre-compiled for performance)
 # Paths: /Users/..., /Volumes/..., /home/..., /root/...
 _PATH_RE = re.compile(r"(/Users/[^\s'\"]+|/Volumes/[^\s'\"]+|/home/[^\s'\"]+|/root/[^\s'\"]+)")
-# API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_), Google AI (AIza)
+# API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_), Google AI (AIza), AWS (AKIA), Slack (xox)
 _KEY_RE = re.compile(
-    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,})"
+    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,}|AKIA[A-Z0-9]{16}|xox[abpcrse]-[a-zA-Z0-9-]{10,})"
+)
+
+# Generic secrets: password, secret, apikey, token
+_GENERIC_SECRET_RE = re.compile(
+    r"(?i)\b([a-z0-9_-]*(?:password|secret|apikey|api_key|token)[a-z0-9_-]*)([:=]\s*)(['\"]?)[a-zA-Z0-9_\-]{6,}\3",
 )
 
 
@@ -130,14 +135,34 @@ class TelemetrySession:
                     and "gsk_" not in val
                     and "hf_" not in val
                     and "AIza" not in val
+                    and "AKIA" not in val
+                    and "xox" not in val
+                    and "password" not in val.lower()
+                    and "secret" not in val.lower()
+                    and "apikey" not in val.lower()
+                    and "api_key" not in val.lower()
+                    and "token" not in val.lower()
                 ):
                     return val
 
                 val = _PATH_RE.sub("[REDACTED_PATH]", val)
                 val = _KEY_RE.sub("[REDACTED_KEY]", val)
+                val = _GENERIC_SECRET_RE.sub(r"\1\2\3[REDACTED_SECRET]\3", val)
                 return val
             if isinstance(val, dict):
-                return {k: _do_sanitize(v) for k, v in val.items()}
+                sanitized = {}
+                for k, v in val.items():
+                    if isinstance(k, str) and any(
+                        s in k.lower().replace("_", "")
+                        for s in ("password", "secret", "apikey", "token")
+                    ):
+                        if isinstance(v, (int, float)):
+                            sanitized[k] = v
+                        else:
+                            sanitized[k] = "[REDACTED_VALUE]"
+                    else:
+                        sanitized[k] = _do_sanitize(v)
+                return sanitized
             if isinstance(val, list):
                 return [_do_sanitize(i) for i in val]
             return val
