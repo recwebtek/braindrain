@@ -57,6 +57,11 @@ tests/*
 !tests/test_scriptlib.py
 !tests/test_env_probe_codex.py
 !tests/test_plan_auditor_master.py
+!tests/test_telemetry_observer_bridge.py
+!tests/test_route_output_records_savings.py
+!tests/test_token_checkpoints.py
+!tests/test_exec_path.py
+!tests/test_wiki_brain_contradiction.py
 
 # Ruler outputs at repo root (no leading dot)
 /AGENTS.md

@@ -33,9 +33,31 @@ For each stage:
    - `[BUILD]` → handle directly or delegate to `toolcall` subagent
    - Any new freestanding reusable ops, test-helper, or command script is implicitly `[SCRIPTLIB]` first, even if the implementation task is otherwise `[BUILD]`
 3. **Execute** — spawn sub-agents for parallel-safe tasks; serialize dependent ones
+   - **Token budget:** max **3** parallel Task/subagent dispatches (prefer **2** under pressure)
+   - **Before batch:** `get_token_dashboard()` + `record_token_checkpoint(phase="pre_high_cost", context_tags=["subagent"])`
+   - **After batch:** `get_token_dashboard()` + `record_token_checkpoint(phase="post_high_cost", context_tags=["subagent"])`
+   - **Models:** `testops` → flash/fast; `toolcall`/`research`/`embedding` → `fast`; `models.tier_local` for simple local tasks only
+   - **Large output:** `route_output()` → `search_index()` — never paste raw subagent blobs into coordinator context
 4. **Verify** — check each sub-agent's result object before marking complete
 5. **Checkpoint** — update `.cursor/PROGRESS.md` after each task
 6. **Advance** — when all stage tasks pass, move to next stage
+
+## Plan Execution Branch Invariant
+
+For any task mapped to a concrete plan file (`*.plan.md`), dispatch gitops with plan context:
+
+- `context.planSource` -> absolute or repo-relative plan path
+- `context.planBranch` -> resolved branch (from plan frontmatter first, then planning-audit mirror **Branch** column; PR column for merge triage)
+- `context.auditSnapshot` -> paths for `master-plan.md`, `next-actions.md`, optional `latest.md`
+
+Mandatory sequence before delegating build/implementation work:
+
+1. resolve target branch for selected plan
+2. compare with active branch
+3. if different, checkout target branch
+4. only then proceed with task execution
+
+If no branch exists yet for the plan, dispatch gitops `branch-setup` first, then continue.
 
 ## Model provenance requirements
 
