@@ -428,26 +428,26 @@ class WikiBrain:
         return None
 
     def decay_records(self, *, now: float | None = None) -> dict[str, Any]:
+        """
+        Decay importance of all active records based on their half-life.
+        Optimized with a single bulk UPDATE statement using SQLite POWER function.
+        """
         current = now or time.time()
-        updated = 0
+        if self.decay_half_life_days <= 0:
+            return {"updated_records": 0}
+
         with self._connect() as conn:
-            rows = conn.execute(
+            cursor = conn.execute(
                 """
-                SELECT record_id, importance, updated_at, created_at
-                FROM brain_records
+                UPDATE brain_records
+                SET
+                    importance = importance * POWER(0.5, (MAX(0.0, (? - COALESCE(NULLIF(updated_at, 0), created_at)) / 86400.0)) / ?),
+                    updated_at = ?
                 WHERE status = 'active'
-                """
-            ).fetchall()
-            for row in rows:
-                anchor = float(row["updated_at"] or row["created_at"])
-                decayed = float(row["importance"]) * self._half_life(
-                    anchor, current, self.decay_half_life_days
-                )
-                conn.execute(
-                    "UPDATE brain_records SET importance = ?, updated_at = ? WHERE record_id = ?",
-                    (decayed, current, row["record_id"]),
-                )
-                updated += 1
+                """,
+                (current, self.decay_half_life_days, current),
+            )
+            updated = cursor.rowcount
         return {"updated_records": updated}
 
     def forget_below_threshold(self) -> dict[str, Any]:
