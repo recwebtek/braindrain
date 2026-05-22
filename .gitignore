@@ -18,8 +18,9 @@ venv/
 *.logs
 .logs
 
-# Docs
+# Docs (machine-local); allow shipped contributor guides
 docs/
+!docs/skill-braindrain-hub-pr.md
 
 # QA / installer scratch (local-only)
 QA-Logs/
