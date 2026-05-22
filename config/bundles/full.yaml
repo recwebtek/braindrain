@@ -8,6 +8,7 @@ rules:
   - braindrain
   - project-rules
 skills:
+  - braindrain-hub-pr
   - coordinator
   - gitops
   - testops
