@@ -19,11 +19,12 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from braindrain.livingdash import DEFAULT_COMMANDS, DEFAULT_SERVICES, ensure_livingdash_runtime
+from braindrain.livingdash import DEFAULT_COMMANDS, DEFAULT_SERVICES, build_dashboard_snapshot, ensure_livingdash_runtime
+from braindrain.livingdash_collectors import collect_workspace_bundle
 
 
 SESSION_COOKIE = "livingdash_session"
-CONTRACT_VERSION = "1.0"
+CONTRACT_VERSION = "2.0"
 
 
 class LoginPayload(BaseModel):
@@ -307,11 +308,18 @@ def _git_summary(project_root: Path) -> dict[str, Any]:
     }
 
 
+def _workspace_bundle(snapshot: dict[str, Any]) -> dict[str, Any]:
+    bundle = snapshot.get("workspace_bundle")
+    return bundle if isinstance(bundle, dict) else {}
+
+
 def _telemetry_summary(snapshot: dict[str, Any], status: dict[str, Any], history: dict[str, Any]) -> dict[str, Any]:
     signals = snapshot.get("workspace_signals", {}) or {}
     mcp = signals.get("mcp_tools", {}) or {}
     agents = signals.get("agents", {}) or {}
     insights = snapshot.get("insights", {}) or {}
+    bundle = _workspace_bundle(snapshot)
+    file_telemetry = bundle.get("telemetry", {}) if isinstance(bundle.get("telemetry"), dict) else {}
     entries = history.get("entries", []) if isinstance(history.get("entries"), list) else []
     recent_events = [
         {
@@ -323,6 +331,18 @@ def _telemetry_summary(snapshot: dict[str, Any], status: dict[str, Any], history
         }
         for entry in entries[:8]
     ]
+    for event in (file_telemetry.get("recent_events") or [])[-12:]:
+        if not isinstance(event, dict):
+            continue
+        recent_events.append(
+            {
+                "kind": "mcp",
+                "label": str(event.get("tool") or event.get("tool_name") or "tool"),
+                "status": "logged",
+                "detail": f"saved {max(0, int(event.get('tokens_in_raw_est', 0) or 0) - int(event.get('tokens_in_actual_est', 0) or 0))} tokens",
+                "time": str(event.get("timestamp") or ""),
+            }
+        )
     return {
         "version": CONTRACT_VERSION,
         "summary": {
@@ -332,8 +352,12 @@ def _telemetry_summary(snapshot: dict[str, Any], status: dict[str, Any], history
             "token_saving_active": bool(insights.get("token_saving_active", False)),
             "env_drift": int(insights.get("env_drift", 0) or 0),
             "recent_action_count": len(entries),
+            "session_events": int(file_telemetry.get("event_count", 0) or 0),
+            "tokens_saved_total": int(file_telemetry.get("tokens_saved_total", 0) or 0),
         },
-        "events": recent_events,
+        "events": recent_events[:24],
+        "file_telemetry": file_telemetry,
+        "observer_stats": (bundle.get("observer") or {}).get("stats", {}),
         "updated_at": _now_iso(),
     }
 
@@ -411,7 +435,9 @@ def _build_overview(project_root: Path, paths: Any) -> dict[str, Any]:
     shortcuts = [
         {"id": "commands", "label": "Open commands", "detail": "Run approved workspace commands.", "tone": "violet"},
         {"id": "git", "label": "Open git status", "detail": "Inspect branch drift and guarded sync actions.", "tone": "cyan"},
-        {"id": "processes", "label": "Open processes", "detail": "Manage repo-scoped services only.", "tone": "amber"},
+        {"id": "agents", "label": "Open agents", "detail": "Inspect installed agents, models, and hooks.", "tone": "cyan"},
+        {"id": "plans", "label": "Open plans", "detail": "Master plan, next-actions, and audit reports.", "tone": "violet"},
+        {"id": "tests", "label": "Open tests", "detail": "Project tests and CI workflow inventory.", "tone": "amber"},
         {"id": "telemetry", "label": "Open telemetry", "detail": "Inspect recent runtime signals and exports.", "tone": "emerald"},
     ]
 
@@ -882,6 +908,131 @@ def create_app(
         snapshot = _read_snapshot(data_dir)
         return snapshot.get("map_summary", {})
 
+    @app.post("/api/workspace/refresh")
+    def workspace_refresh(request: Request) -> dict[str, Any]:
+        _require_auth(request, auth_config)
+        snapshot = build_dashboard_snapshot(project_root)
+        _save_json(data_dir / "snapshot.json", snapshot)
+        status = _read_status(data_dir)
+        status["last_refreshed_at"] = _now_iso()
+        status["refresh_age_seconds"] = 0
+        _save_json(data_dir / "status.json", status)
+        return {"ok": True, "schema_version": snapshot.get("schema_version"), "updated_at": _now_iso()}
+
+    @app.get("/api/braindrain/overview")
+    def braindrain_overview(request: Request) -> dict[str, Any]:
+        _require_auth(request, auth_config)
+        snapshot = _read_snapshot(data_dir)
+        bundle = _workspace_bundle(snapshot)
+        telemetry = _telemetry_summary(snapshot, _read_status(data_dir), _read_history(paths))
+        return {
+            "version": CONTRACT_VERSION,
+            "telemetry": bundle.get("telemetry", {}),
+            "observer": {"stats": (bundle.get("observer") or {}).get("stats", {})},
+            "summary": telemetry["summary"],
+            "updated_at": _now_iso(),
+        }
+
+    @app.get("/api/braindrain/logs")
+    def braindrain_logs(
+        request: Request,
+        log_type: str = "all",
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        _require_auth(request, auth_config)
+        snapshot = _read_snapshot(data_dir)
+        bundle = _workspace_bundle(snapshot)
+        if not bundle:
+            bundle = collect_workspace_bundle(project_root)
+        limit = max(1, min(int(limit), 500))
+        payload: dict[str, Any] = {"version": CONTRACT_VERSION, "updated_at": _now_iso()}
+        if log_type in ("all", "observer"):
+            observer = bundle.get("observer", {})
+            events = observer.get("events", []) if isinstance(observer, dict) else []
+            payload["observer"] = {**observer, "events": events[:limit]}
+        if log_type in ("all", "session"):
+            telemetry = bundle.get("telemetry", {})
+            events = telemetry.get("recent_events", []) if isinstance(telemetry, dict) else []
+            payload["session_jsonl"] = {**telemetry, "recent_events": events[-limit:]}
+        if log_type in ("all", "checkpoints"):
+            telemetry = bundle.get("telemetry", {})
+            payload["token_checkpoints"] = (telemetry.get("token_checkpoints") or [])[-limit:]
+        return payload
+
+    @app.get("/api/braindrain/sessions")
+    def braindrain_sessions(request: Request, limit: int = 40) -> dict[str, Any]:
+        _require_auth(request, auth_config)
+        snapshot = _read_snapshot(data_dir)
+        bundle = _workspace_bundle(snapshot)
+        telemetry = bundle.get("telemetry", {}) if isinstance(bundle.get("telemetry"), dict) else {}
+        events = telemetry.get("recent_events", []) if isinstance(telemetry.get("recent_events"), list) else []
+        limit = max(1, min(int(limit), 200))
+        return {
+            "version": CONTRACT_VERSION,
+            "items": events[-limit:],
+            "updated_at": _now_iso(),
+        }
+
+    @app.get("/api/primer")
+    def primer(request: Request) -> dict[str, Any]:
+        _require_auth(request, auth_config)
+        snapshot = _read_snapshot(data_dir)
+        bundle = _workspace_bundle(snapshot)
+        return {
+            "version": CONTRACT_VERSION,
+            "primer": bundle.get("primer", {}),
+            "env_context": bundle.get("env_context", {}),
+            "updated_at": _now_iso(),
+        }
+
+    @app.get("/api/config")
+    def config_page(request: Request) -> dict[str, Any]:
+        _require_auth(request, auth_config)
+        snapshot = _read_snapshot(data_dir)
+        bundle = _workspace_bundle(snapshot)
+        return {
+            "version": CONTRACT_VERSION,
+            "read_only": True,
+            "hub_config": bundle.get("config", {}),
+            "memory": bundle.get("memory", {}),
+            "updated_at": _now_iso(),
+        }
+
+    @app.get("/api/agents")
+    def agents(request: Request, name: str | None = None) -> dict[str, Any]:
+        _require_auth(request, auth_config)
+        snapshot = _read_snapshot(data_dir)
+        bundle = _workspace_bundle(snapshot)
+        agents_payload = bundle.get("agents", {})
+        items = agents_payload.get("items", []) if isinstance(agents_payload, dict) else []
+        if name:
+            detail = next((item for item in items if isinstance(item, dict) and item.get("name") == name), None)
+            if not detail:
+                raise HTTPException(status_code=404, detail="Unknown agent")
+            return {"version": CONTRACT_VERSION, "agent": detail, "updated_at": _now_iso()}
+        return {"version": CONTRACT_VERSION, **agents_payload, "updated_at": _now_iso()}
+
+    @app.get("/api/skills")
+    def skills(request: Request) -> dict[str, Any]:
+        _require_auth(request, auth_config)
+        snapshot = _read_snapshot(data_dir)
+        bundle = _workspace_bundle(snapshot)
+        return {"version": CONTRACT_VERSION, **(bundle.get("skills", {}) if isinstance(bundle.get("skills"), dict) else {}), "updated_at": _now_iso()}
+
+    @app.get("/api/plans")
+    def plans(request: Request) -> dict[str, Any]:
+        _require_auth(request, auth_config)
+        snapshot = _read_snapshot(data_dir)
+        bundle = _workspace_bundle(snapshot)
+        return {"version": CONTRACT_VERSION, **(bundle.get("plans", {}) if isinstance(bundle.get("plans"), dict) else {}), "updated_at": _now_iso()}
+
+    @app.get("/api/tests")
+    def tests(request: Request) -> dict[str, Any]:
+        _require_auth(request, auth_config)
+        snapshot = _read_snapshot(data_dir)
+        bundle = _workspace_bundle(snapshot)
+        return {"version": CONTRACT_VERSION, **(bundle.get("tests", {}) if isinstance(bundle.get("tests"), dict) else {}), "updated_at": _now_iso()}
+
     @app.get("/{full_path:path}")
     def index(full_path: str):
         index_file = ui_dist / "index.html"
@@ -958,6 +1109,7 @@ pnpm run build</code>
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=7337)
+    parser.add_argument("--host", type=str, default="127.0.0.1")
     args = parser.parse_args()
 
     project_root = Path(os.environ["LIVINGDASH_PROJECT_ROOT"]).expanduser().resolve()
@@ -973,7 +1125,7 @@ def main() -> None:
         ui_dist=ui_dist,
         auth_config=auth_config,
     )
-    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 
 if __name__ == "__main__":
