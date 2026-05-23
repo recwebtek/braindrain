@@ -23,6 +23,13 @@ from braindrain.scriptlib import (
 TEMPLATES_DIR = Path(__file__).parent.parent / "config" / "templates" / "ruler"
 AGENT_TEMPLATES_DIR = Path(__file__).parent.parent / "config" / "templates" / "agents"
 CURSOR_HOOK_TEMPLATES_DIR = Path(__file__).parent.parent / "config" / "templates" / "cursor"
+CURSOR_SKILLS_TEMPLATES_DIR = Path(__file__).parent.parent / "config" / "templates" / "cursor-skills"
+CURSOR_COMMANDS_TEMPLATES_DIR = CURSOR_HOOK_TEMPLATES_DIR / "commands"
+HUB_SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
+OPERATIONAL_SCRIPT_FILES: dict[str, list[str]] = {
+    "daily_plan_audit": ["daily_plan_audit.py", "plan_branch_utils.py"],
+    "plan_build_guard": ["plan_build_guard.py", "plan_branch_utils.py"],
+}
 
 # Canonical project-local docs directory (gitignored; never committed).
 BRAINDRAIN_DIR = ".braindrain"
@@ -46,6 +53,14 @@ def _get_launcher_path() -> str:
         "BRAINDRAIN_LAUNCHER_PATH",
         str(Path(__file__).parent.parent / "config" / "braindrain"),
     )
+
+
+def _hub_root_from_launcher() -> Path:
+    """Resolve BRAIN_MCP_HUB (or install) root from launcher path."""
+    launcher = Path(_get_launcher_path()).resolve()
+    if launcher.name == "braindrain" and launcher.parent.name == "config":
+        return launcher.parent.parent
+    return launcher.parent
 
 
 # ---------------------------------------------------------------------------
@@ -139,10 +154,12 @@ def _write_primed_state(
     *,
     bundle: str = DEFAULT_BUNDLE,
     bundle_version: str = "1",
+    braindrain_hub_root: str | None = None,
 ) -> None:
     """Persist primed.json with timestamp and resolved agents."""
     marker = target_dir / _PRIMED_MARKER
     marker.parent.mkdir(parents=True, exist_ok=True)
+    hub_root = braindrain_hub_root or str(_hub_root_from_launcher())
     marker.write_text(
         json.dumps(
             {
@@ -150,6 +167,7 @@ def _write_primed_state(
                 "agents": agents,
                 "bundle": bundle,
                 "bundle_version": bundle_version,
+                "braindrain_hub_root": hub_root,
             },
             indent=2,
         ),
@@ -588,6 +606,144 @@ def deploy_cursor_hook_templates(
                 _maybe_chmod_exec(dst)
             written[rel] = {"action": "created", "backup": ""}
 
+    return written
+
+
+def deploy_operational_scripts(
+    target_dir: Path,
+    bundle_manifest: dict,
+    *,
+    sync_templates: bool = False,
+    dry_run: bool = False,
+) -> dict[str, dict[str, str | bool]]:
+    """Copy operational scripts from hub scripts/ into consumer scripts/."""
+    script_keys = bundle_manifest.get("operational_scripts") or []
+    if not isinstance(script_keys, list) or not script_keys:
+        return {}
+
+    files_to_copy: set[str] = set()
+    for key in script_keys:
+        if not isinstance(key, str):
+            continue
+        for rel in OPERATIONAL_SCRIPT_FILES.get(key.strip(), []):
+            files_to_copy.add(rel)
+
+    scripts_dir = target_dir / "scripts"
+    written: dict[str, dict[str, str | bool]] = {}
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+
+    for rel in sorted(files_to_copy):
+        src = HUB_SCRIPTS_DIR / rel
+        dst = scripts_dir / rel
+        rel_key = f"scripts/{rel}"
+        if not src.is_file():
+            written[rel_key] = {"action": "missing_source", "backup": ""}
+            continue
+        if dry_run:
+            written[rel_key] = {"action": "dry_run", "backup": ""}
+            continue
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        content = src.read_text(encoding="utf-8")
+        if dst.exists() and not sync_templates:
+            written[rel_key] = {"action": "skipped_existing", "backup": ""}
+            continue
+        if dst.exists() and sync_templates:
+            backup = dst.with_name(f"{dst.name}.bak.{ts}")
+            shutil.copy2(dst, backup)
+            dst.write_text(content, encoding="utf-8")
+            written[rel_key] = {"action": "updated", "backup": str(backup)}
+        else:
+            dst.write_text(content, encoding="utf-8")
+            if rel.endswith(".py") and not rel.endswith("utils.py"):
+                try:
+                    dst.chmod(dst.stat().st_mode | 0o111)
+                except OSError:
+                    pass
+            written[rel_key] = {"action": "created", "backup": ""}
+    return written
+
+
+def deploy_bundle_skills(
+    target_dir: Path,
+    bundle_manifest: dict,
+    *,
+    sync_templates: bool = False,
+    dry_run: bool = False,
+) -> dict[str, dict[str, str | bool]]:
+    """Deploy Cursor skills listed in bundle manifest."""
+    skill_names = bundle_manifest.get("skills") or []
+    if not isinstance(skill_names, list) or not skill_names:
+        return {}
+    if not CURSOR_SKILLS_TEMPLATES_DIR.is_dir():
+        return {}
+
+    written: dict[str, dict[str, str | bool]] = {}
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    skills_root = target_dir / ".cursor" / "skills"
+
+    for name in skill_names:
+        if not isinstance(name, str) or not name.strip():
+            continue
+        src_dir = CURSOR_SKILLS_TEMPLATES_DIR / name.strip()
+        dst_dir = skills_root / name.strip()
+        rel_key = f"skills/{name.strip()}/SKILL.md"
+        skill_file = src_dir / "SKILL.md"
+        if not skill_file.is_file():
+            written[rel_key] = {"action": "missing_source", "backup": ""}
+            continue
+        if dry_run:
+            written[rel_key] = {"action": "dry_run", "backup": ""}
+            continue
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        dst = dst_dir / "SKILL.md"
+        content = skill_file.read_text(encoding="utf-8")
+        if dst.exists() and not sync_templates:
+            written[rel_key] = {"action": "skipped_existing", "backup": ""}
+            continue
+        if dst.exists() and sync_templates:
+            backup = dst.with_name(f"{dst.name}.bak.{ts}")
+            shutil.copy2(dst, backup)
+            dst.write_text(content, encoding="utf-8")
+            written[rel_key] = {"action": "updated", "backup": str(backup)}
+        else:
+            dst.write_text(content, encoding="utf-8")
+            written[rel_key] = {"action": "created", "backup": ""}
+    return written
+
+
+def deploy_cursor_commands(
+    target_dir: Path,
+    *,
+    sync_templates: bool = False,
+    dry_run: bool = False,
+) -> dict[str, dict[str, str | bool]]:
+    """Deploy Cursor slash commands from templates/cursor/commands/."""
+    if not CURSOR_COMMANDS_TEMPLATES_DIR.is_dir():
+        return {}
+
+    written: dict[str, dict[str, str | bool]] = {}
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    commands_dir = target_dir / ".cursor" / "commands"
+
+    for src in sorted(CURSOR_COMMANDS_TEMPLATES_DIR.glob("*.md")):
+        dst = commands_dir / src.name
+        rel_key = f"commands/{src.name}"
+        if dry_run:
+            written[rel_key] = {"action": "dry_run", "backup": ""}
+            continue
+        commands_dir.mkdir(parents=True, exist_ok=True)
+        content = src.read_text(encoding="utf-8")
+        if dst.exists() and not sync_templates:
+            written[rel_key] = {"action": "skipped_existing", "backup": ""}
+            continue
+        if dst.exists() and sync_templates:
+            backup = dst.with_name(f"{dst.name}.bak.{ts}")
+            shutil.copy2(dst, backup)
+            dst.write_text(content, encoding="utf-8")
+            written[rel_key] = {"action": "updated", "backup": str(backup)}
+        else:
+            dst.write_text(content, encoding="utf-8")
+            written[rel_key] = {"action": "created", "backup": ""}
     return written
 
 
@@ -1219,6 +1375,29 @@ def verify_prime_install(target_dir: Path, bundle_manifest: dict) -> dict:
     if "cursor" in bundle_agents and template_count > 0:
         checks["cursor_agents_dir_exists"] = cursor_agents_dir.is_dir()
         checks["cursor_agents_deployed"] = deployed_agent_files >= template_count
+        hooks_dir = target_dir / ".cursor" / "hooks"
+        for hook_name in (
+            "on-stop-daily-plan-audit.sh",
+            "on-stop-gitops.sh",
+            "on-stop-gitops-plans.sh",
+            "on-stop-observe.sh",
+        ):
+            hook_path = hooks_dir / hook_name
+            checks[f"hook_{hook_name}"] = hook_path.is_file()
+    script_keys = bundle_manifest.get("operational_scripts") or []
+    if isinstance(script_keys, list):
+        for key in script_keys:
+            if not isinstance(key, str):
+                continue
+            for rel in OPERATIONAL_SCRIPT_FILES.get(key.strip(), []):
+                checks[f"script_{rel.replace('/', '_')}"] = (target_dir / "scripts" / rel).is_file()
+    skill_names = bundle_manifest.get("skills") or []
+    if isinstance(skill_names, list):
+        for name in skill_names:
+            if isinstance(name, str) and name.strip():
+                checks[f"skill_{name.strip()}"] = (
+                    target_dir / ".cursor" / "skills" / name.strip() / "SKILL.md"
+                ).is_file()
 
     return {
         "ok": all(checks.values()),
@@ -1675,6 +1854,31 @@ def prime(
             if cursor_in_scope
             else {}
         )
+        operational_scripts_results = deploy_operational_scripts(
+            target_dir,
+            bundle_manifest,
+            sync_templates=sync_templates,
+            dry_run=False,
+        )
+        bundle_skills_results = (
+            deploy_bundle_skills(
+                target_dir,
+                bundle_manifest,
+                sync_templates=sync_templates,
+                dry_run=False,
+            )
+            if cursor_in_scope
+            else {}
+        )
+        cursor_commands_results = (
+            deploy_cursor_commands(
+                target_dir,
+                sync_templates=sync_templates,
+                dry_run=False,
+            )
+            if cursor_in_scope
+            else {}
+        )
     else:
         template_results = {
             str(f.relative_to(TEMPLATES_DIR)): {"action": "dry_run", "backup": ""}
@@ -1686,6 +1890,31 @@ def prime(
         } if (cursor_in_scope or codex_in_scope) and AGENT_TEMPLATES_DIR.exists() else {}
         cursor_hook_results = (
             deploy_cursor_hook_templates(
+                target_dir,
+                sync_templates=sync_templates,
+                dry_run=True,
+            )
+            if cursor_in_scope
+            else {}
+        )
+        operational_scripts_results = deploy_operational_scripts(
+            target_dir,
+            bundle_manifest,
+            sync_templates=sync_templates,
+            dry_run=True,
+        )
+        bundle_skills_results = (
+            deploy_bundle_skills(
+                target_dir,
+                bundle_manifest,
+                sync_templates=sync_templates,
+                dry_run=True,
+            )
+            if cursor_in_scope
+            else {}
+        )
+        cursor_commands_results = (
+            deploy_cursor_commands(
                 target_dir,
                 sync_templates=sync_templates,
                 dry_run=True,
@@ -1777,6 +2006,7 @@ def prime(
             apply_agents or ["all"],
             bundle=bundle_manifest.get("name", bundle),
             bundle_version=str(bundle_manifest.get("version", "1")),
+            braindrain_hub_root=str(_hub_root_from_launcher()),
         )
 
     verification = verify_prime_install(target_dir, bundle_manifest) if not dry_run else {
@@ -1848,6 +2078,20 @@ def prime(
             "skipped_existing": sum(
                 1 for v in cursor_hook_results.values() if v.get("action") == "skipped_existing"
             ),
+        },
+        "operational_scripts": {
+            "source": str(HUB_SCRIPTS_DIR),
+            "deployed": operational_scripts_results,
+        },
+        "bundle_skills": {
+            "source": str(CURSOR_SKILLS_TEMPLATES_DIR),
+            "skipped": not cursor_in_scope,
+            "deployed": bundle_skills_results,
+        },
+        "cursor_commands": {
+            "source": str(CURSOR_COMMANDS_TEMPLATES_DIR),
+            "skipped": not cursor_in_scope,
+            "deployed": cursor_commands_results,
         },
         "ruler": ruler_result,
         "memory_init": memory_init,

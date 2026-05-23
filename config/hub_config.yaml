@@ -150,6 +150,18 @@ mcp_tools:
 # ─── WORKFLOWS ─────────────────────────────────────────────────
 # ─── WORKFLOWS ─────────────────────────────────────────────────
 workflows:
+  - name: prime_cursor_orchestration
+    description: "Prime workspace for Cursor planning — rules, agents, hooks, skills, audit scripts."
+    steps:
+      - braindrain.prime_workspace
+    executes_in: sandbox
+    model: tier_local
+    token_budget: 800
+    plan_before_run: false
+    input_examples:
+      - { path: ".", dry_run: false }
+      - { path: ".", dry_run: true, sync_templates: true, sync_subagents: true }
+
   - name: init_project_memory
     description: "Initialize durable project memory artifacts for continual-learning."
     steps:
