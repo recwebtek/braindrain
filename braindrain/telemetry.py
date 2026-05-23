@@ -95,6 +95,8 @@ class TelemetrySession:
     estimator: TokenEstimator = field(default_factory=CharDiv4Estimator)
     rates: dict[str, float] = field(default_factory=dict)
     _env_context_hash: str | None = None
+    _parent_ensured: bool = False
+    _logs_ensured: bool = False
     module_attribution: dict[str, int] = field(
         default_factory=lambda: {
             "tool_gate": 0,
@@ -105,13 +107,20 @@ class TelemetrySession:
     )
 
     def _ensure_parent(self) -> None:
+        if self._parent_ensured:
+            return
         try:
             self.log_file.parent.mkdir(parents=True, exist_ok=True)
+            self._parent_ensured = True
         except PermissionError:
             fallback = Path(".logs") / self.log_file.name
             if self.log_file != fallback:
                 self.log_file = fallback
-                self.log_file.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    self.log_file.parent.mkdir(parents=True, exist_ok=True)
+                    self._parent_ensured = True
+                except PermissionError:
+                    pass
 
     def sanitize(self, data: Any) -> Any:
         """Public entry point for recursive redaction of sensitive paths and API keys."""
@@ -184,7 +193,9 @@ class TelemetrySession:
 
         date_str = datetime.now().strftime("%Y-%m-%d")
         debug_log_path = Path(".logs") / f"braindrain_debug_report_{date_str}.md"
-        debug_log_path.parent.mkdir(parents=True, exist_ok=True)
+        if not self._logs_ensured:
+            debug_log_path.parent.mkdir(parents=True, exist_ok=True)
+            self._logs_ensured = True
 
         header_exists = debug_log_path.exists()
         with open(debug_log_path, "a", encoding="utf-8") as f:
