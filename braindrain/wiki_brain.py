@@ -87,6 +87,8 @@ class WikiBrain:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        # Ensure POWER function exists for decay calculations even on older SQLite builds
+        conn.create_function("POWER", 2, pow)
         # Enable WAL mode for better write performance
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
@@ -428,26 +430,30 @@ class WikiBrain:
         return None
 
     def decay_records(self, *, now: float | None = None) -> dict[str, Any]:
+        """
+        Apply importance decay to all active records based on time elapsed since last update.
+        Optimized with a single bulk SQL UPDATE statement leveraging SQLite's POWER function.
+        """
         current = now or time.time()
-        updated = 0
+        if self.decay_half_life_days <= 0:
+            with self._connect() as conn:
+                cursor = conn.execute(
+                    "UPDATE brain_records SET updated_at = ? WHERE status = 'active'",
+                    (current,),
+                )
+                return {"updated_records": cursor.rowcount}
+
         with self._connect() as conn:
-            rows = conn.execute(
+            cursor = conn.execute(
                 """
-                SELECT record_id, importance, updated_at, created_at
-                FROM brain_records
+                UPDATE brain_records
+                SET importance = importance * POWER(0.5, ((? - COALESCE(NULLIF(updated_at, 0), created_at)) / 86400.0) / ?),
+                    updated_at = ?
                 WHERE status = 'active'
-                """
-            ).fetchall()
-            for row in rows:
-                anchor = float(row["updated_at"] or row["created_at"])
-                decayed = float(row["importance"]) * self._half_life(
-                    anchor, current, self.decay_half_life_days
-                )
-                conn.execute(
-                    "UPDATE brain_records SET importance = ?, updated_at = ? WHERE record_id = ?",
-                    (decayed, current, row["record_id"]),
-                )
-                updated += 1
+                """,
+                (current, self.decay_half_life_days, current),
+            )
+            updated = cursor.rowcount
         return {"updated_records": updated}
 
     def forget_below_threshold(self) -> dict[str, Any]:
