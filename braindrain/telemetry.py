@@ -62,9 +62,15 @@ def estimate_claude_tokens(text: str) -> int:
 # Regex patterns for redaction (pre-compiled for performance)
 # Paths: /Users/..., /Volumes/..., /home/..., /root/...
 _PATH_RE = re.compile(r"(/Users/[^\s'\"]+|/Volumes/[^\s'\"]+|/home/[^\s'\"]+|/root/[^\s'\"]+)")
-# API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_), Google AI (AIza)
+# API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_), Google AI (AIza), AWS (AKIA), Slack (xox)
 _KEY_RE = re.compile(
-    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,})"
+    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,}|AKIA[A-Z0-9]{16}|xox[bpa]-[a-zA-Z0-9-]{12,})"
+)
+
+# Generic secrets: password, secret, apikey, token
+_GENERIC_SECRET_RE = re.compile(
+    r"\b(password|secret|apikey|api_key|token)\b([:=]\s*)(['\"]?)([^\s'\"#&]{6,})\3",
+    re.IGNORECASE,
 )
 
 
@@ -95,6 +101,7 @@ class TelemetrySession:
     estimator: TokenEstimator = field(default_factory=CharDiv4Estimator)
     rates: dict[str, float] = field(default_factory=dict)
     _env_context_hash: str | None = None
+    _parent_ensured: bool = False
     module_attribution: dict[str, int] = field(
         default_factory=lambda: {
             "tool_gate": 0,
@@ -105,8 +112,11 @@ class TelemetrySession:
     )
 
     def _ensure_parent(self) -> None:
+        if self._parent_ensured:
+            return
         try:
             self.log_file.parent.mkdir(parents=True, exist_ok=True)
+            self._parent_ensured = True
         except PermissionError:
             fallback = Path(".logs") / self.log_file.name
             if self.log_file != fallback:
@@ -130,16 +140,28 @@ class TelemetrySession:
                     and "gsk_" not in val
                     and "hf_" not in val
                     and "AIza" not in val
+                    and "AKIA" not in val
+                    and "xox" not in val
+                    and not any(
+                        k in val.lower()
+                        for k in ["password", "secret", "apikey", "api_key", "token"]
+                    )
                 ):
                     return val
 
                 val = _PATH_RE.sub("[REDACTED_PATH]", val)
                 val = _KEY_RE.sub("[REDACTED_KEY]", val)
+                val = _GENERIC_SECRET_RE.sub(r"\1\2\3[REDACTED_SECRET]\3", val)
                 return val
             if isinstance(val, dict):
-                return {k: _do_sanitize(v) for k, v in val.items()}
+                return {
+                    _do_sanitize(k) if isinstance(k, str) else k: _do_sanitize(v)
+                    for k, v in val.items()
+                }
             if isinstance(val, list):
                 return [_do_sanitize(i) for i in val]
+            if isinstance(val, tuple):
+                return tuple(_do_sanitize(i) for i in val)
             return val
 
         return _do_sanitize(data)
