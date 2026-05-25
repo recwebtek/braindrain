@@ -45,6 +45,8 @@ LivingDash uses a split layout so scaffold code can be versioned while runtime s
 
 **Collectors:** `braindrain/livingdash_collectors.py` reads workspace files, JSONL, and observer SQLite only — no MCP stdio coupling.
 
+After UI or collector changes: `cd .ldash/ui && npm install && npm run build`, then restart LivingDash (`/livingdash`) and use **Refresh workspace** in the dashboard.
+
 This keeps passwords/session secrets out of shareable dashboard scaffold paths and aligns with the project rule that `.braindrain/` is machine-local.
 
 ### Cursor command: start LivingDash
