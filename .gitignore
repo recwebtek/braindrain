@@ -65,6 +65,10 @@ tests/*
 !tests/test_livingdash_collectors.py
 !tests/test_livingdash_sidecar_api.py
 
+# LivingDash UI build deps (source under braindrain/ldash/ui is tracked)
+braindrain/ldash/ui/node_modules/
+braindrain/ldash/ui/*.tsbuildinfo
+
 # Ruler outputs at repo root (no leading dot)
 /AGENTS.md
 /AGENTS.md.bak
