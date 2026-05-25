@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from braindrain.livingdash import DEFAULT_COMMANDS, DEFAULT_SERVICES, build_dashboard_snapshot, ensure_livingdash_runtime
-from braindrain.livingdash_collectors import collect_workspace_bundle
+from braindrain.livingdash_collectors import SNAPSHOT_SCHEMA_VERSION, collect_workspace_bundle
 
 
 SESSION_COOKIE = "livingdash_session"
@@ -311,6 +311,21 @@ def _git_summary(project_root: Path) -> dict[str, Any]:
 def _workspace_bundle(snapshot: dict[str, Any]) -> dict[str, Any]:
     bundle = snapshot.get("workspace_bundle")
     return bundle if isinstance(bundle, dict) else {}
+
+
+def _bundle_is_usable(bundle: dict[str, Any]) -> bool:
+    if not bundle:
+        return False
+    if bundle.get("schema_version") != SNAPSHOT_SCHEMA_VERSION:
+        return False
+    return isinstance(bundle.get("agents"), dict)
+
+
+def _ensure_workspace_bundle(snapshot: dict[str, Any], project_root: Path) -> dict[str, Any]:
+    bundle = snapshot.get("workspace_bundle")
+    if isinstance(bundle, dict) and _bundle_is_usable(bundle):
+        return bundle
+    return collect_workspace_bundle(project_root)
 
 
 def _telemetry_summary(snapshot: dict[str, Any], status: dict[str, Any], history: dict[str, Any]) -> dict[str, Any]:
@@ -923,7 +938,7 @@ def create_app(
     def braindrain_overview(request: Request) -> dict[str, Any]:
         _require_auth(request, auth_config)
         snapshot = _read_snapshot(data_dir)
-        bundle = _workspace_bundle(snapshot)
+        bundle = _ensure_workspace_bundle(snapshot, project_root)
         telemetry = _telemetry_summary(snapshot, _read_status(data_dir), _read_history(paths))
         return {
             "version": CONTRACT_VERSION,
@@ -941,9 +956,7 @@ def create_app(
     ) -> dict[str, Any]:
         _require_auth(request, auth_config)
         snapshot = _read_snapshot(data_dir)
-        bundle = _workspace_bundle(snapshot)
-        if not bundle:
-            bundle = collect_workspace_bundle(project_root)
+        bundle = _ensure_workspace_bundle(snapshot, project_root)
         limit = max(1, min(int(limit), 500))
         payload: dict[str, Any] = {"version": CONTRACT_VERSION, "updated_at": _now_iso()}
         if log_type in ("all", "observer"):
@@ -963,7 +976,7 @@ def create_app(
     def braindrain_sessions(request: Request, limit: int = 40) -> dict[str, Any]:
         _require_auth(request, auth_config)
         snapshot = _read_snapshot(data_dir)
-        bundle = _workspace_bundle(snapshot)
+        bundle = _ensure_workspace_bundle(snapshot, project_root)
         telemetry = bundle.get("telemetry", {}) if isinstance(bundle.get("telemetry"), dict) else {}
         events = telemetry.get("recent_events", []) if isinstance(telemetry.get("recent_events"), list) else []
         limit = max(1, min(int(limit), 200))
@@ -977,7 +990,7 @@ def create_app(
     def primer(request: Request) -> dict[str, Any]:
         _require_auth(request, auth_config)
         snapshot = _read_snapshot(data_dir)
-        bundle = _workspace_bundle(snapshot)
+        bundle = _ensure_workspace_bundle(snapshot, project_root)
         return {
             "version": CONTRACT_VERSION,
             "primer": bundle.get("primer", {}),
@@ -989,7 +1002,7 @@ def create_app(
     def config_page(request: Request) -> dict[str, Any]:
         _require_auth(request, auth_config)
         snapshot = _read_snapshot(data_dir)
-        bundle = _workspace_bundle(snapshot)
+        bundle = _ensure_workspace_bundle(snapshot, project_root)
         return {
             "version": CONTRACT_VERSION,
             "read_only": True,
@@ -1002,7 +1015,7 @@ def create_app(
     def agents(request: Request, name: str | None = None) -> dict[str, Any]:
         _require_auth(request, auth_config)
         snapshot = _read_snapshot(data_dir)
-        bundle = _workspace_bundle(snapshot)
+        bundle = _ensure_workspace_bundle(snapshot, project_root)
         agents_payload = bundle.get("agents", {})
         items = agents_payload.get("items", []) if isinstance(agents_payload, dict) else []
         if name:
@@ -1016,21 +1029,21 @@ def create_app(
     def skills(request: Request) -> dict[str, Any]:
         _require_auth(request, auth_config)
         snapshot = _read_snapshot(data_dir)
-        bundle = _workspace_bundle(snapshot)
+        bundle = _ensure_workspace_bundle(snapshot, project_root)
         return {"version": CONTRACT_VERSION, **(bundle.get("skills", {}) if isinstance(bundle.get("skills"), dict) else {}), "updated_at": _now_iso()}
 
     @app.get("/api/plans")
     def plans(request: Request) -> dict[str, Any]:
         _require_auth(request, auth_config)
         snapshot = _read_snapshot(data_dir)
-        bundle = _workspace_bundle(snapshot)
+        bundle = _ensure_workspace_bundle(snapshot, project_root)
         return {"version": CONTRACT_VERSION, **(bundle.get("plans", {}) if isinstance(bundle.get("plans"), dict) else {}), "updated_at": _now_iso()}
 
     @app.get("/api/tests")
     def tests(request: Request) -> dict[str, Any]:
         _require_auth(request, auth_config)
         snapshot = _read_snapshot(data_dir)
-        bundle = _workspace_bundle(snapshot)
+        bundle = _ensure_workspace_bundle(snapshot, project_root)
         return {"version": CONTRACT_VERSION, **(bundle.get("tests", {}) if isinstance(bundle.get("tests"), dict) else {}), "updated_at": _now_iso()}
 
     @app.get("/{full_path:path}")

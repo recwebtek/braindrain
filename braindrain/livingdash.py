@@ -489,11 +489,20 @@ class LivingDashManager:
             return configured
         return _pick_port()
 
+    def _snapshot_needs_refresh(self) -> bool:
+        snap = self._load_json(self.paths.snapshot, {})
+        if snap.get("schema_version") != SNAPSHOT_SCHEMA_VERSION:
+            return True
+        bundle = snap.get("workspace_bundle")
+        if not isinstance(bundle, dict):
+            return True
+        return not isinstance(bundle.get("agents"), dict)
+
     def start(self) -> dict[str, Any]:
         auth = self.ensure_auth()
         hub = load_hub_config(self.project_root)
         ldash = load_livingdash_config(hub)
-        if ldash.get("refresh_on_start", True):
+        if ldash.get("refresh_on_start", True) or self._snapshot_needs_refresh():
             self.refresh()
         port = self._resolve_port()
         host = str(ldash.get("host", "127.0.0.1") or "127.0.0.1")

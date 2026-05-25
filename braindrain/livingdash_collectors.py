@@ -380,7 +380,7 @@ def collect_observer_logs(paths: dict[str, Path | None], *, limit: int = MAX_OBS
         stats["by_type"] = [{"event_type": row["event_type"], "count": row["count"]} for row in type_rows]
         rows = conn.execute(
             """
-            SELECT event_id, session_id, event_type, timestamp, tool_name, payload_json
+            SELECT event_id, session_id, event_type, timestamp, tool_name, metadata
             FROM brain_events
             ORDER BY timestamp DESC, event_id DESC
             LIMIT ?
@@ -389,11 +389,11 @@ def collect_observer_logs(paths: dict[str, Path | None], *, limit: int = MAX_OBS
         ).fetchall()
         for row in rows:
             payload = {}
-            if row["payload_json"]:
+            if row["metadata"]:
                 try:
-                    payload = json.loads(row["payload_json"])
+                    payload = json.loads(row["metadata"])
                 except Exception:
-                    payload = {"raw": str(row["payload_json"])[:500]}
+                    payload = {"raw": str(row["metadata"])[:500]}
             events.append(
                 {
                     "event_id": row["event_id"],
@@ -435,6 +435,58 @@ def _parse_next_actions(text: str) -> list[dict[str, str]]:
     return items[:40]
 
 
+def _parse_plan_frontmatter(text: str) -> dict[str, Any]:
+    meta: dict[str, Any] = {}
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            block = text[3:end].strip()
+            try:
+                parsed = yaml.safe_load(block) or {}
+                if isinstance(parsed, dict):
+                    meta = parsed
+            except Exception:
+                meta = {}
+    return meta
+
+
+def collect_cursor_plans(project_root: Path) -> list[dict[str, Any]]:
+    plans_dir = project_root / ".cursor" / "plans"
+    archive_dir = plans_dir / ".plan.archives"
+    items: list[dict[str, Any]] = []
+    if not plans_dir.exists():
+        return items
+
+    for path in sorted(plans_dir.rglob("*.plan.md")):
+        if archive_dir in path.parents:
+            archived = True
+        else:
+            archived = False
+        try:
+            rel = str(path.relative_to(project_root))
+        except ValueError:
+            rel = str(path)
+        text = path.read_text(encoding="utf-8", errors="replace")
+        meta = _parse_plan_frontmatter(text)
+        body_start = text.find("\n---", 3)
+        body = text[body_start + 4 :].strip() if body_start != -1 else text
+        excerpt = body[:500].strip()
+        stat = path.stat()
+        items.append(
+            {
+                "path": rel,
+                "name": str(meta.get("name") or path.stem),
+                "disposition": str(meta.get("disposition") or meta.get("status") or "active"),
+                "priority": meta.get("priority"),
+                "branch": meta.get("branch"),
+                "archived": archived,
+                "modified_at": datetime.fromtimestamp(stat.st_mtime, UTC).isoformat().replace("+00:00", "Z"),
+                "excerpt": excerpt,
+            }
+        )
+    return items
+
+
 def collect_plan_reports(project_root: Path) -> dict[str, Any]:
     reports_dir = project_root / ".braindrain" / "plan-reports"
     master = reports_dir / "master-plan.md"
@@ -454,6 +506,7 @@ def collect_plan_reports(project_root: Path) -> dict[str, Any]:
         },
         "latest_audit": _read_text_excerpt(latest, max_chars=2000) if latest.exists() else {"exists": False},
         "audit_files": [p.name for p in audit_files[:8]],
+        "cursor_plans": collect_cursor_plans(project_root),
         "updated_at": _now_iso(),
     }
 
