@@ -307,6 +307,19 @@ cost_tracking:
   alert_threshold_usd_per_session: 0.50
   dashboard: true
 
+# ─── LIVINGDASH SIDECAR (read by sidecar only; MCP ignores) ─────
+livingdash:
+  enabled: true
+  host: "127.0.0.1"
+  port: 0 # 0 = ephemeral free port on each start
+  ui_dist: null # default braindrain/ldash/ui/dist (package path)
+  data_dir: null # default .braindrain/ldash/data
+  refresh_on_start: true
+  read_paths:
+    session_jsonl: null # default cost_tracking.log_file
+    observer_db: null # default observer.storage_path
+    token_metrics: ".braindrain/token-metrics.jsonl"
+
 # ─── MODEL PROVENANCE ───────────────────────────────────────────
 # Controls model/date attribution in chat, plans, and subagent traces.
 provenance:

@@ -1,0 +1,302 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Sora", "IBM Plex Sans", "Avenir Next", sans-serif;
+}
+
+:root {
+  color-scheme: dark;
+  --ld-shell-overlay: rgba(3, 4, 6, 0.96);
+  --ld-surface-0: #000000;
+  --ld-surface-1: #050608;
+  --ld-surface-2: #0a0c10;
+  --ld-surface-3: #12161c;
+  --ld-border: rgba(255, 255, 255, 0.09);
+  --ld-border-strong: rgba(137, 207, 255, 0.3);
+  --ld-text-main: #f3f7fb;
+  --ld-text-soft: #b3becd;
+  --ld-text-muted: #748196;
+  --ld-console-fg: #d7e1ec;
+  --ld-shadow: 0 14px 36px rgba(0, 0, 0, 0.42);
+  --ld-glow: 0 0 0 1px rgba(255, 255, 255, 0.04);
+  --ld-focus-ring: rgba(114, 192, 255, 0.52);
+  --ld-tone-blue-bg: rgba(60, 112, 182, 0.18);
+  --ld-tone-blue-fg: #d8e9ff;
+  --ld-tone-blue-ring: rgba(96, 158, 235, 0.28);
+  --ld-tone-cyan-bg: rgba(30, 94, 110, 0.2);
+  --ld-tone-cyan-fg: #d7f3f8;
+  --ld-tone-cyan-ring: rgba(74, 177, 206, 0.28);
+  --ld-tone-emerald-bg: rgba(37, 92, 77, 0.2);
+  --ld-tone-emerald-fg: #daf7ec;
+  --ld-tone-emerald-ring: rgba(66, 166, 128, 0.28);
+  --ld-tone-amber-bg: rgba(108, 83, 25, 0.22);
+  --ld-tone-amber-fg: #f9ebc3;
+  --ld-tone-amber-ring: rgba(203, 164, 54, 0.28);
+  --ld-tone-violet-bg: rgba(70, 59, 118, 0.22);
+  --ld-tone-violet-fg: #e4def7;
+  --ld-tone-violet-ring: rgba(142, 129, 214, 0.3);
+  --ld-tone-rose-bg: rgba(110, 42, 58, 0.22);
+  --ld-tone-rose-fg: #f6dce1;
+  --ld-tone-rose-ring: rgba(194, 93, 122, 0.28);
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: var(--font-sans);
+  color: var(--ld-text-main);
+  background:
+    linear-gradient(180deg, #000000 0%, #020305 52%, #05070a 100%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+::selection {
+  background: rgba(96, 158, 235, 0.28);
+  color: white;
+}
+
+.ld-app-shell {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent 22%),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 0 1px, transparent 1px 100%),
+    linear-gradient(rgba(255, 255, 255, 0.018) 0 1px, transparent 1px 100%);
+  background-size: auto, 24px 24px, 24px 24px;
+}
+
+.ld-panel {
+  border: 1px solid var(--ld-border);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(10, 12, 16, 0.96), rgba(3, 5, 8, 0.98));
+  box-shadow: var(--ld-shadow);
+  backdrop-filter: blur(10px);
+}
+
+.ld-panel-glow {
+  box-shadow: var(--ld-glow);
+}
+
+.ld-surface,
+.ld-surface-hero {
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(11, 13, 17, 0.94), rgba(4, 6, 9, 0.98));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+.ld-surface-hero {
+  background:
+    linear-gradient(180deg, rgba(12, 15, 20, 0.96), rgba(5, 8, 12, 0.99));
+}
+
+.ld-eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ld-text-muted);
+}
+
+.ld-copy {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ld-text-soft);
+}
+
+.ld-soft-block {
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+}
+
+.ld-action {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.02);
+  text-align: left;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
+    opacity 150ms ease;
+}
+
+.ld-action:hover:enabled {
+  border-color: var(--ld-border-strong);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.ld-secondary-button,
+.ld-tab {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--ld-text-main);
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
+    color 150ms ease;
+}
+
+.ld-secondary-button {
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ld-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 132px;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.ld-tab:hover,
+.ld-secondary-button:hover {
+  border-color: var(--ld-border-strong);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.ld-tab-active {
+  border-color: rgba(96, 158, 235, 0.4);
+  background:
+    linear-gradient(180deg, rgba(16, 24, 33, 0.98), rgba(8, 12, 18, 0.98));
+}
+
+.ld-console {
+  min-height: 280px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(2, 4, 6, 0.96);
+  padding: 14px;
+  overflow: auto;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.ld-brand-kicker {
+  font-size: 11px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: #9bb4d3;
+}
+
+.ld-brand-orb {
+  position: relative;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(14, 18, 23, 0.98), rgba(6, 9, 12, 1));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.ld-brand-orb > svg {
+  position: relative;
+  z-index: 1;
+  display: block;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--ld-focus-ring);
+  outline-offset: 2px;
+}
+
+.ld-markdown {
+  color: var(--ld-text-main);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+
+.ld-markdown h1,
+.ld-markdown h2,
+.ld-markdown h3 {
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.ld-markdown h1 {
+  font-size: 1.25rem;
+}
+
+.ld-markdown h2 {
+  font-size: 1.1rem;
+}
+
+.ld-markdown h3 {
+  font-size: 1rem;
+}
+
+.ld-markdown p,
+.ld-markdown ul,
+.ld-markdown ol {
+  margin: 0.5rem 0;
+}
+
+.ld-markdown ul,
+.ld-markdown ol {
+  padding-left: 1.25rem;
+}
+
+.ld-markdown code {
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 0.1rem 0.35rem;
+  font-size: 0.75rem;
+}
+
+.ld-markdown pre {
+  margin: 0.75rem 0;
+  overflow-x: auto;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.35);
+  padding: 0.75rem;
+}
+
+.ld-markdown pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.ld-markdown a {
+  color: #9ec9ff;
+  text-decoration: underline;
+}
+
+.ld-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+
+.ld-markdown th,
+.ld-markdown td {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 0.35rem 0.5rem;
+}

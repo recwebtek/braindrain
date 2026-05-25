@@ -235,6 +235,7 @@ def test_deploy_templates_includes_guidance_only_when_enabled(tmp_path, monkeypa
     enabled_workspace = tmp_path / "enabled"
     enabled_workspace.mkdir()
     scriptlib.enable(str(enabled_workspace), harvest=False)
+    # Ensure templates are deployed
     workspace_primer.deploy_templates(enabled_workspace, launcher)
     enabled_rules = (enabled_workspace / ".ruler" / "RULES.md").read_text(encoding="utf-8")
     assert "scriptlib before writing a new task script" in enabled_rules

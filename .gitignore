@@ -64,6 +64,12 @@ tests/*
 !tests/test_token_checkpoints.py
 !tests/test_exec_path.py
 !tests/test_wiki_brain_contradiction.py
+!tests/test_livingdash_collectors.py
+!tests/test_livingdash_sidecar_api.py
+
+# LivingDash UI build deps (source under braindrain/ldash/ui is tracked)
+braindrain/ldash/ui/node_modules/
+braindrain/ldash/ui/*.tsbuildinfo
 
 # Ruler outputs at repo root (no leading dot)
 /AGENTS.md
