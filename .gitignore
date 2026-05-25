@@ -16,7 +16,8 @@ venv/
 
 *.log
 *.logs
-.logs
+.logs/
+# Legacy: debug reports were committed under .logs/ before this rule; use .braindrain/logs/ only.
 
 # Docs (machine-local); allow shipped contributor guides
 docs/
