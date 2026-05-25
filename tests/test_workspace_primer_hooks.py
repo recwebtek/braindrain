@@ -19,9 +19,11 @@ import pytest
 from braindrain.workspace_primer import (
     MAX_ROLLBACK_SNAPSHOTS,
     CURSOR_HOOK_TEMPLATES_DIR,
+    CURSOR_SKILL_TEMPLATES_DIR,
     compact_prime_result_for_mcp,
     create_prime_snapshot,
     deploy_cursor_hook_templates,
+    deploy_cursor_skill_templates,
     deploy_subagent_templates,
     prime,
 )
@@ -50,12 +52,34 @@ def _load_audit_module():
     return module
 
 
+def test_braindrain_hub_pr_skill_template_exists() -> None:
+    skill = CURSOR_SKILL_TEMPLATES_DIR / "braindrain-hub-pr" / "SKILL.md"
+    assert skill.is_file()
+    assert "BRAIN_MCP_HUB" in skill.read_text(encoding="utf-8")
+
+
+def test_deploy_cursor_skill_templates_writes_skill_dir(tmp_project_dir: Path) -> None:
+    out = deploy_cursor_skill_templates(
+        tmp_project_dir,
+        ["braindrain-hub-pr"],
+        sync_templates=False,
+        dry_run=False,
+    )
+    dst = tmp_project_dir / ".cursor" / "skills" / "braindrain-hub-pr" / "SKILL.md"
+    assert dst.is_file()
+    assert out["skills/braindrain-hub-pr/SKILL.md"]["action"] == "created"
+
+
 def test_cursor_hook_templates_exist_in_repo() -> None:
     assert (CURSOR_HOOK_TEMPLATES_DIR / "hooks.json").is_file()
     hooks = CURSOR_HOOK_TEMPLATES_DIR / "hooks"
     assert (hooks / "on-stop-daily-plan-audit.sh").is_file()
     assert (hooks / "on-stop-gitops.sh").is_file()
     assert (hooks / "on-stop-observe.sh").is_file()
+
+
+
+
 
 
 def test_deploy_cursor_hook_templates_writes_expected_paths(tmp_project_dir: Path) -> None:
