@@ -5,7 +5,8 @@ agents:
   - cursor
 rules:
   - braindrain
-skills: []
+skills:
+  - braindrain-hub-pr
 mcp_servers:
   - braindrain
 capability_profiles:

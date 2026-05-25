@@ -16,10 +16,12 @@ venv/
 
 *.log
 *.logs
-.logs
+.logs/
+# Legacy: debug reports were committed under .logs/ before this rule; use .braindrain/logs/ only.
 
-# Docs
+# Docs (machine-local); allow shipped contributor guides
 docs/
+!docs/skill-braindrain-hub-pr.md
 
 # QA / installer scratch (local-only)
 QA-Logs/

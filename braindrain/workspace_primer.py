@@ -23,6 +23,7 @@ from braindrain.scriptlib import (
 TEMPLATES_DIR = Path(__file__).parent.parent / "config" / "templates" / "ruler"
 AGENT_TEMPLATES_DIR = Path(__file__).parent.parent / "config" / "templates" / "agents"
 CURSOR_HOOK_TEMPLATES_DIR = Path(__file__).parent.parent / "config" / "templates" / "cursor"
+CURSOR_SKILL_TEMPLATES_DIR = Path(__file__).parent.parent / "config" / "templates" / "cursor-skills"
 
 # Canonical project-local docs directory (gitignored; never committed).
 BRAINDRAIN_DIR = ".braindrain"
@@ -591,6 +592,54 @@ def deploy_cursor_hook_templates(
     return written
 
 
+
+
+def deploy_cursor_skill_templates(
+    target_dir: Path,
+    skill_ids: list[str],
+    *,
+    sync_templates: bool = False,
+    dry_run: bool = False,
+) -> dict[str, dict[str, str | bool]]:
+    """
+    Deploy Cursor skills from ``config/templates/cursor-skills/<id>/SKILL.md``
+    → ``.cursor/skills/<id>/SKILL.md`` for each id in ``skill_ids``.
+    """
+    if not CURSOR_SKILL_TEMPLATES_DIR.is_dir() or not skill_ids:
+        return {}
+
+    written: dict[str, dict[str, str | bool]] = {}
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    skills_root = target_dir / ".cursor" / "skills"
+
+    for skill_id in skill_ids:
+        src = CURSOR_SKILL_TEMPLATES_DIR / skill_id / "SKILL.md"
+        rel = f"skills/{skill_id}/SKILL.md"
+        dst = skills_root / skill_id / "SKILL.md"
+        if not src.is_file():
+            written[rel] = {"action": "skipped_missing_source", "backup": ""}
+            continue
+        if dry_run:
+            written[rel] = {"action": "dry_run", "backup": ""}
+            continue
+
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        content = src.read_text(encoding="utf-8")
+        if dst.exists():
+            if not sync_templates:
+                written[rel] = {"action": "skipped_existing", "backup": ""}
+                continue
+            backup = dst.with_name(f"{dst.name}.bak.{ts}")
+            shutil.copy2(dst, backup)
+            dst.write_text(content, encoding="utf-8")
+            written[rel] = {"action": "updated", "backup": str(backup)}
+        else:
+            dst.write_text(content, encoding="utf-8")
+            written[rel] = {"action": "created", "backup": ""}
+
+    return written
+
+
 def _build_codex_subagent_block(codex_agent_targets: list[str]) -> str:
     """Render managed TOML block for codex subagent path hints."""
     quoted = ", ".join(f'"{p}"' for p in codex_agent_targets)
@@ -1053,6 +1102,7 @@ def _prime_touched_paths(
     ]
     if all_agents or apply_agents is None or "cursor" in (apply_agents or []):
         touched.append(".cursor/agents/")
+        touched.append(".cursor/skills/")
     if all_agents or apply_agents is None or "codex" in (apply_agents or []):
         touched.append(".codex/agents/")
         touched.append(".codex/config.toml")
@@ -1276,20 +1326,24 @@ def compact_prime_result_for_mcp(
                 slim[k] = v  # type: ignore[assignment]
         mem["artifacts"] = slim
     out["memory_init"] = mem
-    ch = result.get("cursor_hooks") or {}
-    deployed_ch = ch.get("deployed") or {}
-    if isinstance(deployed_ch, dict) and deployed_ch:
-        out["cursor_hooks"] = {
-            "source": ch.get("source"),
-            "skipped": ch.get("skipped"),
-            "new_files": ch.get("new_files"),
-            "updated_files": ch.get("updated_files"),
-            "skipped_existing": ch.get("skipped_existing"),
-            "deployed_summary": [
-                {"file": k, "action": (v or {}).get("action")}
-                for k, v in deployed_ch.items()
-            ],
-        }
+    for block_key in ("cursor_hooks", "cursor_skills"):
+        block = result.get(block_key) or {}
+        deployed_block = block.get("deployed") or {}
+        if isinstance(deployed_block, dict) and deployed_block:
+            slim_block = {
+                "source": block.get("source"),
+                "skipped": block.get("skipped"),
+                "new_files": block.get("new_files"),
+                "updated_files": block.get("updated_files"),
+                "skipped_existing": block.get("skipped_existing"),
+                "deployed_summary": [
+                    {"file": k, "action": (v or {}).get("action")}
+                    for k, v in deployed_block.items()
+                ],
+            }
+            if block_key == "cursor_skills":
+                slim_block["skill_ids"] = block.get("skill_ids")
+            out[block_key] = slim_block
     out["subagents"] = result.get("subagents")
     out["codex_subagent_config"] = result.get("codex_subagent_config")
     out["_mcp_response_compact"] = True
@@ -1606,6 +1660,8 @@ def prime(
     to refresh hooks from templates).
     Synthesis of project memory / project-rules.mdc is handled in
     initialize_project_memory().
+    When Cursor is in scope, deploys bundle-listed Cursor skills from
+    ``config/templates/cursor-skills/<id>/`` → ``.cursor/skills/<id>/``.
 
     Returns structured result for MCP tool response.
     """
@@ -1675,6 +1731,19 @@ def prime(
             if cursor_in_scope
             else {}
         )
+        bundle_skill_ids = [
+            str(s) for s in (bundle_manifest.get("skills") or []) if str(s).strip()
+        ]
+        cursor_skill_results = (
+            deploy_cursor_skill_templates(
+                target_dir,
+                bundle_skill_ids,
+                sync_templates=sync_templates,
+                dry_run=False,
+            )
+            if cursor_in_scope
+            else {}
+        )
     else:
         template_results = {
             str(f.relative_to(TEMPLATES_DIR)): {"action": "dry_run", "backup": ""}
@@ -1687,6 +1756,19 @@ def prime(
         cursor_hook_results = (
             deploy_cursor_hook_templates(
                 target_dir,
+                sync_templates=sync_templates,
+                dry_run=True,
+            )
+            if cursor_in_scope
+            else {}
+        )
+        bundle_skill_ids = [
+            str(s) for s in (bundle_manifest.get("skills") or []) if str(s).strip()
+        ]
+        cursor_skill_results = (
+            deploy_cursor_skill_templates(
+                target_dir,
+                bundle_skill_ids,
                 sync_templates=sync_templates,
                 dry_run=True,
             )
@@ -1847,6 +1929,23 @@ def prime(
             ),
             "skipped_existing": sum(
                 1 for v in cursor_hook_results.values() if v.get("action") == "skipped_existing"
+            ),
+        },
+        "cursor_skills": {
+            "source": str(CURSOR_SKILL_TEMPLATES_DIR),
+            "skipped": not cursor_in_scope,
+            "skill_ids": bundle_skill_ids if cursor_in_scope else [],
+            "deployed": cursor_skill_results,
+            "new_files": sum(
+                1 for v in cursor_skill_results.values() if v.get("action") == "created"
+            ),
+            "updated_files": sum(
+                1 for v in cursor_skill_results.values() if v.get("action") == "updated"
+            ),
+            "skipped_existing": sum(
+                1
+                for v in cursor_skill_results.values()
+                if v.get("action") == "skipped_existing"
             ),
         },
         "ruler": ruler_result,

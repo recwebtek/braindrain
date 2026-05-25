@@ -67,6 +67,9 @@ _KEY_RE = re.compile(
     r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,})"
 )
 
+# Machine-local debug reports (under .braindrain/, never committed).
+_DEBUG_LOG_DIR = Path(".braindrain") / "logs"
+
 
 @dataclass
 class ToolAggregate:
@@ -108,7 +111,7 @@ class TelemetrySession:
         try:
             self.log_file.parent.mkdir(parents=True, exist_ok=True)
         except PermissionError:
-            fallback = Path(".logs") / self.log_file.name
+            fallback = _DEBUG_LOG_DIR / self.log_file.name
             if self.log_file != fallback:
                 self.log_file = fallback
                 self.log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -183,7 +186,7 @@ class TelemetrySession:
         }
 
         date_str = datetime.now().strftime("%Y-%m-%d")
-        debug_log_path = Path(".logs") / f"braindrain_debug_report_{date_str}.md"
+        debug_log_path = _DEBUG_LOG_DIR / f"braindrain_debug_report_{date_str}.md"
         debug_log_path.parent.mkdir(parents=True, exist_ok=True)
 
         header_exists = debug_log_path.exists()

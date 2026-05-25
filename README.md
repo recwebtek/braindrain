@@ -546,7 +546,7 @@ braindrain/
 - **Subagent templates**: canonical source is `config/templates/agents/*.md`. `prime_workspace()` copies that tree to:
   - `.cursor/agents/` when Cursor is in the resolved agent set, and
   - `.codex/agents/` when Codex is in the resolved agent set (same files; IDE-specific layout only).
-  Skills still deploy from `config/templates/cursor-skills/` -> `.cursor/skills/` (e.g. scriptlib-librarian).
+  Skills deploy from `config/templates/cursor-skills/<id>/` → `.cursor/skills/<id>/` for each id in the active bundle `skills:` list (e.g. `braindrain-hub-pr`, `scriptlib-librarian`). See `docs/skill-braindrain-hub-pr.md`.
   Existing files are create-only by default; set `sync_subagents=true` to update with backups. `.cursor/` is gitignored at repo root; do not commit generated agent/skill files—edit templates and re-run `prime_workspace`.
 - **Codex config merge**: `prime_workspace()` appends/updates a managed `BRAINDRAIN SUBAGENTS` block in `.codex/config.toml` only when allowed by policy (`sync_subagents=true` for existing files). Existing MCP server entries remain intact.
 - **Project memory artifacts**: initialized by `prime_workspace()` (or `init_project_memory()`) and kept separate from generated protocol files:
