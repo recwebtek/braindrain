@@ -33,6 +33,8 @@ import {
 } from "@/components/IntelligencePages";
 import { BrandMark } from "@/components/ldash/BrandMark";
 import { ActionButton, OutputViewer, Panel, SectionHeader, StateBlock, ToneChip } from "@/components/ldash/Primitives";
+import { ToastProvider, useActionToasts } from "@/components/ldash/Toast";
+import { KeyboardProvider } from "@/components/ldash/KeyboardShortcuts";
 import type { CommandRunEntry, DashboardTab } from "@/data";
 import { tabFromPath, tabPaths } from "@/data";
 import {
@@ -44,12 +46,31 @@ import {
 } from "@/data";
 import { dashboardTabs } from "@/theme";
 
+// Wrapper component to provide Toast and Keyboard contexts
+export function DashboardWorkspaceWithProviders() {
+  return (
+    <ToastProvider>
+      <KeyboardProvider>
+        <DashboardWorkspace />
+      </KeyboardProvider>
+    </ToastProvider>
+  );
+}
+
 export function DashboardWorkspace() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const location = useLocation();
   const activeTab = tabFromPath(location.pathname);
   const openTab = (tab: DashboardTab) => navigate(tabPaths[tab]);
+
+  // Toast notification helpers
+  const {
+    showCommandResult,
+    showGitAction,
+    showProcessAction,
+    showRefresh,
+  } = useActionToasts();
 
   const overviewQuery = useQuery({
     queryKey: ["ldash", "overview"],
@@ -97,22 +118,58 @@ export function DashboardWorkspace() {
 
   const refreshMutation = useMutation({
     mutationFn: refreshWorkspace,
-    onSuccess: refreshOperationalQueries,
+    onSuccess: () => {
+      refreshOperationalQueries();
+      showRefresh("success");
+    },
+    onError: () => {
+      showRefresh("error");
+    },
   });
 
   const commandMutation = useMutation({
     mutationFn: (commandId: string) => runCommand(commandId),
-    onSuccess: refreshOperationalQueries,
+    onSuccess: (data, commandId) => {
+      refreshOperationalQueries();
+      const commandName = commandsQuery.data?.groups
+        ?.flatMap(g => g.items)
+        ?.find(c => c.id === commandId)?.label || commandId;
+      showCommandResult(
+        commandName,
+        data.ok ? "success" : "error",
+        data.ok ? undefined : data.message
+      );
+    },
+    onError: (error) => {
+      showCommandResult("Command", "error", error instanceof Error ? error.message : "Unknown error");
+    },
   });
+
   const gitMutation = useMutation({
     mutationFn: (action: "fetch" | "pull") => runGitAction(action),
-    onSuccess: refreshOperationalQueries,
+    onSuccess: (data, action) => {
+      refreshOperationalQueries();
+      showGitAction(action, data.ok ? "success" : "error");
+    },
+    onError: () => {
+      showGitAction("fetch", "error"); // Default to fetch on error
+    },
   });
+
   const processMutation = useMutation({
     mutationFn: ({ serviceId, action }: { serviceId: string; action: "start" | "stop" | "open" }) =>
       runProcessAction(serviceId, action),
-    onSuccess: refreshOperationalQueries,
+    onSuccess: (data, { serviceId, action }) => {
+      refreshOperationalQueries();
+      const serviceName = processesQuery.data?.items?.find(s => s.id === serviceId)?.name || serviceId;
+      showProcessAction(serviceName, action, data.ok ? "success" : "error");
+    },
+    onError: (error, { serviceId, action }) => {
+      const serviceName = processesQuery.data?.items?.find(s => s.id === serviceId)?.name || serviceId;
+      showProcessAction(serviceName, action, "error");
+    },
   });
+
   const telemetryExportMutation = useMutation({
     mutationFn: exportTelemetry,
     onSuccess: refreshOperationalQueries,
@@ -197,18 +254,19 @@ export function DashboardWorkspace() {
             </Panel>
 
             <Panel className="sticky top-0 z-20 bg-[color:var(--ld-surface-0)]/95 px-3 py-3 backdrop-blur-sm lg:hidden">
-              <nav aria-label="Primary dashboard tabs" className="flex gap-2 overflow-x-auto pb-1">
+              <nav aria-label="Primary dashboard tabs" className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
                 {dashboardTabs.map((tab) => {
                   const active = activeTab === tab.id;
                   return (
                     <button
                       key={tab.id}
                       type="button"
-                      className={`ld-tab min-w-max ${active ? "ld-tab-active" : ""}`}
+                      className={`ld-tab min-w-max min-h-[44px] touch-manipulation select-none ${active ? "ld-tab-active" : ""}`}
                       onClick={() => openTab(tab.id)}
+                      aria-current={active ? "page" : undefined}
                     >
                       <span className="font-semibold">{tab.label}</span>
-                      <span className="text-[11px] text-[color:var(--ld-text-soft)]">{tab.detail}</span>
+                      <span className="text-[11px] text-[color:var(--ld-text-soft)] line-clamp-1 max-w-[100px]">{tab.detail}</span>
                     </button>
                   );
                 })}
@@ -439,7 +497,7 @@ function RailBadge({
     <span
       title={label}
       aria-label={label}
-      className={`inline-flex h-8 w-8 items-center justify-center rounded-md text-[10px] font-semibold ${tone === "violet" ? "bg-[color:var(--ld-tone-violet-bg)] text-[color:var(--ld-tone-violet-fg)] ring-1 ring-[color:var(--ld-tone-violet-ring)]" : "bg-[color:var(--ld-tone-emerald-bg)] text-[color:var(--ld-tone-emerald-fg)] ring-1 ring-[color:var(--ld-tone-emerald-ring)]"}`}
+      className={`inline-flex h-9 w-9 min-h-[44px] min-w-[44px] items-center justify-center rounded-md text-[10px] font-semibold ${tone === "violet" ? "bg-[color:var(--ld-tone-violet-bg)] text-[color:var(--ld-tone-violet-fg)] ring-1 ring-[color:var(--ld-tone-violet-ring)]" : "bg-[color:var(--ld-tone-emerald-bg)] text-[color:var(--ld-tone-emerald-fg)] ring-1 ring-[color:var(--ld-tone-emerald-ring)]"}`}
     >
       {short}
     </span>

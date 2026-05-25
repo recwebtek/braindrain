@@ -1,5 +1,37 @@
 import type { ChipTone, DashboardTab } from "@/data";
 
+// Brand Color Palette - Purple/Fuchsia Accent System
+export const brandColors = {
+  50: "var(--ld-brand-50)",
+  100: "var(--ld-brand-100)",
+  200: "var(--ld-brand-200)",
+  300: "var(--ld-brand-300)",
+  400: "var(--ld-brand-400)",
+  500: "var(--ld-brand-500)",
+  600: "var(--ld-brand-600)",
+  700: "var(--ld-brand-700)",
+  800: "var(--ld-brand-800)",
+  900: "var(--ld-brand-900)",
+  950: "var(--ld-brand-950)",
+} as const;
+
+// Neon Glow Values
+export const neonGlow = {
+  purple: "var(--neon-purple)",
+  purpleSoft: "var(--neon-purple-soft)",
+  pink: "var(--neon-pink)",
+  pinkSoft: "var(--neon-pink-soft)",
+  cyan: "var(--neon-cyan)",
+} as const;
+
+// Glow Shadow Presets
+export const glowShadows = {
+  sm: "var(--glow-purple-sm)",
+  md: "var(--glow-purple-md)",
+  lg: "var(--glow-purple-lg)",
+  border: "var(--glow-border-purple)",
+} as const;
+
 export const toneClassNames: Record<ChipTone, string> = {
   blue: "bg-[color:var(--ld-tone-blue-bg)] text-[color:var(--ld-tone-blue-fg)] ring-1 ring-[color:var(--ld-tone-blue-ring)]",
   cyan: "bg-[color:var(--ld-tone-cyan-bg)] text-[color:var(--ld-tone-cyan-fg)] ring-1 ring-[color:var(--ld-tone-cyan-ring)]",
@@ -9,6 +41,18 @@ export const toneClassNames: Record<ChipTone, string> = {
   violet:
     "bg-[color:var(--ld-tone-violet-bg)] text-[color:var(--ld-tone-violet-fg)] ring-1 ring-[color:var(--ld-tone-violet-ring)]",
   rose: "bg-[color:var(--ld-tone-rose-bg)] text-[color:var(--ld-tone-rose-fg)] ring-1 ring-[color:var(--ld-tone-rose-ring)]",
+};
+
+// Brand-accented tone variants with purple glow
+export const toneClassNamesBrand: Record<ChipTone, string> = {
+  blue: "bg-[color:var(--ld-tone-blue-bg)] text-[color:var(--ld-tone-blue-fg)] ring-1 ring-[color:var(--ld-brand-500)]/30",
+  cyan: "bg-[color:var(--ld-tone-cyan-bg)] text-[color:var(--ld-tone-cyan-fg)] ring-1 ring-[color:var(--ld-brand-500)]/30",
+  emerald:
+    "bg-[color:var(--ld-tone-emerald-bg)] text-[color:var(--ld-tone-emerald-fg)] ring-1 ring-[color:var(--ld-brand-500)]/30",
+  amber: "bg-[color:var(--ld-tone-amber-bg)] text-[color:var(--ld-tone-amber-fg)] ring-1 ring-[color:var(--ld-brand-500)]/30",
+  violet:
+    "bg-[color:var(--ld-tone-violet-bg)] text-[color:var(--ld-brand-300)] ring-1 ring-[color:var(--ld-brand-500)]/50 shadow-[0_0_15px_rgba(168,85,247,0.2)]",
+  rose: "bg-[color:var(--ld-tone-rose-bg)] text-[color:var(--ld-tone-rose-fg)] ring-1 ring-[color:var(--ld-brand-500)]/30",
 };
 
 export function toneClass(tone: ChipTone) {

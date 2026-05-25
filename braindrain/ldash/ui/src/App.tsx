@@ -1,12 +1,12 @@
 import { Route, Routes } from "react-router-dom";
 import { AuthGate } from "@/components/AuthGate";
-import { DashboardWorkspace } from "@/components/DashboardWorkspace";
+import { DashboardWorkspaceWithProviders } from "@/components/DashboardWorkspace";
 
 export function App() {
   return (
     <AuthGate>
       <Routes>
-        <Route path="*" element={<DashboardWorkspace />} />
+        <Route path="*" element={<DashboardWorkspaceWithProviders />} />
       </Routes>
     </AuthGate>
   );
