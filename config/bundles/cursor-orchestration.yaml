@@ -1,29 +1,22 @@
-name: full
+name: cursor-orchestration
 version: "1"
-description: Full platform bundle including comms and orchestration profiles.
+description: Cursor multi-agent planning — rules, subagents, hooks, skills, and operational scripts.
 agents:
   - cursor
-  - codex
 rules:
   - braindrain
   - project-rules
 skills:
-  - braindrain-hub-pr
   - coordinator
   - gitops
   - scriptlib-librarian
+mcp_servers:
+  - braindrain
 operational_scripts:
   - daily_plan_audit
   - plan_build_guard
-mcp_servers:
-  - braindrain
-  - mattermost
 capability_profiles:
   default_role: coordinator
   roles:
-    project-comms:
-      tool_profile: comms
     coordinator:
       tool_profile: orchestration
-    research:
-      tool_profile: research

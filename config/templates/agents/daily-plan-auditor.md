@@ -22,6 +22,10 @@ You maintain honest, machine-assisted visibility into planning artifacts. You do
 python3 scripts/daily_plan_audit.py --repo-root . --report-date "$(date +%Y-%m-%d)" --trigger "manual-plan-audit"
 ```
 
+Installed by `prime_workspace(bundle="cursor-orchestration")` into `scripts/` (or resolve via `.braindrain/primed.json` `braindrain_hub_root`).
+
+By default the auditor **creates missing branches** for active plans (`--ensure-branches`, use `--no-ensure-branches` in tests).
+
 For automation/tests only, `--skip-archive` avoids moving archived plans.
 
 ## Archive protocol

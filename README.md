@@ -127,7 +127,7 @@ Set `embeddings.default_provider` (default: `lmstudio_local`). Programmatic help
 | `run_workflow(name, args)`                               | Execute a workflow. Intermediate output is routed through the sandbox — only the final summary returns to the agent.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 
-`list_workflows()` now includes `init_project_memory`, so agents can discover memory bootstrap as a first-class onboarding workflow.
+`list_workflows()` includes `init_project_memory` and **`prime_cursor_orchestration`** (calls `prime_workspace` with `bundle=cursor-orchestration` — deploys agents, hooks, skills, `scripts/daily_plan_audit.py`, and `scripts/plan_build_guard.py`). Consumer slash command: `/prime-braindrain` (from templates). Plan Build: run `python3 scripts/plan_build_guard.py --plan <path>` before edits (see Ruler `RULES.md`).
 
 ### Telemetry
 
@@ -507,7 +507,8 @@ braindrain/
 - **Subagent templates**: canonical source is `config/templates/agents/*.md`. `prime_workspace()` copies that tree to:
   - `.cursor/agents/` when Cursor is in the resolved agent set, and
   - `.codex/agents/` when Codex is in the resolved agent set (same files; IDE-specific layout only).
-  Skills deploy from `config/templates/cursor-skills/<id>/` → `.cursor/skills/<id>/` for each id in the active bundle `skills:` list (e.g. `braindrain-hub-pr`, `scriptlib-librarian`). See `docs/skill-braindrain-hub-pr.md`.
+  Skills deploy from `config/templates/cursor-skills/<id>/` → `.cursor/skills/<id>/` for each id in the active bundle `skills:` list (e.g. `cursor-orchestration`: coordinator, gitops, scriptlib-librarian). See `docs/skill-braindrain-hub-pr.md`.
+  Operational scripts (`daily_plan_audit`, `plan_build_guard`, `plan_branch_utils`) copy from hub `scripts/` → project `scripts/` per bundle `operational_scripts`.
   Existing files are create-only by default; set `sync_subagents=true` to update with backups. `.cursor/` is gitignored at repo root; do not commit generated agent/skill files—edit templates and re-run `prime_workspace`.
 - **Codex config merge**: `prime_workspace()` appends/updates a managed `BRAINDRAIN SUBAGENTS` block in `.codex/config.toml` only when allowed by policy (`sync_subagents=true` for existing files). Existing MCP server entries remain intact.
 - **Project memory artifacts**: initialized by `prime_workspace()` (or `init_project_memory()`) and kept separate from generated protocol files:

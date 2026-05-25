@@ -146,6 +146,17 @@ Example JSONL row:
 
 <!-- SCRIPTLIB_GUIDANCE -->
 
+### Cursor Plan Build — branch guard (required)
+
+Clicking **Build** on a Cursor plan runs the **default workspace agent**, not the coordinator subagent. Before any implementation edits when working from a `*.plan.md`:
+
+1. Resolve the plan branch: frontmatter `branch:` → `.braindrain/plan-reports/master-plan.md` → run `python3 scripts/daily_plan_audit.py --repo-root .` if still missing.
+2. **First shell command:** `python3 scripts/plan_build_guard.py --plan <repo-relative-plan-path> --repo-root .`
+3. Proceed only when the guard reports `"ok": true` (creates branch with `git branch` if needed; checkout uses stash + `git switch` when dirty).
+4. Do not implement on an unrelated branch (e.g. a feature branch for a different plan).
+
+Gitops `branch-setup` mode must **not** checkout. Checkout is allowed only for `plan-execution` / Plan Build guard flows.
+
 ### Planning session close-out (Cursor / Codex)
 
 When you **create or finish editing** a tracked plan file under an IDE `plans/` directory (for example `.cursor/plans/*.plan.md`):
