@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.0",
+  "services": [
+    {
+      "id": "ui_preview",
+      "name": "UI Preview",
+      "description": "Launch the Vite preview server for the dashboard UI.",
+      "cwd": "braindrain/ldash/ui",
+      "start": [
+        "npm",
+        "run",
+        "dev",
+        "--",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "4173"
+      ],
+      "open_target": "http://127.0.0.1:4173",
+      "healthcheck_url": "http://127.0.0.1:4173",
+      "allowed_actions": [
+        "start",
+        "stop",
+        "open"
+      ]
+    },
+    {
+      "id": "ui_tests_watch",
+      "name": "UI Tests Watch",
+      "description": "Run the Vitest watcher for fast dashboard UI iteration.",
+      "cwd": "braindrain/ldash/ui",
+      "start": [
+        "npm",
+        "run",
+        "test:watch"
+      ],
+      "allowed_actions": [
+        "start",
+        "stop"
+      ]
+    }
+  ]
+}

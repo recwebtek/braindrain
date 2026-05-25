@@ -1085,12 +1085,12 @@ def create_app(
               <div class="cmd-box">
                 <span id="quick-build-label" class="cmd-label">Quick Build</span>
                 <button type="button" class="copy-btn" aria-label="Copy build command" aria-describedby="quick-build-label" aria-live="polite" onclick="copyCmd(this)">Copy</button>
-                <code>cd .ldash/ui
+                <code>cd braindrain/ldash/ui
 pnpm install
 pnpm run build</code>
               </div>
               <button type="button" class="refresh-btn" onclick="location.reload()">Check for Build</button>
-              <div class="footer">Waiting for production artifacts in .ldash/ui/dist</div>
+              <div class="footer">Waiting for production artifacts in braindrain/ldash/ui/dist</div>
             </div>
             <script>
               function copyCmd(btn) {

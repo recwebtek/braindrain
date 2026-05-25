@@ -18,6 +18,8 @@ from typing import Any
 import yaml
 
 SNAPSHOT_SCHEMA_VERSION = "2.0"
+LIVINGDASH_PACKAGE_ROOT = Path(__file__).resolve().parent / "ldash"
+LIVINGDASH_UI_REL = "braindrain/ldash/ui"
 MAX_EXCERPT_CHARS = 12_000
 MAX_JSONL_LINES = 200
 MAX_OBSERVER_EVENTS = 200
@@ -246,7 +248,7 @@ def collect_workspace_skills(project_root: Path) -> dict[str, Any]:
 
 
 def _dotfile_inventory(project_root: Path) -> list[dict[str, Any]]:
-    names = [".cursor", ".codex", ".ruler", ".braindrain", ".ldash", ".env.example", ".gitignore"]
+    names = [".cursor", ".codex", ".ruler", ".braindrain", "braindrain/ldash", ".env.example", ".gitignore"]
     items = []
     for name in names:
         path = project_root / name
@@ -564,7 +566,7 @@ def collect_hub_config_summary(project_root: Path) -> dict[str, Any]:
 def collect_workspace_tests(project_root: Path) -> dict[str, Any]:
     tests_dir = project_root / "tests"
     py_tests = sorted(tests_dir.glob("test_*.py")) if tests_dir.exists() else []
-    ui_tests_dir = project_root / ".ldash" / "ui"
+    ui_tests_dir = LIVINGDASH_PACKAGE_ROOT / "ui"
     workflows_dir = project_root / ".github" / "workflows"
     workflows: list[dict[str, Any]] = []
     if workflows_dir.exists():
@@ -584,13 +586,15 @@ def collect_workspace_tests(project_root: Path) -> dict[str, Any]:
         text = pyproject.read_text(encoding="utf-8", errors="replace")
         if "[tool.pytest" in text or "pytest" in text:
             scripts.append({"id": "pytest", "label": "pytest", "command": "./.venv/bin/python -m pytest"})
-    package_json = project_root / ".ldash" / "ui" / "package.json"
+    package_json = LIVINGDASH_PACKAGE_ROOT / "ui" / "package.json"
     if package_json.exists():
         try:
             pkg = json.loads(package_json.read_text(encoding="utf-8"))
             for key, value in (pkg.get("scripts") or {}).items():
                 if "test" in key.lower():
-                    scripts.append({"id": key, "label": key, "command": f"pnpm run {key}", "cwd": ".ldash/ui"})
+                    scripts.append(
+                        {"id": key, "label": key, "command": f"pnpm run {key}", "cwd": LIVINGDASH_UI_REL}
+                    )
         except Exception:
             pass
 

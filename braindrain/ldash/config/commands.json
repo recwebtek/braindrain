@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "commands": [
+    {
+      "id": "ui_tests",
+      "label": "Run UI tests",
+      "category": "quality",
+      "description": "Run the LivingDash Vitest suite.",
+      "command": [
+        "npm",
+        "run",
+        "test"
+      ],
+      "cwd": "braindrain/ldash/ui",
+      "timeout_seconds": 180
+    },
+    {
+      "id": "ui_build",
+      "label": "Build UI bundle",
+      "category": "quality",
+      "description": "Build the production LivingDash UI bundle.",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "cwd": "braindrain/ldash/ui",
+      "timeout_seconds": 180
+    },
+    {
+      "id": "backend_tests",
+      "label": "Run backend tests",
+      "category": "quality",
+      "description": "Run the LivingDash backend pytest suite.",
+      "command": [
+        "./.venv/bin/python",
+        "-m",
+        "pytest",
+        "tests/test_livingdash_collectors.py",
+        "tests/test_livingdash_sidecar_api.py"
+      ],
+      "cwd": ".",
+      "timeout_seconds": 180
+    }
+  ]
+}

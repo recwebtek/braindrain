@@ -312,7 +312,7 @@ livingdash:
   enabled: true
   host: "127.0.0.1"
   port: 0 # 0 = ephemeral free port on each start
-  ui_dist: null # default .ldash/ui/dist
+  ui_dist: null # default braindrain/ldash/ui/dist (package path)
   data_dir: null # default .braindrain/ldash/data
   refresh_on_start: true
   read_paths:

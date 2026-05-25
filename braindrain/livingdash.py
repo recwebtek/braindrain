@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import shutil
 import socket
 import re
 import subprocess
@@ -13,6 +14,10 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+# Versioned LivingDash package (UI, server shim, default config). Not project-local .ldash/.
+LIVINGDASH_PACKAGE_ROOT = Path(__file__).resolve().parent / "ldash"
+LIVINGDASH_UI_REL = "braindrain/ldash/ui"
 
 from braindrain.livingdash_collectors import (
     SNAPSHOT_SCHEMA_VERSION,
@@ -26,10 +31,14 @@ from braindrain.livingdash_collectors import (
 # Launch via LivingDashManager or .cursor/commands/livingdash.md only.
 
 
+def livingdash_package_root() -> Path:
+    return LIVINGDASH_PACKAGE_ROOT
+
+
 @dataclass(frozen=True)
 class RuntimePaths:
     root: Path
-    scaffold_root: Path
+    package_root: Path
     server: Path
     ui: Path
     config: Path
@@ -54,7 +63,7 @@ DEFAULT_COMMANDS = {
             "category": "quality",
             "description": "Run the LivingDash Vitest suite.",
             "command": ["pnpm", "run", "test"],
-            "cwd": ".ldash/ui",
+            "cwd": LIVINGDASH_UI_REL,
             "timeout_seconds": 180,
         },
         {
@@ -63,7 +72,7 @@ DEFAULT_COMMANDS = {
             "category": "quality",
             "description": "Build the production LivingDash UI bundle.",
             "command": ["pnpm", "run", "build"],
-            "cwd": ".ldash/ui",
+            "cwd": LIVINGDASH_UI_REL,
             "timeout_seconds": 180,
         },
         {
@@ -86,7 +95,7 @@ DEFAULT_SERVICES = {
             "id": "ui_preview",
             "name": "UI Preview",
             "description": "Launch the Vite preview server for the dashboard UI.",
-            "cwd": ".ldash/ui",
+            "cwd": LIVINGDASH_UI_REL,
             "start": ["pnpm", "run", "dev", "--", "--host", "127.0.0.1", "--port", "4173"],
             "open_target": "http://127.0.0.1:4173",
             "healthcheck_url": "http://127.0.0.1:4173",
@@ -96,7 +105,7 @@ DEFAULT_SERVICES = {
             "id": "ui_tests_watch",
             "name": "UI Tests Watch",
             "description": "Run the Vitest watcher for fast dashboard UI iteration.",
-            "cwd": ".ldash/ui",
+            "cwd": LIVINGDASH_UI_REL,
             "start": ["pnpm", "run", "test:watch"],
             "allowed_actions": ["start", "stop"],
         },
@@ -112,15 +121,15 @@ def _now_iso() -> str:
 
 
 def _runtime_paths(project_root: Path) -> RuntimePaths:
-    scaffold_root = project_root / ".ldash"
-    config = scaffold_root / "config"
+    package_root = LIVINGDASH_PACKAGE_ROOT
     root = project_root / ".braindrain" / "ldash"
+    config = root / "config"
     data = root / "data"
     return RuntimePaths(
         root=root,
-        scaffold_root=scaffold_root,
-        server=scaffold_root / "server",
-        ui=scaffold_root / "ui",
+        package_root=package_root,
+        server=package_root / "server",
+        ui=package_root / "ui",
         config=config,
         data=data,
         snapshot=data / "snapshot.json",
@@ -135,35 +144,46 @@ def _runtime_paths(project_root: Path) -> RuntimePaths:
     )
 
 
-def _migrate_legacy_runtime_data(paths: RuntimePaths) -> None:
-    legacy_data = paths.scaffold_root / "data"
-    if not legacy_data.exists() or not legacy_data.is_dir():
-        return
+def _migrate_legacy_runtime_data(paths: RuntimePaths, project_root: Path) -> None:
+    legacy_roots = (project_root / ".ldash" / "data",)
+    for legacy_data in legacy_roots:
+        if not legacy_data.exists() or not legacy_data.is_dir():
+            continue
+        for source, dest in (
+            (legacy_data / "snapshot.json", paths.snapshot),
+            (legacy_data / "status.json", paths.status),
+            (legacy_data / "auth.json", paths.auth),
+            (legacy_data / "livingdash.pid", paths.pid),
+        ):
+            if source.exists() and not dest.exists():
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(source.read_bytes())
 
-    for source, dest in (
-        (legacy_data / "snapshot.json", paths.snapshot),
-        (legacy_data / "status.json", paths.status),
-        (legacy_data / "auth.json", paths.auth),
-        (legacy_data / "livingdash.pid", paths.pid),
+
+def _seed_project_config(paths: RuntimePaths) -> None:
+    pkg_config = paths.package_root / "config"
+    for name, default_payload in (
+        ("commands.json", DEFAULT_COMMANDS),
+        ("services.json", DEFAULT_SERVICES),
     ):
-        if source.exists() and not dest.exists():
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(source.read_bytes())
+        dest = paths.config / name
+        if dest.exists():
+            continue
+        src = pkg_config / name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if src.exists():
+            shutil.copy2(src, dest)
+        else:
+            dest.write_text(json.dumps(default_payload, indent=2), encoding="utf-8")
 
 
 def ensure_livingdash_runtime(project_root: str | Path) -> RuntimePaths:
     project_root = Path(project_root).expanduser().resolve()
     paths = _runtime_paths(project_root)
-    for path in (paths.root, paths.scaffold_root, paths.server, paths.ui, paths.config, paths.data):
+    for path in (paths.root, paths.config, paths.data):
         path.mkdir(parents=True, exist_ok=True)
-    _migrate_legacy_runtime_data(paths)
-    app_py = paths.server / "app.py"
-    if not app_py.exists():
-        app_py.write_text(SERVER_SHIM, encoding="utf-8")
-    if not paths.commands_config.exists():
-        paths.commands_config.write_text(json.dumps(DEFAULT_COMMANDS, indent=2), encoding="utf-8")
-    if not paths.services_config.exists():
-        paths.services_config.write_text(json.dumps(DEFAULT_SERVICES, indent=2), encoding="utf-8")
+    _migrate_legacy_runtime_data(paths, project_root)
+    _seed_project_config(paths)
     for runtime_path, default_payload in (
         (paths.command_history, {"schema_version": "1.0", "entries": []}),
         (paths.process_state, {"schema_version": "1.0", "services": {}}),
@@ -509,7 +529,14 @@ class LivingDashManager:
         env = os.environ.copy()
         env["LIVINGDASH_PROJECT_ROOT"] = str(self.project_root)
         env["LIVINGDASH_DATA_DIR"] = str(self.paths.data)
-        env["LIVINGDASH_UI_DIST"] = str(self.paths.ui / "dist")
+        ui_dist_raw = ldash.get("ui_dist")
+        if ui_dist_raw:
+            ui_dist_path = Path(str(ui_dist_raw)).expanduser()
+            if not ui_dist_path.is_absolute():
+                ui_dist_path = (self.project_root / ui_dist_path).resolve()
+        else:
+            ui_dist_path = (self.paths.ui / "dist").resolve()
+        env["LIVINGDASH_UI_DIST"] = str(ui_dist_path)
         env["LIVINGDASH_SESSION_SECRET"] = auth["session_secret"]
         proc = subprocess.Popen(
             [sys.executable, "-m", "braindrain.livingdash_sidecar", "--port", str(port), "--host", host],
