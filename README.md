@@ -33,10 +33,19 @@ OS environment data is probed once, cached locally, and served instantly on ever
 
 ## LivingDash storage boundary
 
+LivingDash is a **modular sidecar** — it does not modify the Braindrain MCP server. See [`.ldash/SIDECAR.md`](.ldash/SIDECAR.md).
+
 LivingDash uses a split layout so scaffold code can be versioned while runtime state stays local-only:
 
 - `.ldash/` contains dashboard scaffold and UI source/build files.
 - `.braindrain/ldash/data/` contains runtime and sensitive state (`auth.json`, `status.json`, `snapshot.json`, `livingdash.pid`).
+- `config/hub_config.yaml` → `livingdash:` controls host/port and read-only telemetry paths (separate from `cost_tracking.dashboard`).
+
+**UI pages (v2):** Overview, Commands, Git, Processes, Tests, Braindrain Logs, Primer, Config (read-only), Agents, Skills, Plans, Telemetry.
+
+**Collectors:** `braindrain/livingdash_collectors.py` reads workspace files, JSONL, and observer SQLite only — no MCP stdio coupling.
+
+After UI or collector changes: `cd .ldash/ui && npm install && npm run build`, then restart LivingDash (`/livingdash`) and use **Refresh workspace** in the dashboard.
 
 This keeps passwords/session secrets out of shareable dashboard scaffold paths and aligns with the project rule that `.braindrain/` is machine-local.
 

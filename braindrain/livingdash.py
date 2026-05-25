@@ -14,6 +14,17 @@ from typing import Any
 
 import yaml
 
+from braindrain.livingdash_collectors import (
+    SNAPSHOT_SCHEMA_VERSION,
+    collect_workspace_bundle,
+    load_hub_config,
+    load_livingdash_config,
+)
+
+
+# Sidecar isolation: LivingDash does not modify Braindrain MCP runtime.
+# Launch via LivingDashManager or .cursor/commands/livingdash.md only.
+
 
 @dataclass(frozen=True)
 class RuntimePaths:
@@ -60,7 +71,7 @@ DEFAULT_COMMANDS = {
             "label": "Run backend tests",
             "category": "quality",
             "description": "Run the LivingDash backend pytest suite.",
-            "command": ["./.venv/bin/python", "-m", "pytest", "tests/test_livingdash.py"],
+            "command": ["./.venv/bin/python", "-m", "pytest", "tests/test_livingdash_collectors.py", "tests/test_livingdash_sidecar_api.py"],
             "cwd": ".",
             "timeout_seconds": 180,
         },
@@ -354,17 +365,28 @@ def build_dashboard_snapshot(project_root: str | Path) -> dict[str, Any]:
     project_name = _read_project_name(project_root)
     git = _detect_git_state(project_root)
     env_files = _detect_env_files(project_root)
-    agents = _detect_agents(project_root)
+    agents_signal = _detect_agents(project_root)
     mcp_tools = _detect_mcp_tools(project_root)
     startup_flow = _detect_startup_flow(project_root)
     repo_brief = _compose_repo_brief(project_root, mcp_tools, startup_flow)
+    bundle = collect_workspace_bundle(project_root)
+    insights = bundle.get("insights", {})
 
     return {
+        "schema_version": SNAPSHOT_SCHEMA_VERSION,
+        "collected_at": bundle.get("collected_at"),
         "workspace": {"name": workspace_name, "root": str(project_root)},
         "repo": {"project_name": project_name, "path": str(project_root)},
         "workspace_signals": {
             "env_files": env_files,
-            "agents": agents,
+            "agents": {
+                "count": int(bundle.get("agents", {}).get("count", agents_signal.get("count", 0))),
+                "items": [
+                    item.get("name")
+                    for item in (bundle.get("agents", {}).get("items") or [])
+                    if isinstance(item, dict) and item.get("installed")
+                ],
+            },
             "git": git,
             "mcp_tools": mcp_tools,
         },
@@ -374,11 +396,13 @@ def build_dashboard_snapshot(project_root: str | Path) -> dict[str, Any]:
             "key_modules": _detect_key_modules(project_root),
         },
         "insights": {
-            "token_saving_active": True,
-            "env_drift": 0,
+            "token_saving_active": bool(insights.get("token_saving_active", False)),
+            "env_drift": int(insights.get("env_drift", 0) or 0),
+            "agents_online": int(insights.get("agents_online", 0) or 0),
             "primary_entrypoint_count": 1 if startup_flow["steps"] else 0,
         },
         "map_summary": _detect_map_summary(project_root),
+        "workspace_bundle": bundle,
         "actions": [
             {"id": "run_tests", "label": "Run tests", "kind": "command"},
             {"id": "inspect_env", "label": "Inspect env", "kind": "view"},
@@ -457,17 +481,38 @@ class LivingDashManager:
             "paths": asdict(self.paths),
         }
 
+    def _resolve_port(self) -> int:
+        hub = load_hub_config(self.project_root)
+        ldash = load_livingdash_config(hub)
+        configured = int(ldash.get("port", 0) or 0)
+        if configured > 0:
+            return configured
+        return _pick_port()
+
+    def _snapshot_needs_refresh(self) -> bool:
+        snap = self._load_json(self.paths.snapshot, {})
+        if snap.get("schema_version") != SNAPSHOT_SCHEMA_VERSION:
+            return True
+        bundle = snap.get("workspace_bundle")
+        if not isinstance(bundle, dict):
+            return True
+        return not isinstance(bundle.get("agents"), dict)
+
     def start(self) -> dict[str, Any]:
         auth = self.ensure_auth()
-        self.refresh()
-        port = _pick_port()
+        hub = load_hub_config(self.project_root)
+        ldash = load_livingdash_config(hub)
+        if ldash.get("refresh_on_start", True) or self._snapshot_needs_refresh():
+            self.refresh()
+        port = self._resolve_port()
+        host = str(ldash.get("host", "127.0.0.1") or "127.0.0.1")
         env = os.environ.copy()
         env["LIVINGDASH_PROJECT_ROOT"] = str(self.project_root)
         env["LIVINGDASH_DATA_DIR"] = str(self.paths.data)
         env["LIVINGDASH_UI_DIST"] = str(self.paths.ui / "dist")
         env["LIVINGDASH_SESSION_SECRET"] = auth["session_secret"]
         proc = subprocess.Popen(
-            [sys.executable, "-m", "braindrain.livingdash_sidecar", "--port", str(port)],
+            [sys.executable, "-m", "braindrain.livingdash_sidecar", "--port", str(port), "--host", host],
             cwd=self.project_root,
             env=env,
             stdout=subprocess.DEVNULL,
@@ -476,7 +521,7 @@ class LivingDashManager:
         status = {
             "running": True,
             "pid": proc.pid,
-            "url": f"http://127.0.0.1:{port}",
+            "url": f"http://{host}:{port}",
             "project_root": str(self.project_root),
             "snapshot_path": str(self.paths.snapshot),
             "last_refreshed_at": _now_iso(),
