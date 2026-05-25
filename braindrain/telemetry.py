@@ -62,9 +62,14 @@ def estimate_claude_tokens(text: str) -> int:
 # Regex patterns for redaction (pre-compiled for performance)
 # Paths: /Users/..., /Volumes/..., /home/..., /root/...
 _PATH_RE = re.compile(r"(/Users/[^\s'\"]+|/Volumes/[^\s'\"]+|/home/[^\s'\"]+|/root/[^\s'\"]+)")
-# API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_), Google AI (AIza)
+# API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_), Google AI (AIza), AWS (AKIA), Slack (xox-)
 _KEY_RE = re.compile(
-    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,})"
+    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,}|AKIA[A-Z0-9]{16}|xox[bpa]-[a-zA-Z0-9-]{12,})"
+)
+# Generic secrets: password: "...", api_key=..., etc.
+_GENERIC_SECRET_RE = re.compile(
+    r"(password|secret|apikey|api_key|token)(\s*[:=]\s*)(['\"]?)([^\s'\"}]{6,})\3",
+    re.IGNORECASE,
 )
 
 
@@ -124,22 +129,43 @@ class TelemetrySession:
             if isinstance(val, str):
                 # Optimization: skip regex overhead if the string has no characters indicating
                 # a potential sensitive path or API key. ~3.5x speedup for clean strings.
+                v_lower = val.lower()
                 if (
                     "/" not in val
-                    and "sk-" not in val
-                    and "gsk_" not in val
-                    and "hf_" not in val
-                    and "AIza" not in val
+                    and "sk-" not in v_lower
+                    and "gsk_" not in v_lower
+                    and "hf_" not in v_lower
+                    and "aiza" not in v_lower
+                    and "akia" not in v_lower
+                    and "xox" not in v_lower
+                    and "password" not in v_lower
+                    and "secret" not in v_lower
+                    and "apikey" not in v_lower
+                    and "api_key" not in v_lower
+                    and "token" not in v_lower
                 ):
                     return val
 
                 val = _PATH_RE.sub("[REDACTED_PATH]", val)
                 val = _KEY_RE.sub("[REDACTED_KEY]", val)
+                val = _GENERIC_SECRET_RE.sub(r"\1\2\3[REDACTED_SECRET]\3", val)
                 return val
             if isinstance(val, dict):
-                return {k: _do_sanitize(v) for k, v in val.items()}
+                sanitized_dict = {}
+                for k, v in val.items():
+                    # Sanitize the key itself if it's a string
+                    sk = _do_sanitize(k) if isinstance(k, str) else k
+
+                    # Bypass redaction for numeric values on sensitive keys to keep telemetry utility
+                    if isinstance(v, (int, float)):
+                        sanitized_dict[sk] = v
+                    else:
+                        sanitized_dict[sk] = _do_sanitize(v)
+                return sanitized_dict
             if isinstance(val, list):
                 return [_do_sanitize(i) for i in val]
+            if isinstance(val, tuple):
+                return tuple(_do_sanitize(i) for i in val)
             return val
 
         return _do_sanitize(data)
