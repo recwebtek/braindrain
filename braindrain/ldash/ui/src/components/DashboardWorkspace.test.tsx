@@ -102,6 +102,6 @@ describe("DashboardWorkspace", () => {
     expect(screen.getByRole("complementary", { name: /operational side panel/i })).toBeInTheDocument();
 
     await user.click(screen.getAllByRole("button", { name: /git branch drift and guarded sync/i })[0]);
-    expect(screen.getByText(/only guarded sync operations/i)).toBeInTheDocument();
+    expect(await screen.findByText(/only guarded sync operations/i)).toBeInTheDocument();
   });
 });

@@ -74,15 +74,22 @@ export const cardEntranceVariants: Variants = {
   },
 };
 
-// Page transition wrapper
+const disableMotion = import.meta.env.MODE === "test";
+
+// Page transition wrapper (key drives tab/route crossfade)
 export function PageTransition({
   children,
+  transitionKey,
   mode = "wait",
-}: PropsWithChildren<{ mode?: "wait" | "sync" | "popLayout" }>) {
+}: PropsWithChildren<{ transitionKey: string; mode?: "wait" | "sync" | "popLayout" }>) {
+  if (disableMotion) {
+    return <div key={transitionKey}>{children}</div>;
+  }
+
   return (
     <AnimatePresence mode={mode}>
       <motion.div
-        key={window.location.pathname}
+        key={transitionKey}
         initial="hidden"
         animate="visible"
         exit="exit"

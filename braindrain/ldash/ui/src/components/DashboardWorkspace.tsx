@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   exportTelemetry,
@@ -32,9 +32,11 @@ import {
   TestsPage,
 } from "@/components/IntelligencePages";
 import { BrandMark } from "@/components/ldash/BrandMark";
-import { ActionButton, OutputViewer, Panel, SectionHeader, StateBlock, ToneChip } from "@/components/ldash/Primitives";
+import { DataStream, LiveMetric, PulseActivity } from "@/components/ldash/DataStream";
+import { CommandPaletteButton, KeyboardProvider, useKeyboard } from "@/components/ldash/KeyboardShortcuts";
+import { ActionButton, OutputViewer, Panel, SectionHeader, StateBlock, StatusOrb, ToneChip } from "@/components/ldash/Primitives";
 import { ToastProvider, useActionToasts } from "@/components/ldash/Toast";
-import { KeyboardProvider } from "@/components/ldash/KeyboardShortcuts";
+import { PageTransition, ShimmerSkeleton } from "@/components/ldash/Transitions";
 import type { CommandRunEntry, DashboardTab } from "@/data";
 import { tabFromPath, tabPaths } from "@/data";
 import {
@@ -45,6 +47,14 @@ import {
   fallbackTelemetry,
 } from "@/data";
 import { dashboardTabs } from "@/theme";
+
+const keyboardTabShortcuts: Array<{ key: string; tab: DashboardTab }> = [
+  { key: "1", tab: "overview" },
+  { key: "2", tab: "commands" },
+  { key: "3", tab: "git" },
+  { key: "4", tab: "processes" },
+  { key: "5", tab: "telemetry" },
+];
 
 // Wrapper component to provide Toast and Keyboard contexts
 export function DashboardWorkspaceWithProviders() {
@@ -182,10 +192,36 @@ export function DashboardWorkspace() {
   const telemetry = telemetryQuery.data ?? fallbackTelemetry;
   const latestCommandRun = commandMutation.data?.command_run ?? commands.history[0];
   const activeTabMeta = dashboardTabs.find((tab) => tab.id === activeTab) ?? dashboardTabs[0];
+  const { registerShortcut } = useKeyboard();
+
+  useEffect(() => {
+    const unsubs = keyboardTabShortcuts.map(({ key, tab }) =>
+      registerShortcut({
+        key,
+        description: `Open ${tab} tab`,
+        scope: "global",
+        action: () => navigate(tabPaths[tab]),
+      }),
+    );
+    unsubs.push(
+      registerShortcut({
+        key: "r",
+        description: "Refresh workspace data",
+        scope: "global",
+        action: () => {
+          if (!refreshMutation.isPending) refreshMutation.mutate();
+        },
+      }),
+    );
+    return () => unsubs.forEach((unsub) => unsub());
+  }, [registerShortcut, navigate, refreshMutation.isPending, refreshMutation.mutate]);
 
   return (
-    <div className="min-h-screen ld-app-shell">
-      <div className="mx-auto flex min-h-screen w-full max-w-[1800px] gap-3 px-3 py-3 sm:px-4 lg:px-6">
+    <div className="relative min-h-screen ld-app-shell">
+      <div aria-hidden className="ambient-glow ambient-glow-top-left" />
+      <div aria-hidden className="ambient-glow ambient-glow-bottom-right" />
+      <div aria-hidden className="ambient-glow ambient-glow-center" />
+      <div className="relative mx-auto flex min-h-screen w-full max-w-[1800px] gap-3 px-3 py-3 sm:px-4 lg:px-6">
         <aside className="hidden lg:block lg:w-20 lg:shrink-0">
           <Panel className="sticky top-3 flex min-h-[calc(100vh-1.5rem)] flex-col items-center gap-5 px-3 py-4">
             <div className="flex w-full justify-center border-b border-white/8 pb-4">
@@ -235,6 +271,11 @@ export function DashboardWorkspace() {
                     <h1 className="text-2xl font-semibold text-white">{activeTabMeta.label}</h1>
                     <ToneChip label={overview.workspace.name} tone="cyan" />
                     <ToneChip label={`${telemetry.summary.active_tools} tools`} tone="emerald" />
+                    <StatusOrb
+                      status={telemetry.summary.token_saving_active ? "active" : "idle"}
+                      pulse={telemetry.summary.token_saving_active}
+                    />
+                    <CommandPaletteButton />
                     <ActionButton
                       label="Refresh workspace"
                       tone="violet"
@@ -275,6 +316,7 @@ export function DashboardWorkspace() {
           </div>
 
           <div className="pb-4">
+            <PageTransition transitionKey={activeTab}>
             {activeTab === "overview" ? (
               <HomeShell overview={overview} telemetry={telemetry} onOpenTab={openTab} />
             ) : (
@@ -392,6 +434,7 @@ export function DashboardWorkspace() {
                 </aside>
               </div>
             )}
+            </PageTransition>
           </div>
         </div>
       </div>
@@ -466,6 +509,11 @@ function IntelligenceQueryShell<T>({
     return (
       <Panel className="p-5" glow>
         <StateBlock title="Loading" detail="Fetching workspace intelligence…" tone="violet" />
+        <div className="mt-4 grid gap-3">
+          <ShimmerSkeleton className="h-12 w-full" />
+          <ShimmerSkeleton className="h-24 w-full" />
+          <ShimmerSkeleton className="h-16 w-2/3" />
+        </div>
       </Panel>
     );
   }
@@ -692,7 +740,11 @@ function ProcessesModule({
                 <h3 className="mt-2 text-xl font-semibold text-white">{service.name}</h3>
                 <p className="ld-copy mt-3 max-w-2xl">{service.description}</p>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusOrb
+                  status={service.status === "running" ? "active" : service.healthy ? "idle" : "warning"}
+                  pulse={service.status === "running"}
+                />
                 <ToneChip label={service.status} tone={service.status === "running" ? "emerald" : "amber"} />
                 <ToneChip label={service.healthy ? "healthy" : "idle"} tone={service.healthy ? "cyan" : "violet"} />
               </div>
@@ -729,14 +781,30 @@ function TelemetryModule({
   exportStatus: string | null;
   onExport: () => void;
 }) {
+  const orbStatus = data.summary.token_saving_active ? "active" : data.summary.env_drift > 0 ? "warning" : "idle";
+
   return (
     <Panel className="p-5" glow>
       <SectionHeader
         eyebrow="Telemetry"
         title="Runtime signals"
         detail="Token-saving, active tools, refresh age, and recent action events are summarized here."
-        action={<ActionButton label="Export snapshot" tone="violet" busy={exporting} onClick={onExport} />}
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            <PulseActivity label={data.summary.token_saving_active ? "Saving" : "Idle"} />
+            <StatusOrb status={orbStatus} pulse={data.summary.token_saving_active} />
+            <ActionButton label="Export snapshot" tone="violet" busy={exporting} onClick={onExport} />
+          </div>
+        }
       />
+
+      <div className="mt-5 ld-surface p-4">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <LiveMetric value={data.summary.active_tools} unit=" active tools" />
+          <DataStream barCount={32} maxHeight={96} className="min-h-[96px] flex-1 max-w-md" />
+        </div>
+      </div>
+
       <div className="mt-6 grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
         <div className="ld-surface p-4">
           <div className="grid gap-3 sm:grid-cols-2">

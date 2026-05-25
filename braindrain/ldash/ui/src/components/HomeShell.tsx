@@ -1,5 +1,15 @@
-import type { DashboardTab, OverviewContract, TelemetryContract } from "@/data";
-import { ActionButton, MetricCard, Panel, SectionHeader, ToneChip } from "@/components/ldash/Primitives";
+import type { DashboardTab, ChipTone, OverviewContract, TelemetryContract } from "@/data";
+import { DataStream, LiveMetric, PulseActivity, Sparkline } from "@/components/ldash/DataStream";
+import {
+  ActionButton,
+  LinearProgress,
+  MetricCard,
+  Panel,
+  SectionHeader,
+  StatusOrb,
+  ToneChip,
+} from "@/components/ldash/Primitives";
+import { FadeIn, StaggerContainer, StaggerItem } from "@/components/ldash/Transitions";
 import { toneClass } from "@/theme";
 
 interface HomeShellProps {
@@ -8,33 +18,69 @@ interface HomeShellProps {
   onOpenTab: (tab: DashboardTab) => void;
 }
 
+function telemetryOrbStatus(summary: TelemetryContract["summary"]): "active" | "idle" | "warning" {
+  if (summary.token_saving_active) return "active";
+  if (summary.env_drift > 0) return "warning";
+  return "idle";
+}
+
+function toneToOrbStatus(tone: ChipTone): "active" | "idle" | "warning" {
+  if (tone === "emerald" || tone === "cyan") return "active";
+  if (tone === "amber" || tone === "rose") return "warning";
+  return "idle";
+}
+
 export function HomeShell({ overview, telemetry, onOpenTab }: HomeShellProps) {
   const summary =
     overview.repo_brief.summary.length > 180
       ? `${overview.repo_brief.summary.slice(0, 177).trimEnd()}...`
       : overview.repo_brief.summary;
 
+  const sparklineData = [
+    telemetry.summary.active_tools,
+    telemetry.summary.agents_online,
+    telemetry.summary.recent_action_count,
+    Math.max(1, telemetry.summary.refresh_age_seconds),
+    telemetry.summary.env_drift,
+  ];
+
+  const toolUtilization = Math.min(
+    100,
+    Math.round((telemetry.summary.active_tools / Math.max(telemetry.summary.active_tools + 2, 6)) * 100),
+  );
+
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.72fr)]">
       <main aria-label="Overview operations" className="space-y-4">
-        <Panel className="p-5" glow>
+        <Panel className="p-5" glow lift>
           <SectionHeader
             eyebrow={overview.repo_brief.title}
             title={summary}
             detail="Overview uses the same operator shell as the rest of LivingDash, with repo status, module pivots, and current counters kept in one place."
-            action={<ToneChip label={`v${overview.version}`} tone="emerald" />}
+            action={
+              <div className="flex items-center gap-2">
+                <StatusOrb status={telemetryOrbStatus(telemetry.summary)} pulse label="Telemetry" />
+                <ToneChip label={`v${overview.version}`} tone="emerald" />
+              </div>
+            }
           />
 
           <div className="mt-5 grid gap-3 xl:grid-cols-[minmax(0,1.05fr)_minmax(280px,0.95fr)]">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <MetricCard label="Entrypoint" value={overview.repo_brief.entrypoint} tone="violet" detail="Primary server surface." />
-              <MetricCard label="Posture" value={overview.repo_brief.posture} tone="cyan" detail="Local-first guarded workflow." />
+            <StaggerContainer className="grid gap-3 sm:grid-cols-2">
+              <StaggerItem>
+                <MetricCard label="Entrypoint" value={overview.repo_brief.entrypoint} tone="violet" detail="Primary server surface." />
+              </StaggerItem>
+              <StaggerItem>
+                <MetricCard label="Posture" value={overview.repo_brief.posture} tone="cyan" detail="Local-first guarded workflow." />
+              </StaggerItem>
               {overview.systems.map((item) => (
-                <MetricCard key={item.label} label={item.label} value={item.value} tone={item.tone} detail={item.detail} />
+                <StaggerItem key={item.label}>
+                  <MetricCard label={item.label} value={item.value} tone={item.tone} detail={item.detail} />
+                </StaggerItem>
               ))}
-            </div>
+            </StaggerContainer>
 
-            <div className="ld-surface p-4">
+            <FadeIn delay={0.1} className="ld-surface p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p className="ld-eyebrow">Workspace brief</p>
@@ -54,17 +100,27 @@ export function HomeShell({ overview, telemetry, onOpenTab }: HomeShellProps) {
                   </span>
                 ))}
               </div>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <StaggerContainer className="mt-4 grid gap-3 sm:grid-cols-2">
                 {overview.kpis.map((kpi) => (
-                  <MetricCard key={kpi.label} label={kpi.label} value={kpi.value} tone={kpi.tone} />
+                  <StaggerItem key={kpi.label}>
+                    <div className="ld-soft-block p-3.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[13px] text-[color:var(--ld-text-soft)]">{kpi.label}</span>
+                        <StatusOrb status={toneToOrbStatus(kpi.tone)} size="sm" />
+                      </div>
+                      <div className="mt-2">
+                        <ToneChip label={kpi.value} tone={kpi.tone} />
+                      </div>
+                    </div>
+                  </StaggerItem>
                 ))}
-              </div>
-            </div>
+              </StaggerContainer>
+            </FadeIn>
           </div>
         </Panel>
 
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(300px,0.95fr)]">
-          <Panel className="p-5">
+          <Panel className="p-5" lift>
             <SectionHeader
               eyebrow="Startup flow"
               title="Operator open sequence"
@@ -85,7 +141,7 @@ export function HomeShell({ overview, telemetry, onOpenTab }: HomeShellProps) {
             </ol>
           </Panel>
 
-          <Panel className="p-5">
+          <Panel className="p-5" lift>
             <SectionHeader
               eyebrow="Module pivots"
               title="Jump straight into an action surface"
@@ -107,18 +163,49 @@ export function HomeShell({ overview, telemetry, onOpenTab }: HomeShellProps) {
       </main>
 
       <aside aria-label="Overview signal rail" className="space-y-4">
-        <Panel className="p-5">
+        <Panel className="p-5" glow>
           <SectionHeader
             eyebrow="Telemetry"
             title="Live counters"
             detail={`Refresh age ${telemetry.summary.refresh_age_seconds}s`}
-            action={<ToneChip label={telemetry.summary.token_saving_active ? "saving" : "idle"} tone="emerald" />}
+            action={
+              <div className="flex items-center gap-3">
+                <PulseActivity
+                  size="md"
+                  label={telemetry.summary.token_saving_active ? "Saving" : "Idle"}
+                />
+                <StatusOrb status={telemetryOrbStatus(telemetry.summary)} pulse />
+              </div>
+            }
           />
+
+          <div className="mt-4 ld-surface p-3">
+            <DataStream barCount={24} maxHeight={72} className="h-[72px]" />
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-end justify-between gap-3">
+            <LiveMetric value={telemetry.summary.active_tools} unit=" tools" />
+            <Sparkline data={sparklineData} width={100} height={28} />
+          </div>
+
+          <div className="mt-4">
+            <div className="mb-2 flex items-center justify-between text-xs text-[color:var(--ld-text-soft)]">
+              <span>Tool utilization</span>
+              <span>{toolUtilization}%</span>
+            </div>
+            <LinearProgress value={toolUtilization} color="violet" size="md" />
+          </div>
+
           <div className="mt-5 grid gap-2.5">
-            <MetricCard label="Active tools" value={String(telemetry.summary.active_tools)} tone="emerald" />
+            <MetricCard label="Active tools" value={String(telemetry.summary.active_tools)} tone="emerald" trend="up" />
             <MetricCard label="Agents online" value={String(telemetry.summary.agents_online)} tone="cyan" />
             <MetricCard label="Recent actions" value={String(telemetry.summary.recent_action_count)} tone="violet" />
-            <MetricCard label="Env drift" value={String(telemetry.summary.env_drift)} tone="amber" />
+            <MetricCard
+              label="Env drift"
+              value={String(telemetry.summary.env_drift)}
+              tone="amber"
+              trend={telemetry.summary.env_drift > 0 ? "down" : undefined}
+            />
           </div>
         </Panel>
 
@@ -149,7 +236,7 @@ export function HomeShell({ overview, telemetry, onOpenTab }: HomeShellProps) {
 
         <Panel className="p-5">
           <SectionHeader eyebrow={overview.map_access.label} title="Secondary topology access" detail={overview.map_access.description} />
-          <button className="ld-secondary-button mt-4 w-full" type="button" onClick={() => onOpenTab("plans")}>
+          <button className="ld-secondary-button mt-4 w-full min-h-touch touch-manipulation" type="button" onClick={() => onOpenTab("plans")}>
             {overview.map_access.cta}
           </button>
         </Panel>

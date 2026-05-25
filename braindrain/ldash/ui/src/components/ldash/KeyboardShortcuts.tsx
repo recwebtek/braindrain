@@ -60,6 +60,17 @@ export function KeyboardProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      if (e.key === "?" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        toggleHelp();
+        return;
+      }
+
+      if (e.key === "Escape" && isHelpOpen) {
+        e.preventDefault();
+        setIsHelpOpen(false);
+      }
+
       // Check registered shortcuts
       shortcuts.forEach(shortcut => {
         const keyMatch = e.key.toLowerCase() === shortcut.key.toLowerCase();
@@ -77,7 +88,7 @@ export function KeyboardProvider({ children }: { children: ReactNode }) {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [shortcuts, toggleHelp]);
+  }, [shortcuts, toggleHelp, isHelpOpen]);
 
   const registerShortcut = useCallback((shortcut: Shortcut) => {
     setShortcuts(prev => [...prev, shortcut]);
