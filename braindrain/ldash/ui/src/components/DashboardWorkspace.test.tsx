@@ -3,6 +3,8 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { DashboardWorkspace } from "@/components/DashboardWorkspace";
+import { ToastProvider } from "@/components/ldash/Toast";
+import { KeyboardProvider } from "@/components/ldash/KeyboardShortcuts";
 
 vi.mock("@/api", async () => {
   const data = await import("@/data");
@@ -75,9 +77,13 @@ function renderWorkspace() {
 
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={["/"]}>
-        <DashboardWorkspace />
-      </MemoryRouter>
+      <ToastProvider>
+        <KeyboardProvider>
+          <MemoryRouter initialEntries={["/"]}>
+            <DashboardWorkspace />
+          </MemoryRouter>
+        </KeyboardProvider>
+      </ToastProvider>
     </QueryClientProvider>,
   );
 }
@@ -96,6 +102,6 @@ describe("DashboardWorkspace", () => {
     expect(screen.getByRole("complementary", { name: /operational side panel/i })).toBeInTheDocument();
 
     await user.click(screen.getAllByRole("button", { name: /git branch drift and guarded sync/i })[0]);
-    expect(screen.getByText(/only guarded sync operations/i)).toBeInTheDocument();
+    expect(await screen.findByText(/only guarded sync operations/i)).toBeInTheDocument();
   });
 });
