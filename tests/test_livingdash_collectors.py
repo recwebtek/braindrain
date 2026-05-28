@@ -8,7 +8,12 @@ import pytest
 
 from braindrain.livingdash_collectors import (
     SNAPSHOT_SCHEMA_VERSION,
+    collect_gitops_state,
+    collect_mcp_catalog,
     collect_observer_logs,
+    collect_scriptlib_summary,
+    collect_sessions_summary,
+    collect_workflows_summary,
     collect_workspace_agents,
     collect_workspace_bundle,
     collect_workspace_tests,
@@ -136,4 +141,98 @@ def test_collect_workspace_bundle_schema(mini_workspace: Path) -> None:
     assert bundle["schema_version"] == SNAPSHOT_SCHEMA_VERSION
     assert "agents" in bundle
     assert "tests" in bundle
+    assert "gitops" in bundle
+    assert "workflows" in bundle
+    assert "mcp_catalog" in bundle
+    assert "sessions" in bundle
+    assert "scriptlib" in bundle
     assert len(bundle["plans"]["cursor_plans"]) == 1
+
+
+def test_collect_gitops_state_empty(mini_workspace: Path) -> None:
+    payload = collect_gitops_state(mini_workspace)
+    assert payload["queue_exists"] is False
+    assert payload["memory_exists"] is False
+    assert payload["queue_count"] == 0
+
+
+def test_collect_workflows_summary_from_hub(mini_workspace: Path) -> None:
+    import yaml
+
+    config_path = mini_workspace / "config" / "hub_config.yaml"
+    hub = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    hub["workflows"] = [
+        {
+            "name": "demo",
+            "description": "demo flow",
+            "steps": ["a", "b"],
+            "executes_in": "sandbox",
+            "model": "tier_local",
+            "token_budget": 100,
+            "plan_before_run": True,
+        }
+    ]
+    payload = collect_workflows_summary(hub)
+    assert payload["count"] == 1
+    assert payload["items"][0]["name"] == "demo"
+    assert payload["items"][0]["step_count"] == 2
+
+
+def test_collect_mcp_catalog_and_scriptlib(mini_workspace: Path) -> None:
+    catalog_tool = mini_workspace / ".braindrain" / "mcp-catalog" / "alpha" / "tools"
+    catalog_tool.mkdir(parents=True)
+    (mini_workspace / ".braindrain" / "mcp-catalog" / "README.md").write_text("# Catalog", encoding="utf-8")
+    (catalog_tool / "ping.md").write_text("# ping", encoding="utf-8")
+    scriptlib = mini_workspace / ".scriptlib"
+    scriptlib.mkdir(parents=True)
+    (scriptlib / "index.json").write_text(json.dumps({"entries": [{"name": "x"}]}), encoding="utf-8")
+    (scriptlib / "catalog.md").write_text("# scripts", encoding="utf-8")
+
+    payload = collect_mcp_catalog(mini_workspace, {"mcp_tools": [{"name": "context_mode", "hot": True}]})
+    assert payload["exists"] is True
+    assert payload["server_count"] == 1
+    assert payload["servers"][0]["tool_count"] == 1
+
+    script_payload = collect_scriptlib_summary(mini_workspace)
+    assert script_payload["exists"] is True
+    assert script_payload["index"]["entry_count"] == 1
+
+
+def test_collect_sessions_summary_reads_sqlite(tmp_path: Path) -> None:
+    db_path = tmp_path / "sessions.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE session_summaries (
+            session_id TEXT PRIMARY KEY,
+            start_time REAL,
+            end_time REAL,
+            events_count INTEGER,
+            tools_used TEXT,
+            files_modified TEXT,
+            key_decisions TEXT,
+            errors TEXT,
+            open_todos TEXT,
+            token_total INTEGER,
+            updated_at REAL,
+            context_index_handle TEXT,
+            compact_package_json TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO session_summaries (
+            session_id, start_time, end_time, events_count, files_modified,
+            key_decisions, errors, open_todos, token_total, updated_at
+        ) VALUES (
+            'sess-1', 1.0, 2.0, 3, '["a.py"]', '["decide"]', '[]', '["todo"]', 10, 99.0
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+    payload = collect_sessions_summary({"sessions_db": db_path})
+    assert payload["exists"] is True
+    assert payload["count"] == 1
+    assert payload["items"][0]["session_id"] == "sess-1"

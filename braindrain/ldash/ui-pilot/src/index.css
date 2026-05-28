@@ -1,0 +1,23 @@
+@import "@livingdash/ui-shared/src/tokens.css";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  background:
+    radial-gradient(circle at 20% 0%, rgba(34, 211, 238, 0.12), transparent 45%),
+    radial-gradient(circle at 85% 5%, rgba(167, 139, 250, 0.15), transparent 35%),
+    var(--ld-bg);
+  color: var(--ld-text-primary);
+}
+
+#root {
+  min-height: 100vh;
+}

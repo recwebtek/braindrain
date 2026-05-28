@@ -1,0 +1,262 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  background: radial-gradient(1200px 800px at 16% 12%, #1a2957 0%, #080d1c 38%, #04060c 78%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: #e6ecff;
+  background: transparent;
+}
+
+.nexus-root {
+  min-height: 100vh;
+  padding: 2rem;
+  display: grid;
+  gap: 1.2rem;
+}
+
+.nexus-hero {
+  display: flex;
+  gap: 1.5rem;
+  align-items: stretch;
+  justify-content: space-between;
+  border: 1px solid rgba(142, 189, 255, 0.2);
+  background: linear-gradient(160deg, rgba(13, 20, 44, 0.9), rgba(8, 11, 24, 0.82));
+  border-radius: 1rem;
+  padding: 1.2rem 1.4rem;
+}
+
+.nexus-hero h1 {
+  margin: 0.35rem 0;
+  font-size: clamp(1.4rem, 2vw, 2rem);
+}
+
+.nexus-hero p {
+  margin: 0;
+  color: #b7c8f2;
+}
+
+.nexus-eyebrow {
+  margin: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #8bc4ff;
+}
+
+.nexus-hero-kpi {
+  min-width: 180px;
+  border: 1px solid rgba(103, 198, 255, 0.28);
+  border-radius: 0.9rem;
+  padding: 0.8rem 1rem;
+  background: rgba(5, 10, 30, 0.7);
+  display: grid;
+  align-content: center;
+  gap: 0.3rem;
+}
+
+.nexus-hero-kpi span {
+  color: #98a8d6;
+  font-size: 0.85rem;
+}
+
+.nexus-hero-kpi strong {
+  font-size: 1.5rem;
+}
+
+.nexus-panel {
+  border: 1px solid rgba(140, 110, 255, 0.24);
+  background: linear-gradient(175deg, rgba(8, 14, 34, 0.88), rgba(7, 11, 22, 0.92));
+  border-radius: 1rem;
+  padding: 1rem;
+}
+
+.nexus-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.6rem;
+}
+
+.nexus-panel-header h2 {
+  margin: 0;
+  font-size: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: #b7cdfd;
+}
+
+.nexus-panel-header span {
+  color: #9bb0dc;
+  font-size: 0.9rem;
+}
+
+.nexus-graph {
+  width: 100%;
+  height: auto;
+  border-radius: 0.8rem;
+  border: 1px solid rgba(104, 140, 255, 0.25);
+  background: radial-gradient(circle at center, rgba(19, 35, 71, 0.35) 0%, rgba(5, 8, 16, 0.8) 68%);
+}
+
+.graph-node {
+  stroke-width: 2;
+  stroke: rgba(224, 236, 255, 0.55);
+}
+
+.graph-node-cyan {
+  fill: rgba(84, 225, 255, 0.22);
+}
+
+.graph-node-violet {
+  fill: rgba(166, 104, 255, 0.2);
+}
+
+.graph-node-emerald {
+  fill: rgba(61, 220, 172, 0.19);
+}
+
+.graph-node-amber {
+  fill: rgba(255, 190, 102, 0.2);
+}
+
+.graph-node-label {
+  fill: #dbe8ff;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.nexus-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0.9rem;
+}
+
+.nexus-card {
+  border-radius: 0.85rem;
+  border: 1px solid rgba(132, 161, 255, 0.24);
+  padding: 0.85rem;
+  background: rgba(10, 14, 32, 0.75);
+}
+
+.nexus-card-label {
+  margin: 0;
+  color: #a8bcec;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.72rem;
+}
+
+.nexus-card h3 {
+  margin: 0.4rem 0;
+  font-size: 1.2rem;
+}
+
+.nexus-card p {
+  margin: 0;
+  color: #b4c0e4;
+}
+
+.nexus-empty {
+  border-radius: 0.75rem;
+  border: 1px dashed rgba(149, 174, 243, 0.32);
+  color: #a8b7dc;
+  padding: 1rem;
+  text-align: center;
+}
+
+.nexus-auth-wrap {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+}
+
+.nexus-auth-card {
+  width: min(480px, 100%);
+  border-radius: 1rem;
+  border: 1px solid rgba(137, 164, 255, 0.28);
+  background: linear-gradient(180deg, rgba(11, 16, 34, 0.95), rgba(6, 11, 24, 0.98));
+  padding: 1.2rem;
+}
+
+.nexus-auth-card h1 {
+  margin: 0.45rem 0;
+}
+
+.nexus-auth-text {
+  color: #b9caef;
+}
+
+.nexus-auth-form {
+  margin-top: 1rem;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.nexus-auth-form label {
+  display: grid;
+  gap: 0.4rem;
+  color: #d8e6ff;
+  font-size: 0.95rem;
+}
+
+.nexus-auth-form input,
+.nexus-auth-form button {
+  border-radius: 0.7rem;
+  border: 1px solid rgba(129, 161, 253, 0.34);
+  padding: 0.7rem 0.8rem;
+  color: #ecf2ff;
+  background: rgba(19, 28, 56, 0.7);
+}
+
+.nexus-auth-form button {
+  cursor: pointer;
+  font-weight: 600;
+  background: linear-gradient(120deg, rgba(72, 110, 218, 0.75), rgba(93, 65, 205, 0.76));
+}
+
+.nexus-auth-form button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.nexus-error {
+  margin: 0;
+  color: #ffd4d9;
+  border: 1px solid rgba(255, 112, 112, 0.45);
+  border-radius: 0.7rem;
+  padding: 0.7rem;
+  background: rgba(87, 18, 30, 0.42);
+}
+
+.nexus-loading-pill {
+  border-radius: 999px;
+  border: 1px solid rgba(161, 187, 255, 0.3);
+  padding: 0.75rem 1rem;
+  background: rgba(11, 18, 38, 0.78);
+}
+
+@media (max-width: 900px) {
+  .nexus-root {
+    padding: 1rem;
+  }
+
+  .nexus-hero {
+    flex-direction: column;
+  }
+
+  .nexus-hero-kpi {
+    min-width: auto;
+  }
+}

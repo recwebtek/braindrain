@@ -2,10 +2,10 @@
   "schema_version": "1.0",
   "commands": [
     {
-      "id": "ui_tests",
-      "label": "Run UI tests",
+      "id": "ui_tests_default",
+      "label": "Run UI tests (default)",
       "category": "quality",
-      "description": "Run the LivingDash Vitest suite.",
+      "description": "Run the default LivingDash Vitest suite.",
       "command": [
         "npm",
         "run",
@@ -15,16 +15,55 @@
       "timeout_seconds": 180
     },
     {
-      "id": "ui_build",
-      "label": "Build UI bundle",
+      "id": "ui_build_default",
+      "label": "Build UI bundle (default)",
       "category": "quality",
-      "description": "Build the production LivingDash UI bundle.",
+      "description": "Build the production default LivingDash UI bundle.",
       "command": [
         "npm",
         "run",
         "build"
       ],
       "cwd": "braindrain/ldash/ui",
+      "timeout_seconds": 180
+    },
+    {
+      "id": "ui_build_nexus",
+      "label": "Build UI bundle (NEXUS)",
+      "category": "quality",
+      "description": "Build the NEXUS mission-control variant.",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "cwd": "braindrain/ldash/ui-nexus",
+      "timeout_seconds": 180
+    },
+    {
+      "id": "ui_build_pilot",
+      "label": "Build UI bundle (PILOT)",
+      "category": "quality",
+      "description": "Build the PILOT command-deck variant.",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "cwd": "braindrain/ldash/ui-pilot",
+      "timeout_seconds": 180
+    },
+    {
+      "id": "ui_build_grid",
+      "label": "Build UI bundle (GRID)",
+      "category": "quality",
+      "description": "Build the GRID analyst-cockpit variant.",
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "cwd": "braindrain/ldash/ui-grid",
       "timeout_seconds": 180
     },
     {

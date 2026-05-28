@@ -17,7 +17,7 @@ from typing import Any
 
 import yaml
 
-SNAPSHOT_SCHEMA_VERSION = "2.0"
+SNAPSHOT_SCHEMA_VERSION = "2.1"
 LIVINGDASH_PACKAGE_ROOT = Path(__file__).resolve().parent / "ldash"
 LIVINGDASH_UI_REL = "braindrain/ldash/ui"
 MAX_EXCERPT_CHARS = 12_000
@@ -80,15 +80,18 @@ def resolve_read_paths(project_root: Path, hub: dict[str, Any], ldash: dict[str,
     read_paths = ldash.get("read_paths") if isinstance(ldash.get("read_paths"), dict) else {}
     cost = hub.get("cost_tracking") if isinstance(hub.get("cost_tracking"), dict) else {}
     observer = hub.get("observer") if isinstance(hub.get("observer"), dict) else {}
+    sessions = hub.get("sessions") if isinstance(hub.get("sessions"), dict) else {}
 
     session_raw = read_paths.get("session_jsonl") or cost.get("log_file")
     observer_raw = read_paths.get("observer_db") or observer.get("storage_path")
     token_raw = read_paths.get("token_metrics") or ".braindrain/token-metrics.jsonl"
+    sessions_raw = read_paths.get("sessions_db") or sessions.get("storage_path") or "~/.braindrain/sessions.db"
 
     return {
         "session_jsonl": _expand_path(str(session_raw) if session_raw else None, project_root=project_root),
         "observer_db": _expand_path(str(observer_raw) if observer_raw else None, project_root=project_root),
         "token_metrics": _expand_path(str(token_raw) if token_raw else None, project_root=project_root),
+        "sessions_db": _expand_path(str(sessions_raw) if sessions_raw else None, project_root=project_root),
     }
 
 
@@ -626,6 +629,225 @@ def collect_env_context_summary(project_root: Path) -> dict[str, Any]:
     }
 
 
+def collect_gitops_state(project_root: Path) -> dict[str, Any]:
+    queue_path = project_root / ".cursor" / ".gitops-queue.json"
+    memory_path = project_root / ".cursor" / ".gitops-memory.jsonl"
+
+    queue_raw = _load_json_if_exists(queue_path)
+    queue_items = queue_raw if isinstance(queue_raw, list) else []
+    valid_queue = [item for item in queue_items if isinstance(item, dict)]
+    status_counts: dict[str, int] = {}
+    for item in valid_queue:
+        status = str(item.get("status") or "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+
+    memory_entries = _tail_jsonl(memory_path, limit=80)
+    return {
+        "schema_version": "1.0",
+        "queue_path": str(queue_path),
+        "queue_exists": queue_path.exists(),
+        "queue_count": len(valid_queue),
+        "queue_status_counts": status_counts,
+        "queue_items": valid_queue[:40],
+        "memory_path": str(memory_path),
+        "memory_exists": memory_path.exists(),
+        "memory_count": len(memory_entries),
+        "memory_entries": memory_entries[-20:],
+        "updated_at": _now_iso(),
+    }
+
+
+def _load_json_if_exists(path: Path) -> Any:
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except Exception:
+        return None
+
+
+def collect_workflows_summary(hub: dict[str, Any]) -> dict[str, Any]:
+    workflows = hub.get("workflows")
+    if not isinstance(workflows, list):
+        workflows = []
+    items: list[dict[str, Any]] = []
+    for wf in workflows:
+        if not isinstance(wf, dict):
+            continue
+        steps = wf.get("steps") if isinstance(wf.get("steps"), list) else []
+        items.append(
+            {
+                "name": str(wf.get("name") or "unnamed"),
+                "description": str(wf.get("description") or ""),
+                "steps": [str(step) for step in steps if isinstance(step, str)],
+                "step_count": len([step for step in steps if isinstance(step, str)]),
+                "executes_in": wf.get("executes_in"),
+                "model": wf.get("model"),
+                "token_budget": wf.get("token_budget"),
+                "plan_before_run": bool(wf.get("plan_before_run", False)),
+            }
+        )
+    return {
+        "schema_version": "1.0",
+        "count": len(items),
+        "items": items,
+        "updated_at": _now_iso(),
+    }
+
+
+def collect_mcp_catalog(project_root: Path, hub: dict[str, Any]) -> dict[str, Any]:
+    catalog_root = project_root / ".braindrain" / "mcp-catalog"
+    readme_path = catalog_root / "README.md"
+    server_items: list[dict[str, Any]] = []
+    if catalog_root.exists():
+        for server_dir in sorted(path for path in catalog_root.iterdir() if path.is_dir()):
+            tools_dir = server_dir / "tools"
+            tool_docs = sorted(tools_dir.glob("*.md")) if tools_dir.exists() else []
+            server_items.append(
+                {
+                    "server": server_dir.name,
+                    "path": str(server_dir),
+                    "tool_count": len(tool_docs),
+                    "tools": [
+                        {
+                            "name": tool_doc.stem,
+                            "path": str(tool_doc.relative_to(project_root)),
+                        }
+                        for tool_doc in tool_docs[:120]
+                    ],
+                }
+            )
+    configured = hub.get("mcp_tools") if isinstance(hub.get("mcp_tools"), list) else []
+    configured_tools = []
+    for item in configured:
+        if not isinstance(item, dict):
+            continue
+        configured_tools.append(
+            {
+                "name": item.get("name"),
+                "hot": bool(item.get("hot", False)),
+                "defer_loading": bool(item.get("defer_loading", False)),
+                "tags": [str(tag) for tag in (item.get("tags") or []) if isinstance(tag, str)],
+            }
+        )
+    return {
+        "schema_version": "1.0",
+        "catalog_root": str(catalog_root),
+        "exists": catalog_root.exists(),
+        "readme": _read_text_excerpt(readme_path, max_chars=3000) if readme_path.exists() else {"exists": False},
+        "server_count": len(server_items),
+        "servers": server_items,
+        "configured_tools": configured_tools,
+        "updated_at": _now_iso(),
+    }
+
+
+def _maybe_parse_json_field(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if not text:
+        return value
+    if not ((text.startswith("{") and text.endswith("}")) or (text.startswith("[") and text.endswith("]"))):
+        return value
+    try:
+        return json.loads(text)
+    except Exception:
+        return value
+
+
+def collect_sessions_summary(paths: dict[str, Path | None], *, limit: int = 40) -> dict[str, Any]:
+    db_path = paths.get("sessions_db")
+    if not db_path or not db_path.exists():
+        return {
+            "schema_version": "1.0",
+            "db_path": str(db_path) if db_path else None,
+            "exists": False,
+            "count": 0,
+            "items": [],
+            "updated_at": _now_iso(),
+        }
+    items: list[dict[str, Any]] = []
+    count = 0
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        count_row = conn.execute("SELECT COUNT(*) AS count FROM session_summaries").fetchone()
+        count = int(count_row["count"]) if count_row else 0
+        rows = conn.execute(
+            """
+            SELECT
+              session_id, start_time, end_time, events_count,
+              files_modified, key_decisions, errors, open_todos,
+              token_total, updated_at
+            FROM session_summaries
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            (max(1, min(int(limit), 200)),),
+        ).fetchall()
+        for row in rows:
+            items.append(
+                {
+                    "session_id": row["session_id"],
+                    "start_time": row["start_time"],
+                    "end_time": row["end_time"],
+                    "events_count": row["events_count"],
+                    "files_modified": _maybe_parse_json_field(row["files_modified"]),
+                    "key_decisions": _maybe_parse_json_field(row["key_decisions"]),
+                    "errors": _maybe_parse_json_field(row["errors"]),
+                    "open_todos": _maybe_parse_json_field(row["open_todos"]),
+                    "token_total": row["token_total"],
+                    "updated_at": row["updated_at"],
+                }
+            )
+        conn.close()
+    except Exception as exc:
+        return {
+            "schema_version": "1.0",
+            "db_path": str(db_path),
+            "exists": True,
+            "error": str(exc),
+            "count": count,
+            "items": items,
+            "updated_at": _now_iso(),
+        }
+    return {
+        "schema_version": "1.0",
+        "db_path": str(db_path),
+        "exists": True,
+        "count": count,
+        "items": items,
+        "updated_at": _now_iso(),
+    }
+
+
+def collect_scriptlib_summary(project_root: Path) -> dict[str, Any]:
+    root = project_root / ".scriptlib"
+    index_path = root / "index.json"
+    catalog_path = root / "catalog.md"
+    index_data = _load_json_if_exists(index_path)
+    if not isinstance(index_data, dict):
+        index_data = {}
+    entries = index_data.get("entries")
+    if not isinstance(entries, list):
+        entries = []
+    valid_entries = [entry for entry in entries if isinstance(entry, dict)]
+    return {
+        "schema_version": "1.0",
+        "root": str(root),
+        "exists": root.exists(),
+        "index": {
+            "path": str(index_path),
+            "exists": index_path.exists(),
+            "entry_count": len(valid_entries),
+            "entries": valid_entries[:80],
+        },
+        "catalog": _read_text_excerpt(catalog_path, max_chars=5000) if catalog_path.exists() else {"exists": False},
+        "updated_at": _now_iso(),
+    }
+
+
 def compute_insights(
     *,
     telemetry: dict[str, Any],
@@ -661,6 +883,11 @@ def collect_workspace_bundle(project_root: str | Path) -> dict[str, Any]:
     config_summary = collect_hub_config_summary(project_root)
     tests = collect_workspace_tests(project_root)
     env_context = collect_env_context_summary(project_root)
+    gitops = collect_gitops_state(project_root)
+    workflows = collect_workflows_summary(hub)
+    mcp_catalog = collect_mcp_catalog(project_root, hub)
+    sessions = collect_sessions_summary(read_paths)
+    scriptlib = collect_scriptlib_summary(project_root)
 
     insights = compute_insights(telemetry=telemetry, primer=primer, agents=agents)
     insights["env_drift"] += len(skills.get("drift_missing") or [])
@@ -680,5 +907,10 @@ def collect_workspace_bundle(project_root: str | Path) -> dict[str, Any]:
         "config": config_summary,
         "tests": tests,
         "env_context": env_context,
+        "gitops": gitops,
+        "workflows": workflows,
+        "mcp_catalog": mcp_catalog,
+        "sessions": sessions,
+        "scriptlib": scriptlib,
         "insights": insights,
     }

@@ -24,7 +24,7 @@ from braindrain.livingdash_collectors import SNAPSHOT_SCHEMA_VERSION, collect_wo
 
 
 SESSION_COOKIE = "livingdash_session"
-CONTRACT_VERSION = "2.0"
+CONTRACT_VERSION = "2.1"
 
 
 class LoginPayload(BaseModel):
@@ -326,6 +326,14 @@ def _ensure_workspace_bundle(snapshot: dict[str, Any], project_root: Path) -> di
     if isinstance(bundle, dict) and _bundle_is_usable(bundle):
         return bundle
     return collect_workspace_bundle(project_root)
+
+
+def _bundle_payload(snapshot: dict[str, Any], project_root: Path, key: str) -> dict[str, Any]:
+    bundle = _ensure_workspace_bundle(snapshot, project_root)
+    payload = bundle.get(key, {})
+    if not isinstance(payload, dict):
+        payload = {}
+    return {"version": CONTRACT_VERSION, **payload, "updated_at": _now_iso()}
 
 
 def _telemetry_summary(snapshot: dict[str, Any], status: dict[str, Any], history: dict[str, Any]) -> dict[str, Any]:
@@ -1043,8 +1051,43 @@ def create_app(
     def tests(request: Request) -> dict[str, Any]:
         _require_auth(request, auth_config)
         snapshot = _read_snapshot(data_dir)
+        return _bundle_payload(snapshot, project_root, "tests")
+
+    @app.get("/api/gitops")
+    def gitops(request: Request) -> dict[str, Any]:
+        _require_auth(request, auth_config)
+        snapshot = _read_snapshot(data_dir)
+        return _bundle_payload(snapshot, project_root, "gitops")
+
+    @app.get("/api/workflows")
+    def workflows(request: Request) -> dict[str, Any]:
+        _require_auth(request, auth_config)
+        snapshot = _read_snapshot(data_dir)
+        return _bundle_payload(snapshot, project_root, "workflows")
+
+    @app.get("/api/mcp-catalog")
+    def mcp_catalog(request: Request) -> dict[str, Any]:
+        _require_auth(request, auth_config)
+        snapshot = _read_snapshot(data_dir)
+        return _bundle_payload(snapshot, project_root, "mcp_catalog")
+
+    @app.get("/api/sessions")
+    def sessions(request: Request, limit: int = 40) -> dict[str, Any]:
+        _require_auth(request, auth_config)
+        snapshot = _read_snapshot(data_dir)
         bundle = _ensure_workspace_bundle(snapshot, project_root)
-        return {"version": CONTRACT_VERSION, **(bundle.get("tests", {}) if isinstance(bundle.get("tests"), dict) else {}), "updated_at": _now_iso()}
+        payload = bundle.get("sessions", {})
+        if not isinstance(payload, dict):
+            payload = {}
+        items = payload.get("items", []) if isinstance(payload.get("items"), list) else []
+        bounded = max(1, min(int(limit), 200))
+        return {"version": CONTRACT_VERSION, **payload, "items": items[:bounded], "updated_at": _now_iso()}
+
+    @app.get("/api/scriptlib")
+    def scriptlib(request: Request) -> dict[str, Any]:
+        _require_auth(request, auth_config)
+        snapshot = _read_snapshot(data_dir)
+        return _bundle_payload(snapshot, project_root, "scriptlib")
 
     @app.get("/{full_path:path}")
     def index(full_path: str):

@@ -65,10 +65,67 @@ def test_agents_and_tests_authenticated(client: TestClient) -> None:
     tests = client.get("/api/tests")
     assert tests.status_code == 200
     assert "python_tests" in tests.json()
+    for endpoint in ("/api/gitops", "/api/workflows", "/api/mcp-catalog", "/api/sessions", "/api/scriptlib"):
+        resp = client.get(endpoint)
+        assert resp.status_code == 200
+        assert resp.json().get("version") == "2.1"
 
     config_page = client.get("/api/config")
     assert config_page.status_code == 200
     assert config_page.json().get("read_only") is True
+
+
+def test_new_context_endpoints_empty_by_default(client: TestClient) -> None:
+    gitops = client.get("/api/gitops").json()
+    assert gitops["version"] == "2.1"
+    assert gitops.get("queue_exists") is False
+
+    sessions = client.get("/api/sessions").json()
+    assert sessions["version"] == "2.1"
+    assert isinstance(sessions.get("exists"), bool)
+    assert isinstance(sessions.get("items"), list)
+
+    scriptlib = client.get("/api/scriptlib").json()
+    assert scriptlib["version"] == "2.1"
+    assert scriptlib.get("exists") is False
+
+
+def test_new_context_endpoints_populated(client: TestClient, tmp_path: Path) -> None:
+    (tmp_path / ".cursor").mkdir(exist_ok=True)
+    (tmp_path / ".cursor" / ".gitops-queue.json").write_text(
+        json.dumps([{"action": "branch-setup", "status": "pending"}]),
+        encoding="utf-8",
+    )
+    (tmp_path / ".cursor" / ".gitops-memory.jsonl").write_text(
+        json.dumps({"operation": "merge-all", "resolution": "retry"}) + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".scriptlib").mkdir(exist_ok=True)
+    (tmp_path / ".scriptlib" / "index.json").write_text(
+        json.dumps({"entries": [{"name": "lint"}]}),
+        encoding="utf-8",
+    )
+    (tmp_path / ".scriptlib" / "catalog.md").write_text("# catalog", encoding="utf-8")
+    (tmp_path / ".braindrain" / "mcp-catalog" / "alpha" / "tools").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".braindrain" / "mcp-catalog" / "README.md").write_text("# mcp", encoding="utf-8")
+    (tmp_path / ".braindrain" / "mcp-catalog" / "alpha" / "tools" / "ping.md").write_text(
+        "# ping",
+        encoding="utf-8",
+    )
+
+    client.post("/api/workspace/refresh")
+
+    gitops = client.get("/api/gitops").json()
+    assert gitops["queue_count"] == 1
+    assert gitops["memory_count"] == 1
+
+    scriptlib = client.get("/api/scriptlib").json()
+    assert scriptlib["exists"] is True
+    assert scriptlib["index"]["entry_count"] == 1
+
+    catalog = client.get("/api/mcp-catalog").json()
+    assert catalog["exists"] is True
+    assert catalog["server_count"] >= 1
 
 
 def test_agents_live_fallback_when_snapshot_bundle_empty(tmp_path: Path) -> None:
