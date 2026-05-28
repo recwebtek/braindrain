@@ -72,10 +72,13 @@ braindrain/ldash/ui/node_modules/
 braindrain/ldash/ui/*.tsbuildinfo
 braindrain/ldash/ui-nexus/node_modules/
 braindrain/ldash/ui-nexus/*.tsbuildinfo
+braindrain/ldash/ui-nexus/dist/
 braindrain/ldash/ui-pilot/node_modules/
 braindrain/ldash/ui-pilot/*.tsbuildinfo
+braindrain/ldash/ui-pilot/dist/
 braindrain/ldash/ui-grid/node_modules/
 braindrain/ldash/ui-grid/*.tsbuildinfo
+braindrain/ldash/ui-grid/dist/
 braindrain/ldash/ui-shared/node_modules/
 braindrain/ldash/ui-shared/*.tsbuildinfo
 
