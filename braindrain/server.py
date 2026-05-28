@@ -401,6 +401,17 @@ async def run_workflow(name: str, args: dict = None) -> dict:
             dry_run=bool(args.get("dry_run", False)),
         )
 
+    if name == "prime_cursor_orchestration":
+        return await prime_workspace(
+            path=args.get("path", "."),
+            agents=args.get("agents") or ["cursor"],
+            dry_run=bool(args.get("dry_run", False)),
+            sync_templates=bool(args.get("sync_templates", True)),
+            sync_subagents=bool(args.get("sync_subagents", True)),
+            bundle=args.get("bundle") or "cursor-orchestration",
+            compact_mcp_response=bool(args.get("compact_mcp_response", True)),
+        )
+
     workflow = config.get_workflow(name)
     if not workflow:
         return {
@@ -434,6 +445,29 @@ async def plan_workflow(name: str, args: dict = None) -> dict:
     """
     if args is None:
         args = {}
+
+    if name == "prime_cursor_orchestration":
+        return {
+            "workflow": name,
+            "status": "plan_ready",
+            "plan": {
+                "workflow": name,
+                "token_budget": 800,
+                "steps": ["braindrain.prime_workspace"],
+                "args": {
+                    "path": args.get("path", "."),
+                    "agents": args.get("agents") or ["cursor"],
+                    "bundle": args.get("bundle") or "cursor-orchestration",
+                    "sync_templates": bool(args.get("sync_templates", True)),
+                    "sync_subagents": bool(args.get("sync_subagents", True)),
+                    "dry_run": bool(args.get("dry_run", False)),
+                },
+            },
+            "notes": [
+                "Deploys cursor-orchestration bundle: agents, hooks, skills, scripts.",
+                "Use run_workflow('prime_cursor_orchestration') or prime_workspace with bundle=cursor-orchestration.",
+            ],
+        }
 
     if name == "init_project_memory":
         return {

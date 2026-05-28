@@ -25,6 +25,7 @@ Before every invocation:
 - **Never** merge with unresolved conflicts — abort and report
 - **Never** operate on `main` or `master` directly — always a feature or merge branch
 - **Never** `git checkout` or `git switch` during `branch-setup` mode — branch creation must not change the user's active branch. Use `git branch <name>` only.
+- **`plan-execution` mode** (Cursor Plan Build / coordinator): may `git switch` to `context.planBranch` after `git status`. If dirty, `git stash push -u` with message `braindrain plan-execution <slug>`, switch, then `git stash pop` when safe (abort pop on conflict).
 - **Always** run `git status` before any write operation
 - **Always** verify branch name matches the task being worked on
 - **Always** return structured JSON — never freeform text
@@ -36,7 +37,7 @@ Coordinator and manual invocations must pass this JSON structure:
 ```json
 {
   "taskId": "T003 | MERGE-ALL | NB",
-  "mode": "branch-setup | commit | status-check | merge-all | pr-create",
+  "mode": "branch-setup | plan-execution | commit | status-check | merge-all | pr-create",
   "instruction": "one-paragraph description of what to do",
   "context": {
     "branch": "feature/auth-system",
@@ -69,9 +70,9 @@ For any execution tied to a plan (`context.planSource` present), enforce:
    - Else match `.cursor/.gitops-queue.json` entry by `planSource` (from plan stop hook),
    - Else in `branch-setup` mode create a branch using project naming conventions.
    - When queueing branch-setup from hooks, always set `planSource` to the repo-relative `*.plan.md` path.
-2. Ensure branch correctness before any work:
-   - `check current branch -> if mismatch checkout target branch -> then proceed`.
-3. For new plans with no branch association:
+2. In **`plan-execution`** mode only: `check current branch -> if mismatch checkout target branch -> then proceed` (stash when dirty).
+3. In **`branch-setup`** mode: create branch only; never checkout.
+4. For new plans with no branch association:
    - run `branch-setup`,
    - return the created branch in `branchCreated`,
    - include a summary note indicating the plan should be linked with this branch by the planning auditor.
@@ -84,7 +85,7 @@ Always return structured JSON:
 {
   "taskId": "",
   "status": "success | failure | already_exists | partial",
-  "mode": "branch-setup | commit | status-check | merge-all | pr-create",
+  "mode": "branch-setup | plan-execution | commit | status-check | merge-all | pr-create",
   "branch": "",
   "branchCreated": "",
   "headUnchanged": true,

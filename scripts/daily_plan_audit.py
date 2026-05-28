@@ -22,6 +22,9 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Callable
 
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
 
 SCHEMA_VERSION = "1.1"
 STOP_WORDS = {
@@ -521,6 +524,18 @@ def parse_args() -> argparse.Namespace:
             "Write branch: into plan frontmatter for active/merge-ready plans when "
             "resolved via git_local (high-confidence local git match only)."
         ),
+    )
+    parser.add_argument(
+        "--ensure-branches",
+        action="store_true",
+        default=True,
+        help="Create missing plan branches and write branch: frontmatter (default: on).",
+    )
+    parser.add_argument(
+        "--no-ensure-branches",
+        action="store_false",
+        dest="ensure_branches",
+        help="Skip automatic branch creation for active plans.",
     )
     return parser.parse_args()
 
@@ -1529,6 +1544,73 @@ def apply_pr_resolution(
         card.pr_source = pr_source
 
 
+def _upsert_gitops_queue_entry(repo_root: Path, entry: dict[str, object]) -> None:
+    """Append or replace queue entry matching planSource."""
+    queue_path = repo_root / ".cursor" / ".gitops-queue.json"
+    queue_path.parent.mkdir(parents=True, exist_ok=True)
+    entries = _read_gitops_queue(repo_root)
+    plan_source = _normalize_plan_source_path(str(entry.get("planSource") or ""))
+    filtered = [
+        e
+        for e in entries
+        if _normalize_plan_source_path(str(e.get("planSource") or "")) != plan_source
+    ]
+    filtered.append(entry)
+    queue_path.write_text(json.dumps(filtered, indent=2) + "\n", encoding="utf-8")
+
+
+def ensure_plan_branches(
+    repo_root: Path,
+    cards: dict[str, "PlanCard"],
+) -> list[str]:
+    """Create missing branches for active plans and persist branch: frontmatter."""
+    from plan_branch_utils import (
+        branch_name_for_plan,
+        branch_ref_exists,
+        create_branch_ref,
+        resolve_base_branch,
+    )
+
+    bootstrap_dispositions = {"active", "merge-ready"}
+    created_sources: list[str] = []
+    base = resolve_base_branch(repo_root)
+
+    for source, card in cards.items():
+        if card.disposition not in bootstrap_dispositions:
+            continue
+        if card.branch and card.branch != "—":
+            continue
+        plan_path = repo_root / source
+        if not plan_path.is_file():
+            continue
+        branch = branch_name_for_plan(plan_path)
+        if not branch_ref_exists(repo_root, branch):
+            ok, _msg = create_branch_ref(repo_root, branch, base)
+            if not ok:
+                continue
+        _upsert_gitops_queue_entry(
+            repo_root,
+            {
+                "action": "branch-setup",
+                "branchName": branch,
+                "baseBranch": base,
+                "planSource": source,
+                "status": "done",
+                "source": "daily_plan_audit",
+            },
+        )
+        current = plan_path.read_text(encoding="utf-8", errors="ignore")
+        if not re.search(r"(?m)^branch\s*:", current):
+            new_text = _inject_frontmatter_key(current, "branch", branch)
+            if new_text != current:
+                plan_path.write_text(new_text, encoding="utf-8")
+        created_sources.append(source)
+        card.branch = branch
+        card.branch_source = "audit_created"
+
+    return created_sources
+
+
 def bootstrap_plan_branches_from_git_local(
     repo_root: Path,
     cards: dict[str, "PlanCard"],
@@ -2171,6 +2253,11 @@ def main() -> int:
     cards_by_source = build_cards_index(
         repo_root, primary, items, default_owner=default_owner
     )
+    branches_created: list[str] = []
+    if getattr(args, "ensure_branches", True):
+        branches_created = ensure_plan_branches(repo_root, cards_by_source)
+        apply_branch_resolution(cards_by_source, repo_root)
+        apply_pr_resolution(cards_by_source, repo_root)
     if getattr(args, "bootstrap_branches", False):
         bootstrap_plan_branches_from_git_local(repo_root, cards_by_source)
         # Re-resolve so frontmatter picks up bootstrapped branches.
@@ -2200,6 +2287,13 @@ def main() -> int:
             report
             + "\n\n## Plan branches linked from gitops context (this run)\n\n"
             + "\n".join(f"- `{p}`" for p in branch_links)
+            + "\n"
+        )
+    if branches_created:
+        report = (
+            report
+            + "\n\n## Plan branches created (this run)\n\n"
+            + "\n".join(f"- `{p}`" for p in branches_created)
             + "\n"
         )
     dated_path = out_dir / f"plan-audit-{args.report_date}.md"

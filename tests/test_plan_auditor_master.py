@@ -359,3 +359,32 @@ def test_bootstrap_branches_writes_git_local_match(tmp_project_dir: Path) -> Non
     assert updated == [".cursor/plans/boot.plan.md"]
     text = plan_path.read_text(encoding="utf-8")
     assert "branch: feature/boot-plan" in text
+
+
+def test_ensure_plan_branches_creates_ref_and_frontmatter(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    _git_init_with_branch(tmp_project_dir, "main")
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    plan_path = plans / "new_feature.plan.md"
+    plan_path.write_text(
+        "---\ndisposition: active\nowner: @ettienne\n---\n# New Feature\n- [ ] todo\n",
+        encoding="utf-8",
+    )
+    item = m.PlanItem(
+        item="todo",
+        source=".cursor/plans/new_feature.plan.md",
+        status="Outstanding",
+        confidence="high",
+        evidence=[".cursor/plans/new_feature.plan.md#item"],
+        why="test",
+        tokens={"todo"},
+    )
+    cards = m.build_cards_index(tmp_project_dir, [plan_path], [item], default_owner="@ettienne")
+    card = cards[".cursor/plans/new_feature.plan.md"]
+    assert card.branch == "—"
+    created = m.ensure_plan_branches(tmp_project_dir, cards)
+    assert ".cursor/plans/new_feature.plan.md" in created
+    assert "branch: feature/new-feature" in plan_path.read_text(encoding="utf-8")
+    assert card.branch == "feature/new-feature"
+    assert card.branch_source == "audit_created"

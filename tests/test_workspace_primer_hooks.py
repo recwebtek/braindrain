@@ -20,10 +20,12 @@ from braindrain.workspace_primer import (
     MAX_ROLLBACK_SNAPSHOTS,
     CURSOR_HOOK_TEMPLATES_DIR,
     CURSOR_SKILL_TEMPLATES_DIR,
+    _resolve_bundle_manifest,
     compact_prime_result_for_mcp,
     create_prime_snapshot,
     deploy_cursor_hook_templates,
     deploy_cursor_skill_templates,
+    deploy_operational_scripts,
     deploy_subagent_templates,
     prime,
 )
@@ -278,6 +280,23 @@ def test_daily_plan_hook_contains_once_per_day_gate() -> None:
     assert "daily-plan-audit.json" in content
     assert "LAST_RUN_DATE" in content
     assert 'if [ "${LAST_RUN_DATE}" = "${TODAY}" ]; then' in content
+    assert "braindrain_hub_root" in content
+    assert "_resolve_audit_script" in content
+
+
+def test_deploy_operational_scripts_and_skills(tmp_project_dir: Path) -> None:
+    bundle = _resolve_bundle_manifest("cursor-orchestration")
+    scripts = deploy_operational_scripts(tmp_project_dir, bundle, sync_templates=False, dry_run=False)
+    assert (tmp_project_dir / "scripts" / "daily_plan_audit.py").is_file()
+    assert (tmp_project_dir / "scripts" / "plan_branch_utils.py").is_file()
+    assert (tmp_project_dir / "scripts" / "plan_build_guard.py").is_file()
+    assert any(v.get("action") == "created" for v in scripts.values())
+    skill_ids = [str(s) for s in bundle.get("skills", []) if str(s).strip()]
+    skills = deploy_cursor_skill_templates(
+        tmp_project_dir, skill_ids, sync_templates=False, dry_run=False
+    )
+    assert (tmp_project_dir / ".cursor" / "skills" / "gitops" / "SKILL.md").is_file()
+    assert skills
 
 
 def test_observe_hook_template_suppresses_known_stdout_sources() -> None:
