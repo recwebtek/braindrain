@@ -37,5 +37,61 @@ _prepend_path() {
   fi
 }
 _prepend_path
+VENV_PYTHON="$REPO/.venv/bin/python"
+REQUIREMENTS_FILE="$REPO/requirements.txt"
 
-exec "$REPO/.venv/bin/python" -m braindrain.server stdio
+_choose_python() {
+  local candidates=("$@")
+  local candidate=""
+  for candidate in "${candidates[@]}"; do
+    if [[ "$candidate" == /* ]]; then
+      [[ -x "$candidate" ]] || continue
+    else
+      candidate="$(command -v "$candidate" 2>/dev/null || true)"
+      [[ -n "$candidate" ]] || continue
+    fi
+    if "$candidate" -c "import sys; raise SystemExit(0 if sys.version_info[:2] >= (3, 11) else 1)" >/dev/null 2>&1; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+if [[ ! -x "$VENV_PYTHON" ]]; then
+  echo "[braindrain] Missing venv at $VENV_PYTHON; bootstrapping..." >&2
+  BOOTSTRAP_PYTHON="${BRAINDRAIN_BOOTSTRAP_PYTHON:-}"
+  if [[ -n "$BOOTSTRAP_PYTHON" && -x "$BOOTSTRAP_PYTHON" ]]; then
+    if ! "$BOOTSTRAP_PYTHON" -c "import sys; raise SystemExit(0 if sys.version_info[:2] >= (3, 11) else 1)" >/dev/null 2>&1; then
+      echo "[braindrain] BRAINDRAIN_BOOTSTRAP_PYTHON is below Python 3.11: $BOOTSTRAP_PYTHON" >&2
+      BOOTSTRAP_PYTHON=""
+    fi
+  fi
+  if [[ -z "$BOOTSTRAP_PYTHON" ]]; then
+    BOOTSTRAP_PYTHON="$(_choose_python \
+      "/Library/Frameworks/Python.framework/Versions/3.14/bin/python3.14" \
+      "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13" \
+      "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12" \
+      "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3.11" \
+      "/opt/homebrew/bin/python3.14" \
+      "/opt/homebrew/bin/python3.13" \
+      "/opt/homebrew/bin/python3.12" \
+      "/opt/homebrew/bin/python3.11" \
+      python3.14 python3.13 python3.12 python3.11 python3 || true)"
+  fi
+  if [[ -z "$BOOTSTRAP_PYTHON" ]]; then
+    echo "[braindrain] Could not find Python 3.11+ to rebuild .venv." >&2
+    echo "[braindrain] Fix: install Python 3.11+ and run ./install.sh" >&2
+    exit 1
+  fi
+  "$BOOTSTRAP_PYTHON" -m venv "$REPO/.venv" || exit 1
+  if [[ -f "$REQUIREMENTS_FILE" ]]; then
+    "$REPO/.venv/bin/pip" install -r "$REQUIREMENTS_FILE" || {
+      echo "[braindrain] Failed to install Python dependencies." >&2
+      echo "[braindrain] Fix: run ./install.sh (or .venv/bin/pip install -r requirements.txt)." >&2
+      exit 1
+    }
+  fi
+fi
+
+exec "$VENV_PYTHON" -m braindrain.server stdio
