@@ -61,10 +61,17 @@ def estimate_claude_tokens(text: str) -> int:
 
 # Regex patterns for redaction (pre-compiled for performance)
 # Paths: /Users/..., /Volumes/..., /home/..., /root/...
-_PATH_RE = re.compile(r"(/Users/[^\s'\"]+|/Volumes/[^\s'\"]+|/home/[^\s'\"]+|/root/[^\s'\"]+)")
-# API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_), Google AI (AIza)
+# Note: handles spaces by stopping at quotes or common delimiters.
+_PATH_RE = re.compile(r"(/Users/|/Volumes/|/home/|/root/)([^'\",\n\t;:]+)")
+# API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_), Google AI (AIza), AWS, Slack
 _KEY_RE = re.compile(
-    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,})"
+    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,}|A[KS]IA[A-Z0-9]{16}|xox[bparc]-[a-zA-Z0-9-]{12,})",
+    re.IGNORECASE
+)
+# Generic secrets: key-value pairs like password: "...", secret='...', etc.
+_GENERIC_SECRET_RE = re.compile(
+    r"(['\"]?)([a-zA-Z0-9_-]*(?:password|secret|token|apikey|api_key|pass))\1(\s*[:=]\s*)(['\"]?)([^\s'\",;]+)\4",
+    re.IGNORECASE
 )
 
 # Machine-local debug reports (under .braindrain/, never committed).
@@ -98,6 +105,8 @@ class TelemetrySession:
     estimator: TokenEstimator = field(default_factory=CharDiv4Estimator)
     rates: dict[str, float] = field(default_factory=dict)
     _env_context_hash: str | None = None
+    _parent_ensured: bool = False
+    _logs_ensured: bool = False
     module_attribution: dict[str, int] = field(
         default_factory=lambda: {
             "tool_gate": 0,
@@ -108,13 +117,17 @@ class TelemetrySession:
     )
 
     def _ensure_parent(self) -> None:
+        if self._parent_ensured:
+            return
         try:
             self.log_file.parent.mkdir(parents=True, exist_ok=True)
+            self._parent_ensured = True
         except PermissionError:
             fallback = _DEBUG_LOG_DIR / self.log_file.name
             if self.log_file != fallback:
                 self.log_file = fallback
                 self.log_file.parent.mkdir(parents=True, exist_ok=True)
+                self._parent_ensured = True
 
     def sanitize(self, data: Any) -> Any:
         """Public entry point for recursive redaction of sensitive paths and API keys."""
@@ -127,22 +140,40 @@ class TelemetrySession:
             if isinstance(val, str):
                 # Optimization: skip regex overhead if the string has no characters indicating
                 # a potential sensitive path or API key. ~3.5x speedup for clean strings.
+                val_low = val.lower()
                 if (
                     "/" not in val
-                    and "sk-" not in val
-                    and "gsk_" not in val
-                    and "hf_" not in val
-                    and "AIza" not in val
+                    and "sk-" not in val_low
+                    and "akia" not in val_low
+                    and "asia" not in val_low
+                    and "xox" not in val_low
+                    and "password" not in val_low
+                    and "secret" not in val_low
+                    and "token" not in val_low
+                    and "apikey" not in val_low
+                    and "api_key" not in val_low
+                    and "pass" not in val_low
                 ):
                     return val
 
-                val = _PATH_RE.sub("[REDACTED_PATH]", val)
+                val = _PATH_RE.sub(r"\1[REDACTED_PATH]", val)
                 val = _KEY_RE.sub("[REDACTED_KEY]", val)
+                val = _GENERIC_SECRET_RE.sub(r"\1\2\1\3\4[REDACTED_SECRET]\4", val)
                 return val
             if isinstance(val, dict):
-                return {k: _do_sanitize(v) for k, v in val.items()}
+                # Redact values for sensitive keys, but preserve numbers for metrics utility.
+                out = {}
+                for k, v in val.items():
+                    ks = str(k).lower()
+                    if any(s in ks for s in ("password", "secret", "token", "apikey", "api_key")) and not isinstance(v, (int, float)):
+                        out[k] = "[REDACTED_VALUE]"
+                    else:
+                        out[k] = _do_sanitize(v)
+                return out
             if isinstance(val, list):
                 return [_do_sanitize(i) for i in val]
+            if isinstance(val, tuple):
+                return tuple(_do_sanitize(i) for i in val)
             return val
 
         return _do_sanitize(data)
@@ -187,7 +218,9 @@ class TelemetrySession:
 
         date_str = datetime.now().strftime("%Y-%m-%d")
         debug_log_path = _DEBUG_LOG_DIR / f"braindrain_debug_report_{date_str}.md"
-        debug_log_path.parent.mkdir(parents=True, exist_ok=True)
+        if not self._logs_ensured:
+            debug_log_path.parent.mkdir(parents=True, exist_ok=True)
+            self._logs_ensured = True
 
         header_exists = debug_log_path.exists()
         with open(debug_log_path, "a", encoding="utf-8") as f:
