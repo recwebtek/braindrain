@@ -428,43 +428,53 @@ class WikiBrain:
         return None
 
     def decay_records(self, *, now: float | None = None) -> dict[str, Any]:
+        """
+        Apply importance decay to all active records in a single bulk operation.
+        Uses SQLite's POWER function for efficient batch calculation.
+        """
         current = now or time.time()
-        updated = 0
+        if self.decay_half_life_days <= 0:
+            # If no decay set, just update the timestamp for active records
+            with self._connect() as conn:
+                res = conn.execute(
+                    "UPDATE brain_records SET updated_at = ? WHERE status = 'active'",
+                    (current,),
+                )
+                return {"updated_records": res.rowcount}
+
+        # delta_days = (now - anchor) / 86400.0
+        # decayed = importance * pow(0.5, delta_days / half_life)
         with self._connect() as conn:
-            rows = conn.execute(
+            res = conn.execute(
                 """
-                SELECT record_id, importance, updated_at, created_at
-                FROM brain_records
+                UPDATE brain_records
+                SET
+                    importance = importance * POWER(0.5, ((? - COALESCE(NULLIF(updated_at, 0), created_at)) / 86400.0) / ?),
+                    updated_at = ?
                 WHERE status = 'active'
-                """
-            ).fetchall()
-            for row in rows:
-                anchor = float(row["updated_at"] or row["created_at"])
-                decayed = float(row["importance"]) * self._half_life(
-                    anchor, current, self.decay_half_life_days
-                )
-                conn.execute(
-                    "UPDATE brain_records SET importance = ?, updated_at = ? WHERE record_id = ?",
-                    (decayed, current, row["record_id"]),
-                )
-                updated += 1
+                """,
+                (current, self.decay_half_life_days, current),
+            )
+            updated = res.rowcount
+
         return {"updated_records": updated}
 
     def forget_below_threshold(self) -> dict[str, Any]:
+        """
+        Move records with importance below threshold to 'forgotten' status.
+        Optimized using a single UPDATE ... RETURNING statement.
+        """
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT record_id FROM brain_records
+                UPDATE brain_records
+                SET status = 'forgotten'
                 WHERE importance < ? AND status = 'active'
+                RETURNING record_id
                 """,
                 (self.prune_threshold,),
             ).fetchall()
             ids = [row["record_id"] for row in rows]
-            if ids:
-                conn.executemany(
-                    "UPDATE brain_records SET status = 'forgotten' WHERE record_id = ?",
-                    [(record_id,) for record_id in ids],
-                )
         return {"forgotten_records": ids}
 
     def record_metric(
