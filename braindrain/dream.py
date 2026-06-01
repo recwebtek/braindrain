@@ -109,12 +109,45 @@ class DreamEngine:
         self.daily_dir = self.storage_dir / "daily"
         self.daily_dir.mkdir(parents=True, exist_ok=True)
 
-    def run(self, *, mode: str = "full", force: bool = False) -> dict[str, Any]:
+    def _weight(self, key: str, default: float) -> float:
+        """Resolve scoring weight from nested config or legacy dotted keys."""
+        weights = self.config.get("weights")
+        if isinstance(weights, dict) and key in weights:
+            return float(weights[key] or default)
+        dotted = self.config.get(f"weights.{key}")
+        if dotted is not None:
+            return float(dotted or default)
+        return default
+
+    def _scoring_weights(self) -> dict[str, float]:
+        return {
+            "frequency": self._weight("frequency", 0.24),
+            "relevance": self._weight("relevance", 0.30),
+            "query_diversity": self._weight("query_diversity", 0.15),
+            "recency": self._weight("recency", 0.15),
+            "consolidation": self._weight("consolidation", 0.10),
+            "conceptual_richness": self._weight("conceptual_richness", 0.06),
+        }
+
+    def run(
+        self,
+        *,
+        mode: str = "full",
+        force: bool = False,
+        trigger: str = "manual",
+    ) -> dict[str, Any]:
         quiet_minutes = int(self.config.get("quiet_minutes", 30) or 30)
-        if not force and mode == "full" and not self.session_store.should_dream(quiet_minutes=quiet_minutes):
+        bypass_quiet = bool(self.config.get("bypass_session_quiet", False))
+        skip_quiet_gate = force or (trigger == "host_idle" and bypass_quiet)
+        if (
+            not skip_quiet_gate
+            and mode == "full"
+            and not self.session_store.should_dream(quiet_minutes=quiet_minutes)
+        ):
             return {
                 "status": "skipped_active_session",
                 "quiet_minutes": quiet_minutes,
+                "trigger": trigger,
             }
 
         episodes = self.session_store.list_episodes(limit=int(self.config.get("max_episode_scan", 50) or 50))
@@ -171,14 +204,7 @@ class DreamEngine:
             f"event:{event.session_id}:{event.event_type}:{int(event.timestamp)}"
             for event in recent_events[:25]
         )
-        scoring_weights = {
-            "frequency": float(self.config.get("weights.frequency", 0.24) or 0.24),
-            "relevance": float(self.config.get("weights.relevance", 0.30) or 0.30),
-            "query_diversity": float(self.config.get("weights.query_diversity", 0.15) or 0.15),
-            "recency": float(self.config.get("weights.recency", 0.15) or 0.15),
-            "consolidation": float(self.config.get("weights.consolidation", 0.10) or 0.10),
-            "conceptual_richness": float(self.config.get("weights.conceptual_richness", 0.06) or 0.06),
-        }
+        scoring_weights = self._scoring_weights()
         base = {
             "mode": mode,
             "source_handles": source_handles,
@@ -291,14 +317,7 @@ class DreamEngine:
         }
 
     def _deep_phase(self, candidates: list[DreamCandidate]) -> dict[str, Any]:
-        weights = {
-            "frequency": float(self.config.get("weights.frequency", 0.24) or 0.24),
-            "relevance": float(self.config.get("weights.relevance", 0.30) or 0.30),
-            "query_diversity": float(self.config.get("weights.query_diversity", 0.15) or 0.15),
-            "recency": float(self.config.get("weights.recency", 0.15) or 0.15),
-            "consolidation": float(self.config.get("weights.consolidation", 0.10) or 0.10),
-            "conceptual_richness": float(self.config.get("weights.conceptual_richness", 0.06) or 0.06),
-        }
+        weights = self._scoring_weights()
         min_score = float(self.config.get("deep.min_score", 0.4) or 0.4)
         min_recall = int(self.config.get("deep.min_recall_count", 2) or 2)
         min_queries = int(self.config.get("deep.min_unique_queries", 2) or 2)

@@ -343,7 +343,13 @@ dreaming:
   deep: {}
   storage:
     base_dir: ~/.braindrain/dreaming
-  # NOTE: weights are NOT wired here — dream.py reads dotted keys against a flat dict (follow-up fix).
+  weights:
+    frequency: 0.24
+    relevance: 0.30
+    query_diversity: 0.15
+    recency: 0.15
+    consolidation: 0.10
+    conceptual_richness: 0.06
 
 # ─── PROVIDER CONTEXT BOUNDARY ─────────────────────────────────
 provider_context:
