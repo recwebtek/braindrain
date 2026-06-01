@@ -335,6 +335,47 @@ def test_master_mirror_shows_pr_column(tmp_project_dir: Path) -> None:
     assert "[#1 merged]" in mirror
 
 
+def test_stale_frontmatter_loses_to_git_local_branch_with_pr(
+    tmp_project_dir: Path,
+) -> None:
+    m = _load_audit_module()
+    _git_init_with_branch(tmp_project_dir, "memory-config-wiring")
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    plan_path = plans / "memory_config_wiring_8d447816.plan.md"
+    plan_path.write_text(
+        "---\n"
+        "branch: feature/memory-config-wiring-replaces-memory-les\n"
+        "disposition: active\n"
+        "owner: @ettienne\n"
+        "---\n"
+        "# Memory Config Wiring\n"
+        "- [ ] todo\n",
+        encoding="utf-8",
+    )
+    item = m.PlanItem(
+        item="todo",
+        source=".cursor/plans/memory_config_wiring_8d447816.plan.md",
+        status="Outstanding",
+        confidence="high",
+        evidence=[".cursor/plans/memory_config_wiring_8d447816.plan.md#item"],
+        why="test",
+        tokens={"todo"},
+    )
+    cards = m.build_cards_index(tmp_project_dir, [plan_path], [item], default_owner="@ettienne")
+
+    def fake_gh(_root: Path, branch: str) -> list[dict[str, object]] | None:
+        if branch == "memory-config-wiring":
+            return [{"number": 102, "state": "OPEN", "url": "https://github.com/o/r/pull/102"}]
+        return []
+
+    m.apply_pr_resolution(cards, tmp_project_dir, gh_runner=fake_gh)
+    card = cards[".cursor/plans/memory_config_wiring_8d447816.plan.md"]
+    assert card.branch == "memory-config-wiring"
+    assert card.branch_source == "git_local"
+    assert "[#102 open]" in card.pr
+
+
 def test_bootstrap_branches_writes_git_local_match(tmp_project_dir: Path) -> None:
     m = _load_audit_module()
     _git_init_with_branch(tmp_project_dir, "feature/boot-plan")
@@ -355,10 +396,48 @@ def test_bootstrap_branches_writes_git_local_match(tmp_project_dir: Path) -> Non
         tokens={"todo"},
     )
     cards = m.build_cards_index(tmp_project_dir, [plan_path], [item], default_owner="@ettienne")
+    m.apply_pr_resolution(cards, tmp_project_dir, gh_runner=lambda _r, _b: [])
     updated = m.bootstrap_plan_branches_from_git_local(tmp_project_dir, cards)
     assert updated == [".cursor/plans/boot.plan.md"]
     text = plan_path.read_text(encoding="utf-8")
     assert "branch: feature/boot-plan" in text
+
+
+def test_bootstrap_corrects_stale_frontmatter_branch(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    _git_init_with_branch(tmp_project_dir, "memory-config-wiring")
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    plan_path = plans / "memory_config_wiring_8d447816.plan.md"
+    plan_path.write_text(
+        "---\n"
+        "branch: feature/memory-config-wiring-replaces-memory-les\n"
+        "disposition: active\n"
+        "owner: @ettienne\n"
+        "---\n"
+        "# Memory Config Wiring\n",
+        encoding="utf-8",
+    )
+    item = m.PlanItem(
+        item="x",
+        source=".cursor/plans/memory_config_wiring_8d447816.plan.md",
+        status="Outstanding",
+        confidence="high",
+        evidence=[".cursor/plans/memory_config_wiring_8d447816.plan.md#item"],
+        why="test",
+        tokens={"x"},
+    )
+    cards = m.build_cards_index(tmp_project_dir, [plan_path], [item], default_owner="@ettienne")
+
+    def fake_gh(_root: Path, branch: str) -> list[dict[str, object]] | None:
+        if branch == "memory-config-wiring":
+            return [{"number": 102, "state": "OPEN", "url": "https://example.com/pr/102"}]
+        return []
+
+    m.apply_pr_resolution(cards, tmp_project_dir, gh_runner=fake_gh)
+    updated = m.bootstrap_plan_branches_from_git_local(tmp_project_dir, cards)
+    assert updated == [".cursor/plans/memory_config_wiring_8d447816.plan.md"]
+    assert "branch: memory-config-wiring" in plan_path.read_text(encoding="utf-8")
 
 
 def test_ensure_plan_branches_creates_ref_and_frontmatter(tmp_project_dir: Path) -> None:

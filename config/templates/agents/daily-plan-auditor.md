@@ -59,10 +59,11 @@ Return JSON only:
 ## Rules
 
 - Prefer the generated reports under `.braindrain/plan-reports/` over re-deriving scores in chat.
-- Resolve plan branch mapping with hybrid precedence: plan frontmatter `branch:` -> gitops queue (`planSource` exact match, then fuzzy) -> gitops memory -> local git slug match (`git_local`) -> `—`.
-- Populate PR column via `gh pr list --head <branch>` when `gh` is available; show `none` when no PR exists; `—` when gh is unavailable.
+- **Branch + PR reconciliation (required):** never trust plan frontmatter `branch:` alone. The auditor collects candidates from frontmatter, gitops queue/memory, and `git_local` fuzzy match, then scores them with **local/remote ref existence** and **`gh pr list --head <branch>`** (open PR wins over stale synthetic slugs). If frontmatter names a branch that does not exist locally and has no PR, but `git_local` finds `memory-config-wiring`-style user branches with an open PR, use the git branch.
+- After reconciliation, **persist** corrected `branch:` into plan frontmatter for `active` / `merge-ready` plans when the resolved branch differs and either a PR exists or the ref exists in git.
+- Populate PR column from the **reconciled** branch; if lookup is `none`, retry fuzzy `git_local` candidates before reporting `none`.
 - When a plan is resolved from gitops context and `branch:` is missing, persist that `branch:` into plan frontmatter during the run.
-- Optional `--bootstrap-branches` writes `branch:` from high-confidence `git_local` matches for `active` / `merge-ready` plans only.
+- Flag plans whose opening **Problem Summary** contradict completed todos or shipped code as **stale narrative**; recommend `disposition: archived` or a replan file — do not surface stale prose as IMPLEMENT work.
 - Replan work: prefer a **new** plan file and link supersession in `_master.plan.md` rather than silently overwriting history (see coordinator / architect guidance).
 - Research-heavy follow-ups: delegate to the `research` subagent, then fold findings back into the parent plan.
 - Ensure plan/report frontmatter contains model provenance fields:
