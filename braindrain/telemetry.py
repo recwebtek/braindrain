@@ -61,10 +61,16 @@ def estimate_claude_tokens(text: str) -> int:
 
 # Regex patterns for redaction (pre-compiled for performance)
 # Paths: /Users/..., /Volumes/..., /home/..., /root/...
-_PATH_RE = re.compile(r"(/Users/[^\s'\"]+|/Volumes/[^\s'\"]+|/home/[^\s'\"]+|/root/[^\s'\"]+)")
-# API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_), Google AI (AIza)
+_PATH_RE = re.compile(r"(/Users/|/Volumes/|/home/|/root/)([^\s'\",;\n\t:]+)")
+# API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_), Google AI (AIza), AWS, Slack
 _KEY_RE = re.compile(
-    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,})"
+    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,}|A[KS]IA[A-Z0-9]{16}|xox[bparc]-[a-zA-Z0-9-]{12,})",
+    re.IGNORECASE,
+)
+# Generic secrets in JSON or env format: "password": "...", PASSWORD=...
+_GENERIC_SECRET_RE = re.compile(
+    r"(['\"]?)([a-zA-Z0-9_-]*(?:password|secret|token|apikey|api_key|pass))\1(\s*[:=]\s*)(['\"]?)([^\s'\",;]+)\4",
+    re.IGNORECASE,
 )
 
 # Machine-local debug reports (under .braindrain/, never committed).
@@ -127,22 +133,57 @@ class TelemetrySession:
             if isinstance(val, str):
                 # Optimization: skip regex overhead if the string has no characters indicating
                 # a potential sensitive path or API key. ~3.5x speedup for clean strings.
+                lower_val = val.lower()
                 if (
                     "/" not in val
-                    and "sk-" not in val
-                    and "gsk_" not in val
-                    and "hf_" not in val
-                    and "AIza" not in val
+                    and "sk-" not in lower_val
+                    and "akia" not in lower_val
+                    and "asia" not in lower_val
+                    and "xox" not in lower_val
+                    and "gsk_" not in lower_val
+                    and "hf_" not in lower_val
+                    and "aiza" not in lower_val
+                    and "password" not in lower_val
+                    and "secret" not in lower_val
+                    and "token" not in lower_val
+                    and "apikey" not in lower_val
+                    and "api_key" not in lower_val
+                    and "pass" not in lower_val
                 ):
                     return val
 
-                val = _PATH_RE.sub("[REDACTED_PATH]", val)
+                val = _PATH_RE.sub(r"\1[REDACTED_PATH]", val)
                 val = _KEY_RE.sub("[REDACTED_KEY]", val)
+                val = _GENERIC_SECRET_RE.sub(r"\1\2\1\3\4[REDACTED_SECRET]\4", val)
+                return val
+            if isinstance(val, (int, float)):
                 return val
             if isinstance(val, dict):
-                return {k: _do_sanitize(v) for k, v in val.items()}
+                sanitized = {}
+                for k, v in val.items():
+                    # If the key itself looks sensitive, redact the value unless it's numeric
+                    if (
+                        isinstance(k, str)
+                        and any(
+                            s in k.lower()
+                            for s in [
+                                "password",
+                                "secret",
+                                "token",
+                                "apikey",
+                                "api_key",
+                            ]
+                        )
+                        and not isinstance(v, (int, float))
+                    ):
+                        sanitized[k] = "[REDACTED_VALUE]"
+                    else:
+                        sanitized[k] = _do_sanitize(v)
+                return sanitized
             if isinstance(val, list):
                 return [_do_sanitize(i) for i in val]
+            if isinstance(val, tuple):
+                return tuple(_do_sanitize(i) for i in val)
             return val
 
         return _do_sanitize(data)
