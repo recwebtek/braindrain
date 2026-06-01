@@ -28,7 +28,7 @@ modules:
     enabled: true # Phase 3: Workflow engine
 
   context_database:
-    enabled: false # Deferred - custom L0/L1/L2 to come
+    enabled: false # Deferred custom DB module; L0–L3 ship natively (observer/sessions/wiki_brain/dreaming)
 
   env_context:
     enabled: true
