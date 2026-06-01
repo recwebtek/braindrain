@@ -27,7 +27,7 @@ For each stage:
    - `[GITOPS]` → delegate to `gitops` subagent
    - `[TESTOPS]` → delegate to `testops` subagent (after build tasks)
    - `[RESEARCH]` → delegate to `research` subagent
-   - `[PLAN AUDIT]` → delegate to `daily-plan-auditor` subagent (after planning sessions or TASK-GRAPH plan churn)
+   - `[PLAN AUDIT]` → delegate to `daily-plan-auditor` subagent (after planning sessions or TASK-GRAPH plan churn; uses primed `scripts/daily_plan_audit.py` to reconcile plan `branch:` with git/gh and refresh `.braindrain/plan-reports/`)
    - `[SCRIPTLIB]` → delegate to `librarian` subagent
    - `[EMBED]` → delegate to `embedding` subagent
    - `[BUILD]` → handle directly or delegate to `toolcall` subagent

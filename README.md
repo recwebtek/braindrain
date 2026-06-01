@@ -528,7 +528,7 @@ braindrain/
   - `.cursor/agents/` when Cursor is in the resolved agent set, and
   - `.codex/agents/` when Codex is in the resolved agent set (same files; IDE-specific layout only).
   Skills deploy from `config/templates/cursor-skills/<id>/` → `.cursor/skills/<id>/` for each id in the active bundle `skills:` list (e.g. `cursor-orchestration`: coordinator, gitops, scriptlib-librarian). See `docs/skill-braindrain-hub-pr.md`.
-  Operational scripts (`daily_plan_audit`, `plan_build_guard`, `plan_branch_utils`) copy from hub `scripts/` → project `scripts/` per bundle `operational_scripts`.
+  Operational scripts (`daily_plan_audit`, `plan_build_guard`, `plan_branch_utils`) copy from hub `scripts/` → project `scripts/` per bundle `operational_scripts`. Re-prime upgrades them when the hub revision changes (content-hash marker), so plan branch/PR reconciliation reaches consumer workspaces without tracking `*.plan.md` in git.
   Existing files are create-only by default; set `sync_subagents=true` to update with backups. `.cursor/` is gitignored at repo root; do not commit generated agent/skill files—edit templates and re-run `prime_workspace`.
 - **Codex config merge**: `prime_workspace()` appends/updates a managed `BRAINDRAIN SUBAGENTS` block in `.codex/config.toml` only when allowed by policy (`sync_subagents=true` for existing files). Existing MCP server entries remain intact.
 - **Project memory artifacts**: initialized by `prime_workspace()` (or `init_project_memory()`) and kept separate from generated protocol files:

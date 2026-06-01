@@ -317,6 +317,33 @@ def test_deploy_operational_scripts_and_skills(tmp_project_dir: Path) -> None:
     assert (tmp_project_dir / "scripts" / "plan_branch_utils.py").is_file()
     assert (tmp_project_dir / "scripts" / "plan_build_guard.py").is_file()
     assert any(v.get("action") == "created" for v in scripts.values())
+    audit_text = (tmp_project_dir / "scripts" / "daily_plan_audit.py").read_text(encoding="utf-8")
+    assert "braindrain-script: daily_plan_audit.py sha256=" in audit_text
+
+
+def test_deploy_operational_scripts_upgrades_hub_revision(tmp_project_dir: Path) -> None:
+    from braindrain.workspace_primer import (
+        _SCRIPT_MARKER_PREFIX,
+        _stamp_script_marker,
+        deploy_operational_scripts,
+    )
+
+    bundle = _resolve_bundle_manifest("cursor-orchestration")
+    scripts_dir = tmp_project_dir / "scripts"
+    scripts_dir.mkdir(parents=True)
+    rel = "plan_branch_utils.py"
+    dst = scripts_dir / rel
+    stale_body = "# stale consumer copy\n"
+    stamped_stale = _stamp_script_marker(stale_body, rel)
+    dst.write_text(stamped_stale, encoding="utf-8")
+
+    result = deploy_operational_scripts(tmp_project_dir, bundle, sync_templates=False, dry_run=False)
+    key = f"scripts/{rel}"
+    assert result[key]["action"] == "updated"
+    assert result[key].get("classification") == "hub_revision"
+    deployed = dst.read_text(encoding="utf-8")
+    assert _SCRIPT_MARKER_PREFIX in deployed
+    assert "stale consumer copy" not in deployed
     skill_ids = [str(s) for s in bundle.get("skills", []) if str(s).strip()]
     skills = deploy_cursor_skill_templates(
         tmp_project_dir, skill_ids, sync_templates=False, dry_run=False
