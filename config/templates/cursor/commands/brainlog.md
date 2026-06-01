@@ -87,7 +87,7 @@ get_dream_status()
 ```
 
 - If the user wants consolidation **now** and quiet-window policy allows: `run_dream(mode="full", force=false)` (use `force=true` only when the user explicitly requests it).
-- Otherwise: tell the user dream runs after `dreaming.quiet_minutes` (default 30) of inactivity or via `scripts/run_dream_cron.sh` — do not block on dream completion.
+- Otherwise: tell the user dream runs after `dreaming.quiet_minutes` (default 30) of session inactivity, via `scripts/run_dream_cron.sh`, or on macOS after host HID idle when `dreaming.triggers.macos_host_idle.enabled: true` **and** `./scripts/install_dream_watch_launchd.sh` was run for this workspace — do not block on dream completion.
 
 ## Step 6 — Project markdown (manual, required when ops facts changed)
 

@@ -419,10 +419,30 @@ Main config: `config/hub_config.yaml`
 - `sessions` — session store + inactivity compaction (`~/.braindrain/sessions.db`)
 - `wiki_brain` — durable recall/forgetting weights (`~/.braindrain/wiki-brain/brain.db`)
 - `lessons` / `memory_learning` — promotion guardrails for facts and playbooks
-- `dreaming` — consolidation policy (`quiet_minutes`, scan limits, `storage.base_dir`)
+- `dreaming` — consolidation policy (`quiet_minutes`, scan limits, `storage.base_dir`, `weights`, `triggers.macos_host_idle`)
 - `provider_context` — strategy for vendor-native vs Braindrain durable memory (`provider-native-first`)
 
 Restart the braindrain MCP server after changing these blocks. Machine-local ops detail: `.braindrain/OPS.md` (memory stack table).
+
+### Host-idle dream (macOS, manual opt-in)
+
+Two-step enablement (config alone does **not** install or start a watcher):
+
+1. **Install watcher for this workspace** (once per repo): `./scripts/install_dream_watch_launchd.sh`
+2. **Enable in this workspace config**: `dreaming.triggers.macos_host_idle.enabled: true` in `config/hub_config.yaml`
+
+The watcher polls HID keyboard/mouse idle time (`IOHIDSystem`). When idle exceeds `idle_threshold_seconds`, it runs consolidation using `mode` (default `full`). Shared memory DBs stay under `~/.braindrain/`; per-workspace state lives under `~/.braindrain/dreaming/workspaces/<workspace_hash>/`.
+
+| Knob | Default | Purpose |
+| --- | --- | --- |
+| `idle_threshold_seconds` | 300 | Host idle before dream is considered |
+| `poll_interval_seconds` | 120 | launchd poll interval (install script reads this) |
+| `cooldown_minutes` | 60 | Minimum gap between host-idle dream runs |
+| `bypass_session_quiet` | true | When true, host idle can dream even if a Cursor session was active recently |
+| `mode` | full | Dream mode passed to `DreamEngine.run` |
+
+Manual one-shot (no launchd): `./scripts/macos_dream_watch.sh`  
+Legacy cron path still works: `scripts/run_dream_cron.sh`
 
 Environment variables (copy `.env.example` to `.env.dev` to start):
 
@@ -498,7 +518,8 @@ braindrain/
 │   ├── hub_config.yaml         # tools, workflows, model tiers, embeddings
 │   ├── braindrain              # launcher script (self-detecting, venv-pinned)
 │   ├── opencode_mcp.jsonc      # OpenCode reference config
-│   └── com.braindrain.mcp.plist  # macOS launchd service template
+│   ├── com.braindrain.mcp.plist  # macOS launchd service template
+│   └── com.braindrain.dream-watch.plist  # macOS host-idle dream watcher template
 ├── AGENTS.md                   # agent protocol — generated per device by install.sh
 ├── AGENTS.md.template          # template used to generate AGENTS.md
 ├── VERSION                     # semver for releases (kept in sync with this README)
@@ -573,6 +594,7 @@ Implemented now (runtime behavior in this repo):
     - `.cursor/hooks/on-stop-gitops.sh`
     - `.cursor/hooks/on-stop-daily-plan-audit.sh`
     - `scripts/run_dream_cron.sh`
+    - `scripts/macos_dream_watch.sh` + `scripts/install_dream_watch_launchd.sh` (macOS host-idle, opt-in)
 
 Memory artifacts and paths:
 
