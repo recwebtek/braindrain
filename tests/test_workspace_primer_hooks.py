@@ -18,11 +18,13 @@ import pytest
 
 from braindrain.workspace_primer import (
     MAX_ROLLBACK_SNAPSHOTS,
+    CURSOR_COMMANDS_TEMPLATES_DIR,
     CURSOR_HOOK_TEMPLATES_DIR,
     CURSOR_SKILL_TEMPLATES_DIR,
     _resolve_bundle_manifest,
     compact_prime_result_for_mcp,
     create_prime_snapshot,
+    deploy_cursor_commands,
     deploy_cursor_hook_templates,
     deploy_cursor_skill_templates,
     deploy_operational_scripts,
@@ -78,6 +80,30 @@ def test_cursor_hook_templates_exist_in_repo() -> None:
     assert (hooks / "on-stop-daily-plan-audit.sh").is_file()
     assert (hooks / "on-stop-gitops.sh").is_file()
     assert (hooks / "on-stop-observe.sh").is_file()
+
+
+def test_brainlog_command_template_exists() -> None:
+    cmd = CURSOR_COMMANDS_TEMPLATES_DIR / "brainlog.md"
+    assert cmd.is_file()
+    text = cmd.read_text(encoding="utf-8")
+    assert "touch_session" in text
+    assert "end_session=true" in text
+    assert "evaluate_memory_candidate" in text
+    assert "run_dream" in text
+
+
+def test_deploy_cursor_commands_writes_brainlog(tmp_project_dir: Path) -> None:
+    out = deploy_cursor_commands(tmp_project_dir, sync_templates=False, dry_run=False)
+    dst = tmp_project_dir / ".cursor" / "commands" / "brainlog.md"
+    assert dst.is_file()
+    assert out["commands/brainlog.md"]["action"] == "created"
+    assert "brainlog" in dst.read_text(encoding="utf-8").lower()
+
+
+def test_deploy_cursor_commands_skips_existing_without_sync(tmp_project_dir: Path) -> None:
+    deploy_cursor_commands(tmp_project_dir, sync_templates=False, dry_run=False)
+    out2 = deploy_cursor_commands(tmp_project_dir, sync_templates=False, dry_run=False)
+    assert out2["commands/brainlog.md"]["action"] == "skipped_existing"
 
 
 

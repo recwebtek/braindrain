@@ -127,7 +127,15 @@ Set `embeddings.default_provider` (default: `lmstudio_local`). Programmatic help
 | `run_workflow(name, args)`                               | Execute a workflow. Intermediate output is routed through the sandbox — only the final summary returns to the agent.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 
-`list_workflows()` includes `init_project_memory` and **`prime_cursor_orchestration`** (calls `prime_workspace` with `bundle=cursor-orchestration` — deploys agents, hooks, skills, `scripts/daily_plan_audit.py`, and `scripts/plan_build_guard.py`). Consumer slash command: `/prime-braindrain` (from templates). Plan Build: run `python3 scripts/plan_build_guard.py --plan <path>` before edits (see Ruler `RULES.md`).
+`list_workflows()` includes `init_project_memory` and **`prime_cursor_orchestration`** (calls `prime_workspace` with `bundle=cursor-orchestration` — deploys agents, hooks, skills, `scripts/daily_plan_audit.py`, and `scripts/plan_build_guard.py`). Consumer slash commands (from `config/templates/cursor/commands/`, installed by `prime_workspace` into `.cursor/commands/`):
+
+| Command | When to use |
+| ------- | ----------- |
+| `/prime-braindrain` | Onboard or refresh Cursor orchestration (rules, hooks, skills, auditor scripts). |
+| `/brainlog` | **End of chat** — finalize L1 session compaction, token checkpoint, optional L2 wiki-brain promotion, L3 dream guidance, and reminders to update `.braindrain/AGENT_MEMORY.md` / `OPS.md` / `SESSION_PROGRESS.md`. |
+| `/masterplan` | Manual planning close-out (`daily_plan_audit.py`); use after editing `*.plan.md`, not as a substitute for `/brainlog`. |
+
+Plan Build: run `python3 scripts/plan_build_guard.py --plan <path>` before edits (see Ruler `RULES.md`).
 
 ### Telemetry
 
@@ -509,6 +517,7 @@ braindrain/
   - Source-of-truth for those generated rule files is `config/templates/ruler/RULES.md` (and `.ruler/ruler.toml`).
   - **Important**: files like `CLAUDE.md` are **generated artifacts** (gitignored) and should be treated as **disposable**. Edit the templates instead, then re-run Ruler.
   - If a project already has older `.ruler/*` files, call `prime_workspace(..., sync_templates=true)` to refresh those templates safely and propagate new guidance without manual cleanup.
+- **Cursor slash commands**: when Cursor is in scope, `prime_workspace()` copies `config/templates/cursor/commands/*.md` → `.cursor/commands/` (create-only by default; `sync_templates=true` refreshes with backups). Shipped commands include `/prime-braindrain`, `/brainlog`, and `/build-plan` (see table under Workflows).
 - **Cursor hooks (not Ruler)**: when the resolved agent set includes Cursor, `prime_workspace()` copies `config/templates/cursor/hooks.json` and `config/templates/cursor/hooks/*.sh` into `.cursor/` (create-only by default; `sync_templates=true` overwrites with timestamped backups). Hook templates currently include:
   - `.cursor/hooks/on-stop-observe.sh` (lightweight stop-event observation)
   - `.cursor/hooks/on-stop-gitops.sh` (TASK-GRAPH branch queueing)
