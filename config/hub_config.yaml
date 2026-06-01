@@ -350,6 +350,14 @@ dreaming:
     recency: 0.15
     consolidation: 0.10
     conceptual_richness: 0.06
+  triggers:
+    macos_host_idle:
+      enabled: false # manual opt-in; does not install/start launchd watcher
+      mode: full
+      idle_threshold_seconds: 300
+      poll_interval_seconds: 120
+      bypass_session_quiet: true
+      cooldown_minutes: 60
 
 # ─── PROVIDER CONTEXT BOUNDARY ─────────────────────────────────
 provider_context:
