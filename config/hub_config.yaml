@@ -298,6 +298,57 @@ observer:
   wrap_all_tools: true
   hash_args: true
 
+# ─── MEMORY PROMOTION GUARDRAILS ───────────────────────────────
+memory_learning:
+  promotion:
+    reject_secrets: true
+    reject_transient_state: true
+    require_repeat_observation: 1
+    require_grounded_evidence: false
+    min_confidence: 0.0
+    # transient_markers default: [today, just now, temporary, debug only]
+
+# ─── SESSIONS (L1 telemetry + compaction) ──────────────────────
+sessions:
+  storage_path: ~/.braindrain/sessions.db
+  inactivity_timeout_minutes: 30
+
+# ─── WIKI-BRAIN (L2 durable semantic/procedural/lesson store) ──
+wiki_brain:
+  storage_path: ~/.braindrain/wiki-brain/brain.db
+  recall:
+    similarity_weight: 0.5
+    recency_weight: 0.3
+    importance_weight: 0.2
+    recency_half_life_days: 30.0
+  forgetting:
+    decay_half_life_days: 90.0
+    prune_threshold: 0.05
+    consolidation_similarity: 0.92
+
+# ─── LESSONS (critique-backed playbook promotion) ──────────────
+lessons:
+  promotion:
+    require_grounded_evidence: true # evaluate_lesson_candidate forces this on
+    min_confidence: 0.0
+
+# ─── DREAMING (L3 consolidation) ───────────────────────────────
+dreaming:
+  policy_version: memory-lessons-v1
+  quiet_minutes: 30
+  lookback_hours: 72
+  max_episode_scan: 50
+  max_event_scan: 250
+  max_session_scan: 20
+  deep: {}
+  storage:
+    base_dir: ~/.braindrain/dreaming
+  # NOTE: weights are NOT wired here — dream.py reads dotted keys against a flat dict (follow-up fix).
+
+# ─── PROVIDER CONTEXT BOUNDARY ─────────────────────────────────
+provider_context:
+  strategy: provider-native-first
+
 # ─── COST TRACKING ─────────────────────────────────────────────
 cost_tracking:
   enabled: true
