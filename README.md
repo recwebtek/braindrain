@@ -405,6 +405,17 @@ cd braindrain && git pull && .venv/bin/pip install -r requirements.txt
 
 Main config: `config/hub_config.yaml`
 
+**Memory stack (L0–L3)** — explicit sections in `hub_config.yaml` (defaults match server fallbacks):
+
+- `observer` — episodic tool-call ring buffer (`~/.braindrain/events.db`)
+- `sessions` — session store + inactivity compaction (`~/.braindrain/sessions.db`)
+- `wiki_brain` — durable recall/forgetting weights (`~/.braindrain/wiki-brain/brain.db`)
+- `lessons` / `memory_learning` — promotion guardrails for facts and playbooks
+- `dreaming` — consolidation policy (`quiet_minutes`, scan limits, `storage.base_dir`)
+- `provider_context` — strategy for vendor-native vs Braindrain durable memory (`provider-native-first`)
+
+Restart the braindrain MCP server after changing these blocks. Machine-local ops detail: `.braindrain/OPS.md` (memory stack table).
+
 Environment variables (copy `.env.example` to `.env.dev` to start):
 
 
