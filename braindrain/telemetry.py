@@ -61,10 +61,16 @@ def estimate_claude_tokens(text: str) -> int:
 
 # Regex patterns for redaction (pre-compiled for performance)
 # Paths: /Users/..., /Volumes/..., /home/..., /root/...
-_PATH_RE = re.compile(r"(/Users/[^\s'\"]+|/Volumes/[^\s'\"]+|/home/[^\s'\"]+|/root/[^\s'\"]+)")
-# API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_), Google AI (AIza)
+_PATH_RE = re.compile(r"(/Users/|/Volumes/|/home/|/root/)([^\s'\",;]+)")
+# API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_), Google AI (AIza), AWS (AKIA/ASIA), Slack (xoxb/p/etc)
 _KEY_RE = re.compile(
-    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,})"
+    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,}|A[KS]IA[A-Z0-9]{16}|xox[bparc]-[a-zA-Z0-9-]{12,})",
+    re.IGNORECASE,
+)
+# Generic secret assignment: "password": "...", password=...
+_GENERIC_SECRET_RE = re.compile(
+    r"((['\"]?)[a-zA-Z0-9_-]*(?:password|secret|token|apikey|api_key|pass)\b\2)(\s*[:=]\s*)((['\"]?))[^\s'\",;]+(\5)",
+    re.IGNORECASE,
 )
 
 # Machine-local debug reports (under .braindrain/, never committed).
@@ -123,26 +129,54 @@ class TelemetrySession:
     def _sanitize_data(self, data: Any) -> Any:
         """Recursive redaction of sensitive paths and API keys."""
 
-        def _do_sanitize(val: Any) -> Any:
+        def _do_sanitize(val: Any, key: str | None = None) -> Any:
             if isinstance(val, str):
-                # Optimization: skip regex overhead if the string has no characters indicating
-                # a potential sensitive path or API key. ~3.5x speedup for clean strings.
+                # Redact if parent key is sensitive
+                if key and any(
+                    kw in key.lower()
+                    for kw in ["password", "secret", "token", "apikey", "api_key", "pass"]
+                ):
+                    # Bypassing for numeric-looking strings (e.g. token counts)
+                    try:
+                        float(val)
+                        return val
+                    except ValueError:
+                        return "[REDACTED_SECRET]"
+
+                # Optimization: skip regex overhead if the string has no sensitive indicators.
+                v_lower = val.lower()
                 if (
                     "/" not in val
-                    and "sk-" not in val
-                    and "gsk_" not in val
-                    and "hf_" not in val
-                    and "AIza" not in val
+                    and "sk-" not in v_lower
+                    and "akia" not in v_lower
+                    and "asia" not in v_lower
+                    and "xox" not in v_lower
+                    and "gsk_" not in v_lower
+                    and "hf_" not in v_lower
+                    and "aiza" not in v_lower
+                    and "password" not in v_lower
+                    and "secret" not in v_lower
+                    and "token" not in v_lower
+                    and "apikey" not in v_lower
+                    and "api_key" not in v_lower
+                    and "pass" not in v_lower
                 ):
                     return val
 
-                val = _PATH_RE.sub("[REDACTED_PATH]", val)
+                val = _PATH_RE.sub(r"\1[REDACTED_PATH]", val)
                 val = _KEY_RE.sub("[REDACTED_KEY]", val)
+                val = _GENERIC_SECRET_RE.sub(r"\1\3\4[REDACTED_SECRET]\5", val)
+                return val
+            if isinstance(val, (int, float, bool)) or val is None:
                 return val
             if isinstance(val, dict):
-                return {k: _do_sanitize(v) for k, v in val.items()}
+                return {
+                    _do_sanitize(k): _do_sanitize(v, key=str(k)) for k, v in val.items()
+                }
             if isinstance(val, list):
                 return [_do_sanitize(i) for i in val]
+            if isinstance(val, tuple):
+                return tuple(_do_sanitize(i) for i in val)
             return val
 
         return _do_sanitize(data)
