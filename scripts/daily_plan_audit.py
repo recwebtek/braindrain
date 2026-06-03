@@ -674,6 +674,266 @@ def relocate_archived_plans(repo_root: Path) -> list[str]:
     return moved_to
 
 
+def plan_archive_rel_path(repo_root: Path, plan_source: str) -> str | None:
+    """Return archive location when a plan was moved under ``.plan.archives/``."""
+    norm = _normalize_plan_source_path(plan_source)
+    parts = norm.split("/")
+    if len(parts) < 3 or parts[1] != "plans":
+        return None
+    archive_rel = "/".join(parts[:-1] + [".plan.archives", parts[-1]])
+    candidate = repo_root / archive_rel
+    return archive_rel if candidate.is_file() else None
+
+
+def resolve_plan_link_path(repo_root: Path, link_rel: str) -> str | None:
+    """Resolve a master/plan markdown link to an on-disk repo-relative path."""
+    norm = _normalize_plan_source_path(link_rel)
+    if (repo_root / norm).is_file():
+        return norm
+    return plan_archive_rel_path(repo_root, norm)
+
+
+def master_archived_metadata_entries(master_doc: dict[str, object] | None) -> set[str]:
+    """Basenames/paths listed in master ``archived_plans`` / ``archive`` metadata."""
+    if not master_doc:
+        return set()
+    fm = master_doc.get("frontmatter") or {}
+    raw = fm.get("archived_plans")
+    if raw is None:
+        raw = fm.get("archive")
+    if isinstance(raw, str):
+        raw = [raw]
+    entries: set[str] = set()
+    if not isinstance(raw, list):
+        return entries
+    for entry in raw:
+        rel = str(entry).strip().strip('"').strip("'")
+        if not rel:
+            continue
+        entries.add(rel)
+        entries.add(Path(rel).name)
+    return entries
+
+
+def rewrite_markdown_plan_links(text: str, old_rel: str, new_rel: str) -> str:
+    """Rewrite markdown links that point at a plan path (rewrite_all)."""
+    old_norm = _normalize_plan_source_path(old_rel)
+    new_norm = _normalize_plan_source_path(new_rel)
+    old_name = Path(old_norm).name
+    new_name = Path(new_norm).name
+    patterns = (
+        (f"]({old_norm})", f"]({new_norm})"),
+        (f"](./{old_norm})", f"]({new_norm})"),
+        (f"]({old_name})", f"]({new_name})"),
+        (f"](/{old_norm})", f"]({new_norm})"),
+    )
+    out = text
+    for old_pat, new_pat in patterns:
+        out = out.replace(old_pat, new_pat)
+    return out
+
+
+def rewrite_plan_links_in_paths(
+    paths: list[Path],
+    old_rel: str,
+    new_rel: str,
+) -> list[str]:
+    """Rewrite plan links inside the given files; return updated paths."""
+    touched: list[str] = []
+    for path in paths:
+        if not path.is_file():
+            continue
+        current = path.read_text(encoding="utf-8", errors="ignore")
+        updated = rewrite_markdown_plan_links(current, old_rel, new_rel)
+        if updated != current:
+            path.write_text(updated, encoding="utf-8")
+            touched.append(path.as_posix())
+    return touched
+
+
+def prune_stale_master_body_links(
+    master_path: Path,
+    repo_root: Path,
+    master_doc: dict[str, object],
+) -> list[str]:
+    """Remove broken plan bullets from master body (metadata-only archives)."""
+    if not master_path.is_file():
+        return []
+    metadata = master_archived_metadata_entries(master_doc)
+    text = master_path.read_text(encoding="utf-8", errors="ignore")
+    fm_match = FRONTMATTER_BLOCK_RE.match(text)
+    fm_block = fm_match.group(0) if fm_match else ""
+    body_lines = text[len(fm_block) :].splitlines()
+    removed: list[str] = []
+    kept: list[str] = []
+    for line in body_lines:
+        drop = False
+        for _label, target in _MD_LINK_RE.findall(line):
+            target = target.strip()
+            if not target.endswith(".plan.md"):
+                continue
+            resolved = resolve_plan_link_path(repo_root, target)
+            if resolved:
+                continue
+            base = Path(_normalize_plan_source_path(target)).name
+            if base in metadata or target in metadata:
+                drop = True
+                removed.append(target)
+                break
+        if not drop:
+            kept.append(line)
+    if not removed:
+        return []
+    master_path.write_text(fm_block + "\n".join(kept).rstrip() + "\n", encoding="utf-8")
+    return removed
+
+
+def _move_master_plan_between_sections(
+    master_path: Path,
+    repo_root: Path,
+    card: "PlanCard",
+    old_rel: str,
+    new_rel: str,
+) -> None:
+    """Move a plan bullet from ``## active`` (or any section) to ``## archived``."""
+    text = master_path.read_text(encoding="utf-8", errors="ignore")
+    fm_match = FRONTMATTER_BLOCK_RE.match(text)
+    fm_block = fm_match.group(0) if fm_match else ""
+    body_lines = text[len(fm_block) :].splitlines()
+    master_dir = master_path.parent
+    new_link = os.path.relpath(
+        (repo_root / new_rel).resolve(),
+        start=master_dir.resolve(),
+    ).replace("\\", "/")
+    old_name = Path(old_rel).name
+    new_lines: list[str] = []
+    for line in body_lines:
+        skip_line = False
+        for _label, target in _MD_LINK_RE.findall(line):
+            t = target.strip()
+            if t.endswith(".plan.md") and (
+                _normalize_plan_source_path(t) == _normalize_plan_source_path(old_rel)
+                or Path(t).name == old_name
+            ):
+                skip_line = True
+                break
+        if not skip_line:
+            new_lines.append(line)
+    bullet = f"- [{card.title}]({new_link}) — DRI: {card.dri}"
+    header = "## archived"
+    insert_at = len(new_lines)
+    for idx, line in enumerate(new_lines):
+        if line.strip().lower() == header:
+            for j in range(idx + 1, len(new_lines)):
+                if new_lines[j].startswith("## "):
+                    insert_at = j
+                    break
+            else:
+                insert_at = len(new_lines)
+            break
+    else:
+        if new_lines and new_lines[-1].strip():
+            new_lines.append("")
+        new_lines.append(header)
+        new_lines.append("")
+        insert_at = len(new_lines)
+    new_lines.insert(insert_at, bullet)
+    master_path.write_text(fm_block + "\n".join(new_lines).rstrip() + "\n", encoding="utf-8")
+
+
+def _append_master_archived_plans_frontmatter(master_path: Path, plan_basename: str) -> None:
+    text = master_path.read_text(encoding="utf-8", errors="ignore")
+    fm = parse_plan_frontmatter(text)
+    raw = fm.get("archived_plans")
+    if raw is None:
+        raw = fm.get("archive")
+    entries: list[str] = []
+    if isinstance(raw, str):
+        entries = [raw]
+    elif isinstance(raw, list):
+        entries = [str(x) for x in raw]
+    if plan_basename not in entries and plan_basename not in [Path(e).name for e in entries]:
+        entries.append(plan_basename)
+    # Rebuild archived_plans as YAML list in frontmatter.
+    match = FRONTMATTER_BLOCK_RE.match(text)
+    if not match:
+        return
+    body = match.group(1).splitlines()
+    new_body: list[str] = []
+    replaced = False
+    for line in body:
+        if line.startswith("archived_plans:") or line.startswith("archive:"):
+            if not replaced:
+                new_body.append("archived_plans:")
+                for entry in entries:
+                    new_body.append(f"  - {entry}")
+                replaced = True
+            continue
+        if replaced and re.match(r"^\s+-\s+", line):
+            continue
+        new_body.append(line)
+    if not replaced:
+        new_body.append("archived_plans:")
+        for entry in entries:
+            new_body.append(f"  - {entry}")
+    new_fm = "---\n" + "\n".join(new_body) + "\n---\n"
+    rest = text[match.end() :]
+    master_path.write_text(new_fm + rest, encoding="utf-8")
+
+
+def apply_archive_plans(
+    repo_root: Path,
+    ready: list[ReadyToArchive],
+    cards_by_source: dict[str, "PlanCard"],
+    *,
+    master_path: Path | None,
+    report_paths: list[Path],
+) -> list[str]:
+    """Archive READY_TO_ARCHIVE plans: move file, frontmatter, master, link rewrite."""
+    archived: list[str] = []
+    for entry in ready:
+        card = cards_by_source.get(entry.plan_source)
+        if not card:
+            continue
+        src_path = repo_root / entry.plan_source
+        if not src_path.is_file():
+            continue
+        plans_dir = src_path.parent
+        archive_dir = plans_dir / ".plan.archives"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        current = src_path.read_text(encoding="utf-8", errors="ignore")
+        updated = _set_frontmatter_key(current, "disposition", "archived")
+        updated = _set_frontmatter_key(updated, "archived", "true")
+        src_path.write_text(updated, encoding="utf-8")
+        dest = archive_dir / src_path.name
+        if dest.exists():
+            ts = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+            dest = archive_dir / f"{src_path.stem}.bak.{ts}{src_path.suffix}"
+        shutil.move(str(src_path), str(dest))
+        old_rel = entry.plan_source
+        new_rel = dest.relative_to(repo_root.resolve()).as_posix()
+        card.disposition = "archived"
+        card.source = new_rel
+        cards_by_source[new_rel] = card
+        cards_by_source.pop(old_rel, None)
+        plan_paths: list[Path] = []
+        for folder in KNOWN_IDE_DOTFOLDERS:
+            plans_root = repo_root / folder / "plans"
+            if plans_root.is_dir():
+                plan_paths.extend(plans_root.rglob("*.plan.md"))
+        if master_path and master_path.is_file():
+            plan_paths.append(master_path)
+        plan_paths.extend(report_paths)
+        rewrite_plan_links_in_paths(plan_paths, old_rel, new_rel)
+        if master_path and master_path.is_file():
+            _move_master_plan_between_sections(
+                master_path, repo_root, card, old_rel, new_rel
+            )
+            _append_master_archived_plans_frontmatter(master_path, Path(old_rel).name)
+        archived.append(new_rel)
+    return archived
+
+
 def is_secondary_doc(path: Path) -> bool:
     lowered = path.as_posix().lower()
     if "/.git/" in lowered:
@@ -2211,6 +2471,7 @@ def render_master_mirror(
     cards: list["PlanCard"],
     master_doc: dict[str, object] | None = None,
     *,
+    repo_root: Path | None = None,
     report_date: str = "",
     provenance: dict[str, object] | None = None,
 ) -> str:
@@ -2322,11 +2583,25 @@ def render_master_mirror(
             )
         lines.append("")
 
-    # Drift detection.
+    # Drift detection (archive-aware; metadata-only archives are not drift).
     on_disk = {c.source for c in cards}
+    if repo_root is not None:
+        for folder in KNOWN_IDE_DOTFOLDERS:
+            archive_dir = repo_root / folder / "plans" / ".plan.archives"
+            if archive_dir.is_dir():
+                for path in archive_dir.glob("*.plan.md"):
+                    on_disk.add(path.relative_to(repo_root.resolve()).as_posix())
     in_master = set(children)
+    metadata = master_archived_metadata_entries(master_doc)
+    only_master: list[str] = []
+    for src in sorted(in_master - on_disk):
+        if repo_root and resolve_plan_link_path(repo_root, src):
+            continue
+        base = Path(_normalize_plan_source_path(src)).name
+        if src in metadata or base in metadata:
+            continue
+        only_master.append(src)
     only_disk = sorted(on_disk - in_master)
-    only_master = sorted(in_master - on_disk)
 
     lines.append("## Drift")
     lines.append("")
@@ -2642,6 +2917,46 @@ def main() -> int:
 
     ready_to_archive = detect_ready_to_archive(list(cards_by_source.values()))
 
+    if args.master_plan:
+        master_candidate = Path(args.master_plan)
+        if not master_candidate.is_absolute():
+            master_candidate = repo_root / master_candidate
+        master_path = master_candidate if master_candidate.is_file() else None
+    else:
+        master_path = discover_master_plan(repo_root)
+
+    master_doc = parse_master_plan(master_path, repo_root) if master_path else None
+    pruned_stale_links: list[str] = []
+    if master_path and master_doc:
+        pruned_stale_links = prune_stale_master_body_links(
+            master_path, repo_root, master_doc
+        )
+        if pruned_stale_links:
+            master_doc = parse_master_plan(master_path, repo_root)
+
+    archive_applied: list[str] = []
+    if getattr(args, "apply_archive", False) and ready_to_archive:
+        archive_applied = apply_archive_plans(
+            repo_root,
+            ready_to_archive,
+            cards_by_source,
+            master_path=master_path,
+            report_paths=[],
+        )
+        primary, secondary = discover_sources(repo_root)
+        items = []
+        for path in primary:
+            items.extend(collect_plan_items(path, repo_root))
+        for path in secondary:
+            items.extend(collect_plan_items(path, repo_root))
+        cards_by_source = build_cards_index(
+            repo_root, primary, items, default_owner=default_owner
+        )
+        if getattr(args, "ensure_branches", True):
+            apply_branch_resolution(cards_by_source, repo_root)
+            apply_pr_resolution(cards_by_source, repo_root)
+        ready_to_archive = detect_ready_to_archive(list(cards_by_source.values()))
+
     report = build_report(
         args.report_date,
         args.trigger,
@@ -2681,6 +2996,20 @@ def main() -> int:
             + "\n".join(f"- `disposition: implemented` → `{p}`" for p in disposition_synced)
             + "\n"
         )
+    if archive_applied:
+        report = (
+            report
+            + "\n\n## Plans archived (this run)\n\n"
+            + "\n".join(f"- `{p}`" for p in archive_applied)
+            + "\n"
+        )
+    if pruned_stale_links:
+        report = (
+            report
+            + "\n\n## Stale master links removed (this run)\n\n"
+            + "\n".join(f"- `{p}`" for p in pruned_stale_links)
+            + "\n"
+        )
     dated_path = out_dir / f"plan-audit-{args.report_date}.md"
     dated_path.write_text(report, encoding="utf-8")
 
@@ -2696,23 +3025,17 @@ def main() -> int:
     (out_dir / "plan-task-board.md").write_text(board, encoding="utf-8")
 
     # Master mirror (drift-aware).
-    if args.master_plan:
-        master_candidate = Path(args.master_plan)
-        if not master_candidate.is_absolute():
-            master_candidate = repo_root / master_candidate
-        master_path = master_candidate if master_candidate.is_file() else None
-    else:
-        master_path = discover_master_plan(repo_root)
-
     synced_master_entries = sync_master_plan(
         master_path,
         repo_root,
         list(cards_by_source.values()),
     )
-    master_doc = parse_master_plan(master_path, repo_root) if master_path else None
+    if synced_master_entries and master_path:
+        master_doc = parse_master_plan(master_path, repo_root)
     mirror = render_master_mirror(
         list(cards_by_source.values()),
         master_doc,
+        repo_root=repo_root,
         report_date=args.report_date,
         provenance=provenance,
     )
@@ -2742,6 +3065,12 @@ def main() -> int:
         next_actions += (
             "\n## Disposition sync (this run)\n\n"
             + "\n".join(f"- `disposition: implemented` → `{src}`" for src in disposition_synced)
+            + "\n"
+        )
+    if archive_applied:
+        next_actions += (
+            "\n## Plans archived (this run)\n\n"
+            + "\n".join(f"- `{src}`" for src in archive_applied)
             + "\n"
         )
     (out_dir / "next-actions.md").write_text(next_actions, encoding="utf-8")
