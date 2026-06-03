@@ -674,3 +674,39 @@ def test_apply_archive_moves_plan_and_updates_master(tmp_project_dir: Path) -> N
     master_text = master_path.read_text(encoding="utf-8")
     assert ".plan.archives/done.plan.md" in master_text
     assert "disposition: archived" in archive_path.read_text(encoding="utf-8")
+
+
+def test_apply_archive_after_disposition_sync_in_same_run(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    master_path = plans / "_master.plan.md"
+    master_path.write_text(
+        "---\narchived_plans: []\n---\n\n# Master\n\n## active\n\n"
+        "- [Done](done.plan.md) — DRI: @test\n",
+        encoding="utf-8",
+    )
+    plan_path = plans / "done.plan.md"
+    plan_path.write_text(
+        "---\n"
+        "disposition: active\n"
+        "owner: @test\n"
+        "dri: @test\n"
+        "todos:\n"
+        "  - id: x\n"
+        "    content: All done\n"
+        "    status: completed\n"
+        "---\n"
+        "# Done\n",
+        encoding="utf-8",
+    )
+    items = m.collect_plan_items(plan_path, tmp_project_dir)
+    cards = m.build_cards_index(tmp_project_dir, [plan_path], items, default_owner="@test")
+    m.apply_disposition_sync(tmp_project_dir, cards)
+    targets = m.detect_ready_to_archive(list(cards.values()), include_implemented=True)
+    assert targets
+    archived = m.apply_archive_plans(
+        tmp_project_dir, targets, cards, master_path=master_path, report_paths=[]
+    )
+    assert archived
+    assert (plans / ".plan.archives" / "done.plan.md").is_file()

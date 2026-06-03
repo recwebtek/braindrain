@@ -178,29 +178,8 @@ def _strip_quotes(value: str) -> str:
     return value
 
 
-def parse_plan_frontmatter(path_or_text) -> dict[str, object]:
-    """Parse a leading YAML frontmatter block.
-
-    Supports the small subset we actually use: scalars, quoted scalars,
-    inline lists like `delegated_to: [a, b]`, and indented bullet lists:
-
-        delegated_to:
-          - gitops
-          - testops
-
-    Anything else (nested maps, anchors) is ignored — keeps the parser
-    dependency-free. Returns an empty dict when no frontmatter is present.
-    """
-    if isinstance(path_or_text, Path):
-        text = path_or_text.read_text(encoding="utf-8", errors="ignore")
-    else:
-        text = str(path_or_text or "")
-
-    match = FRONTMATTER_BLOCK_RE.match(text)
-    if not match:
-        return {}
-
-    body = match.group(1)
+def _parse_frontmatter_body(body: str) -> dict[str, object]:
+    """Parse one YAML frontmatter body (between ``---`` fences)."""
     out: dict[str, object] = {}
     current_key: str | None = None
     current_list: list[str] | None = None
@@ -240,6 +219,37 @@ def parse_plan_frontmatter(path_or_text) -> dict[str, object]:
         out[key] = _strip_quotes(value)
         current_key = key
     return out
+
+
+def parse_plan_frontmatter(path_or_text) -> dict[str, object]:
+    """Parse leading YAML frontmatter (merges consecutive ``---`` blocks).
+
+    Supports the small subset we actually use: scalars, quoted scalars,
+    inline lists like `delegated_to: [a, b]`, and indented bullet lists.
+
+    When branch bootstrap left a tiny first block before the real plan
+    frontmatter, later blocks are merged (later keys win).
+    """
+    if isinstance(path_or_text, Path):
+        text = path_or_text.read_text(encoding="utf-8", errors="ignore")
+    else:
+        text = str(path_or_text or "")
+
+    merged: dict[str, object] = {}
+    pos = 0
+    while pos < len(text):
+        slice_text = text[pos:]
+        match = FRONTMATTER_BLOCK_RE.match(slice_text)
+        if not match:
+            break
+        merged.update(_parse_frontmatter_body(match.group(1)))
+        pos += match.end()
+        remainder = text[pos:].lstrip("\n")
+        if remainder.startswith("---"):
+            pos = len(text) - len(remainder)
+            continue
+        break
+    return merged
 
 
 _DEFAULT_OWNER_CACHE: str | None = None
@@ -1110,13 +1120,25 @@ TODO_ITEM_STATUS_MAP = {
 
 def parse_frontmatter_todos(text: str) -> list[dict[str, str]]:
     """Parse structured ``todos:`` entries from plan frontmatter."""
-    match = FRONTMATTER_BLOCK_RE.match(text)
-    if not match:
+    fm_lines: list[str] = []
+    pos = 0
+    while pos < len(text):
+        match = FRONTMATTER_BLOCK_RE.match(text[pos:])
+        if not match:
+            break
+        fm_lines.extend(match.group(1).splitlines())
+        pos += match.end()
+        remainder = text[pos:].lstrip("\n")
+        if remainder.startswith("---"):
+            pos = len(text) - len(remainder)
+            continue
+        break
+    if not fm_lines:
         return []
     todos: list[dict[str, str]] = []
     current: dict[str, str] | None = None
     in_todos = False
-    for raw in match.group(1).splitlines():
+    for raw in fm_lines:
         stripped = raw.strip()
         if not stripped:
             continue
@@ -1452,15 +1474,32 @@ def detect_actions(
     return actions
 
 
-def detect_ready_to_archive(cards: list["PlanCard"]) -> list[ReadyToArchive]:
-    """Plans with all todos completed but disposition still ``active``."""
+def detect_ready_to_archive(
+    cards: list["PlanCard"],
+    *,
+    include_implemented: bool = False,
+) -> list[ReadyToArchive]:
+    """Plans with all todos completed that should leave the active queue.
+
+    Report mode (default): ``disposition: active`` only.
+    Apply-archive mode: also ``implemented`` plans not yet under ``.plan.archives/``.
+    """
     ready: list[ReadyToArchive] = []
     for card in cards:
-        if card.is_master or card.disposition != "active":
+        if card.is_master or card.disposition in {"archived", "scratched"}:
+            continue
+        if card.disposition == "active":
+            pass
+        elif include_implemented and card.disposition == "implemented":
+            pass
+        else:
             continue
         if not plan_all_todos_completed(card):
             continue
-        reason = "all todos completed; disposition still active"
+        if card.disposition == "active":
+            reason = "all todos completed; disposition still active"
+        else:
+            reason = "all todos completed; disposition implemented — ready for archive"
         if card.stale_narrative:
             reason += "; stale narrative in body"
         ready.append(
@@ -2915,7 +2954,13 @@ def main() -> int:
     if getattr(args, "apply_disposition_sync", False):
         disposition_synced = apply_disposition_sync(repo_root, cards_by_source)
 
-    ready_to_archive = detect_ready_to_archive(list(cards_by_source.values()))
+    card_list = list(cards_by_source.values())
+    archive_targets: list[ReadyToArchive] = []
+    if getattr(args, "apply_archive", False):
+        archive_targets = detect_ready_to_archive(
+            card_list, include_implemented=True
+        )
+    ready_to_archive = detect_ready_to_archive(card_list)
 
     if args.master_plan:
         master_candidate = Path(args.master_plan)
@@ -2935,10 +2980,10 @@ def main() -> int:
             master_doc = parse_master_plan(master_path, repo_root)
 
     archive_applied: list[str] = []
-    if getattr(args, "apply_archive", False) and ready_to_archive:
+    if getattr(args, "apply_archive", False) and archive_targets:
         archive_applied = apply_archive_plans(
             repo_root,
-            ready_to_archive,
+            archive_targets,
             cards_by_source,
             master_path=master_path,
             report_paths=[],
