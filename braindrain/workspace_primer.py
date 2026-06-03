@@ -41,6 +41,7 @@ DEFAULT_MEMORY_FILE = f"{BRAINDRAIN_DIR}/AGENT_MEMORY.md"
 DEFAULT_INDEX_FILE = ".cursor/hooks/state/continual-learning-index.json"
 MAX_ROLLBACK_SNAPSHOTS = 12
 _TEMPLATE_MARKER_PREFIX = "<!-- braindrain-template:"
+_SCRIPT_MARKER_PREFIX = "# braindrain-script:"
 
 # Marker file persisted after the first successful prime.
 _PRIMED_MARKER = f"{BRAINDRAIN_DIR}/primed.json"
@@ -657,6 +658,43 @@ def deploy_cursor_skill_templates(
     return written
 
 
+def _script_content_hash(text: str) -> str:
+    return sha256(text.encode("utf-8")).hexdigest()
+
+
+def _stamp_script_marker(raw_content: str, rel: str) -> str:
+    """Prefix deployed script with hub version marker (consumer copy only)."""
+    marker = f"{_SCRIPT_MARKER_PREFIX} {rel} sha256={_script_content_hash(raw_content)}"
+    lines = raw_content.splitlines(keepends=True)
+    if lines and lines[0].startswith("#!"):
+        return lines[0] + marker + "\n" + "".join(lines[1:])
+    return marker + "\n" + raw_content
+
+
+def _extract_script_marker_hash(existing_text: str, rel: str) -> str:
+    for line in existing_text.splitlines()[:3]:
+        stripped = line.strip()
+        m = re.match(
+            rf"^{re.escape(_SCRIPT_MARKER_PREFIX)}\s+{re.escape(rel)}\s+sha256=([a-f0-9]{{64}})\s*$",
+            stripped,
+        )
+        if m:
+            return m.group(1)
+    return ""
+
+
+def _strip_script_marker(text: str) -> str:
+    lines = text.splitlines(keepends=True)
+    if not lines:
+        return text
+    start = 1 if lines[0].startswith("#!") else 0
+    if start < len(lines) and lines[start].strip().startswith(_SCRIPT_MARKER_PREFIX):
+        return "".join(lines[:start] + lines[start + 1 :])
+    if lines[0].strip().startswith(_SCRIPT_MARKER_PREFIX):
+        return "".join(lines[1:])
+    return text
+
+
 def deploy_operational_scripts(
     target_dir: Path,
     bundle_manifest: dict,
@@ -664,7 +702,13 @@ def deploy_operational_scripts(
     sync_templates: bool = False,
     dry_run: bool = False,
 ) -> dict[str, dict[str, str | bool]]:
-    """Copy operational scripts from hub scripts/ into consumer scripts/."""
+    """Copy operational scripts from hub scripts/ into consumer scripts/.
+
+    Without ``sync_templates``, existing files are still upgraded when the hub
+    revision changes (marker hash mismatch), matching subagent template semantics.
+    Customized copies (content drift without a prior marker) are preserved unless
+    ``sync_templates=True`` forces overwrite.
+    """
     script_keys = bundle_manifest.get("operational_scripts") or []
     if not isinstance(script_keys, list) or not script_keys:
         return {}
@@ -691,23 +735,73 @@ def deploy_operational_scripts(
             written[rel_key] = {"action": "dry_run", "backup": ""}
             continue
         scripts_dir.mkdir(parents=True, exist_ok=True)
-        content = src.read_text(encoding="utf-8")
-        if dst.exists() and not sync_templates:
-            written[rel_key] = {"action": "skipped_existing", "backup": ""}
-            continue
+        raw_content = src.read_text(encoding="utf-8")
+        stamped = _stamp_script_marker(raw_content, rel)
+        hub_hash = _script_content_hash(raw_content)
+
         if dst.exists() and sync_templates:
             backup = dst.with_name(f"{dst.name}.bak.{ts}")
             shutil.copy2(dst, backup)
-            dst.write_text(content, encoding="utf-8")
-            written[rel_key] = {"action": "updated", "backup": str(backup)}
-        else:
-            dst.write_text(content, encoding="utf-8")
-            if rel.endswith(".py") and not rel.endswith("utils.py"):
-                try:
-                    dst.chmod(dst.stat().st_mode | 0o111)
-                except OSError:
-                    pass
-            written[rel_key] = {"action": "created", "backup": ""}
+            dst.write_text(stamped, encoding="utf-8")
+            written[rel_key] = {
+                "action": "updated",
+                "backup": str(backup),
+                "classification": "sync_templates",
+            }
+            continue
+
+        if dst.exists():
+            existing = dst.read_text(encoding="utf-8", errors="ignore")
+            marker_hash = _extract_script_marker_hash(existing, rel)
+            body = _strip_script_marker(existing)
+            if body == raw_content:
+                if existing != stamped:
+                    backup = dst.with_name(f"{dst.name}.bak.{ts}")
+                    shutil.copy2(dst, backup)
+                    dst.write_text(stamped, encoding="utf-8")
+                    written[rel_key] = {
+                        "action": "updated",
+                        "backup": str(backup),
+                        "classification": "marker_refresh",
+                    }
+                else:
+                    written[rel_key] = {
+                        "action": "skipped_existing",
+                        "backup": "",
+                        "classification": "current",
+                    }
+                continue
+            if marker_hash and marker_hash != hub_hash:
+                backup = dst.with_name(f"{dst.name}.bak.{ts}")
+                shutil.copy2(dst, backup)
+                dst.write_text(stamped, encoding="utf-8")
+                written[rel_key] = {
+                    "action": "updated",
+                    "backup": str(backup),
+                    "classification": "hub_revision",
+                }
+                continue
+            if not marker_hash and body != raw_content:
+                written[rel_key] = {
+                    "action": "skipped_existing",
+                    "backup": "",
+                    "classification": "customized",
+                }
+                continue
+            written[rel_key] = {
+                "action": "skipped_existing",
+                "backup": "",
+                "classification": "unchanged",
+            }
+            continue
+
+        dst.write_text(stamped, encoding="utf-8")
+        if rel.endswith(".py") and not rel.endswith("utils.py"):
+            try:
+                dst.chmod(dst.stat().st_mode | 0o111)
+            except OSError:
+                pass
+        written[rel_key] = {"action": "created", "backup": "", "classification": "missing"}
     return written
 
 
@@ -1390,7 +1484,13 @@ def verify_prime_install(target_dir: Path, bundle_manifest: dict) -> dict:
             if not isinstance(key, str):
                 continue
             for rel in OPERATIONAL_SCRIPT_FILES.get(key.strip(), []):
-                checks[f"script_{rel.replace('/', '_')}"] = (target_dir / "scripts" / rel).is_file()
+                script_path = target_dir / "scripts" / rel
+                checks[f"script_{rel.replace('/', '_')}"] = script_path.is_file()
+                if rel == "daily_plan_audit.py" and script_path.is_file():
+                    body = script_path.read_text(encoding="utf-8", errors="ignore")
+                    checks["script_daily_plan_audit_branch_reconcile"] = (
+                        "pick_best_branch_candidate" in body
+                    )
     skill_names = bundle_manifest.get("skills") or []
     if isinstance(skill_names, list):
         for name in skill_names:
@@ -1782,8 +1882,11 @@ def prime(
       3. Otherwise → detect_prime_agents() → single best-fit agent.
 
     On second+ runs (primed.json marker exists), the marker is updated and
-    the same flow re-runs. `.cursor/agents/*.md` defaults to create-only unless
-    sync_subagents=True, which overwrites with timestamped backups.
+    the same flow re-runs. `.cursor/agents/*.md` uses marker-hash upgrades when
+    hub templates change (customized files are preserved). Bundle operational
+    scripts (`daily_plan_audit.py`, `plan_branch_utils.py`, …) follow the same
+    hash-upgrade path — re-prime deploys auditor fixes without requiring
+    sync_templates=True. Hooks/commands still need sync_templates=True to refresh.
     When Cursor is in scope, ``config/templates/cursor`` → ``.cursor/hooks.json``
     and ``.cursor/hooks/*.sh`` are deployed (create-only; use sync_templates=True
     to refresh hooks from templates).

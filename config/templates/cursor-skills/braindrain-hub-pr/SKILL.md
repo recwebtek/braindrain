@@ -58,7 +58,7 @@ Allowed only if user explicitly wants a **stopgap** before hub merge:
 | Change type | Hub paths |
 |-------------|-----------|
 | Cursor skills | `config/templates/cursor-skills/<name>/SKILL.md` → `.cursor/skills/<name>/SKILL.md` |
-| Slash commands | `config/templates/cursor/commands/*.md` (when present) |
+| Slash commands | `config/templates/cursor/commands/*.md` → `.cursor/commands/` via `deploy_cursor_commands` in `prime_workspace` (e.g. `brainlog.md`, `prime-braindrain.md`) |
 | Subagents | `config/templates/agents/*.md` |
 | Primer logic | `braindrain/workspace_primer.py` |
 | Tests | `tests/test_*.py` |
@@ -77,6 +77,15 @@ Register new skills in `config/bundles/*.yaml` under `skills:` so `prime_workspa
 - [ ] Tell user: reload braindrain MCP after merge
 - [ ] Consumer: re-run prime_workspace
 ```
+
+## Slash command: `/brainlog`
+
+- **Template:** `config/templates/cursor/commands/brainlog.md`
+- **When:** end of a largely completed chat/task (not session start).
+- **Does:** MCP-driven L1 `touch_session(end_session=true)`, token `record_token_checkpoint(phase="end")`, L2 `evaluate_memory_candidate` / optional `store_fact` or `record_episode`, L3 `get_dream_status` / optional `run_dream`, plus checklist for `.braindrain/*.md` updates.
+- **Requires:** memory sections in `config/hub_config.yaml` (`sessions`, `wiki_brain`, `lessons`, `dreaming`, `memory_learning`) — wired by the memory config plan.
+
+After adding or changing command templates, run `prime_workspace` on a consumer (or hub) with Cursor in scope; use `sync_templates=true` to refresh an existing `.cursor/commands/brainlog.md`.
 
 ## Tests (hub)
 

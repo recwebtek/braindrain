@@ -64,6 +64,9 @@ tests/*
 !tests/test_token_checkpoints.py
 !tests/test_exec_path.py
 !tests/test_wiki_brain_contradiction.py
+!tests/test_dream_weights.py
+!tests/test_macos_host_idle.py
+!tests/test_dream_trigger.py
 
 # Ruler outputs at repo root (no leading dot)
 /AGENTS.md

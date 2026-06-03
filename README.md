@@ -127,7 +127,15 @@ Set `embeddings.default_provider` (default: `lmstudio_local`). Programmatic help
 | `run_workflow(name, args)`                               | Execute a workflow. Intermediate output is routed through the sandbox — only the final summary returns to the agent.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 
-`list_workflows()` includes `init_project_memory` and **`prime_cursor_orchestration`** (calls `prime_workspace` with `bundle=cursor-orchestration` — deploys agents, hooks, skills, `scripts/daily_plan_audit.py`, and `scripts/plan_build_guard.py`). Consumer slash command: `/prime-braindrain` (from templates). Plan Build: run `python3 scripts/plan_build_guard.py --plan <path>` before edits (see Ruler `RULES.md`).
+`list_workflows()` includes `init_project_memory` and **`prime_cursor_orchestration`** (calls `prime_workspace` with `bundle=cursor-orchestration` — deploys agents, hooks, skills, `scripts/daily_plan_audit.py`, and `scripts/plan_build_guard.py`). Consumer slash commands (from `config/templates/cursor/commands/`, installed by `prime_workspace` into `.cursor/commands/`):
+
+| Command | When to use |
+| ------- | ----------- |
+| `/prime-braindrain` | Onboard or refresh Cursor orchestration (rules, hooks, skills, auditor scripts). |
+| `/brainlog` | **End of chat** — finalize L1 session compaction, token checkpoint, optional L2 wiki-brain promotion, L3 dream guidance, and reminders to update `.braindrain/AGENT_MEMORY.md` / `OPS.md` / `SESSION_PROGRESS.md`. |
+| `/masterplan` | Manual planning close-out (`daily_plan_audit.py`); use after editing `*.plan.md`, not as a substitute for `/brainlog`. |
+
+Plan Build: run `python3 scripts/plan_build_guard.py --plan <path>` before edits (see Ruler `RULES.md`).
 
 ### Telemetry
 
@@ -405,6 +413,37 @@ cd braindrain && git pull && .venv/bin/pip install -r requirements.txt
 
 Main config: `config/hub_config.yaml`
 
+**Memory stack (L0–L3)** — explicit sections in `hub_config.yaml` (defaults match server fallbacks):
+
+- `observer` — episodic tool-call ring buffer (`~/.braindrain/events.db`)
+- `sessions` — session store + inactivity compaction (`~/.braindrain/sessions.db`)
+- `wiki_brain` — durable recall/forgetting weights (`~/.braindrain/wiki-brain/brain.db`)
+- `lessons` / `memory_learning` — promotion guardrails for facts and playbooks
+- `dreaming` — consolidation policy (`quiet_minutes`, scan limits, `storage.base_dir`, `weights`, `triggers.macos_host_idle`)
+- `provider_context` — strategy for vendor-native vs Braindrain durable memory (`provider-native-first`)
+
+Restart the braindrain MCP server after changing these blocks. Machine-local ops detail: `.braindrain/OPS.md` (memory stack table).
+
+### Host-idle dream (macOS, manual opt-in)
+
+Two-step enablement (config alone does **not** install or start a watcher):
+
+1. **Install watcher for this workspace** (once per repo): `./scripts/install_dream_watch_launchd.sh`
+2. **Enable in this workspace config**: `dreaming.triggers.macos_host_idle.enabled: true` in `config/hub_config.yaml`
+
+The watcher polls HID keyboard/mouse idle time (`IOHIDSystem`). When idle exceeds `idle_threshold_seconds`, it runs consolidation using `mode` (default `full`). Shared memory DBs stay under `~/.braindrain/`; per-workspace state lives under `~/.braindrain/dreaming/workspaces/<workspace_hash>/`.
+
+| Knob | Default | Purpose |
+| --- | --- | --- |
+| `idle_threshold_seconds` | 300 | Host idle before dream is considered |
+| `poll_interval_seconds` | 120 | launchd poll interval (install script reads this) |
+| `cooldown_minutes` | 60 | Minimum gap between host-idle dream runs |
+| `bypass_session_quiet` | true | When true, host idle can dream even if a Cursor session was active recently |
+| `mode` | full | Dream mode passed to `DreamEngine.run` |
+
+Manual one-shot (no launchd): `./scripts/macos_dream_watch.sh`  
+Legacy cron path still works: `scripts/run_dream_cron.sh`
+
 Environment variables (copy `.env.example` to `.env.dev` to start):
 
 
@@ -479,7 +518,8 @@ braindrain/
 │   ├── hub_config.yaml         # tools, workflows, model tiers, embeddings
 │   ├── braindrain              # launcher script (self-detecting, venv-pinned)
 │   ├── opencode_mcp.jsonc      # OpenCode reference config
-│   └── com.braindrain.mcp.plist  # macOS launchd service template
+│   ├── com.braindrain.mcp.plist  # macOS launchd service template
+│   └── com.braindrain.dream-watch.plist  # macOS host-idle dream watcher template
 ├── AGENTS.md                   # agent protocol — generated per device by install.sh
 ├── AGENTS.md.template          # template used to generate AGENTS.md
 ├── VERSION                     # semver for releases (kept in sync with this README)
@@ -498,6 +538,7 @@ braindrain/
   - Source-of-truth for those generated rule files is `config/templates/ruler/RULES.md` (and `.ruler/ruler.toml`).
   - **Important**: files like `CLAUDE.md` are **generated artifacts** (gitignored) and should be treated as **disposable**. Edit the templates instead, then re-run Ruler.
   - If a project already has older `.ruler/*` files, call `prime_workspace(..., sync_templates=true)` to refresh those templates safely and propagate new guidance without manual cleanup.
+- **Cursor slash commands**: when Cursor is in scope, `prime_workspace()` copies `config/templates/cursor/commands/*.md` → `.cursor/commands/` (create-only by default; `sync_templates=true` refreshes with backups). Shipped commands include `/prime-braindrain`, `/brainlog`, and `/build-plan` (see table under Workflows).
 - **Cursor hooks (not Ruler)**: when the resolved agent set includes Cursor, `prime_workspace()` copies `config/templates/cursor/hooks.json` and `config/templates/cursor/hooks/*.sh` into `.cursor/` (create-only by default; `sync_templates=true` overwrites with timestamped backups). Hook templates currently include:
   - `.cursor/hooks/on-stop-observe.sh` (lightweight stop-event observation)
   - `.cursor/hooks/on-stop-gitops.sh` (TASK-GRAPH branch queueing)
@@ -508,7 +549,7 @@ braindrain/
   - `.cursor/agents/` when Cursor is in the resolved agent set, and
   - `.codex/agents/` when Codex is in the resolved agent set (same files; IDE-specific layout only).
   Skills deploy from `config/templates/cursor-skills/<id>/` → `.cursor/skills/<id>/` for each id in the active bundle `skills:` list (e.g. `cursor-orchestration`: coordinator, gitops, scriptlib-librarian). See `docs/skill-braindrain-hub-pr.md`.
-  Operational scripts (`daily_plan_audit`, `plan_build_guard`, `plan_branch_utils`) copy from hub `scripts/` → project `scripts/` per bundle `operational_scripts`.
+  Operational scripts (`daily_plan_audit`, `plan_build_guard`, `plan_branch_utils`) copy from hub `scripts/` → project `scripts/` per bundle `operational_scripts`. Re-prime upgrades them when the hub revision changes (content-hash marker), so plan branch/PR reconciliation reaches consumer workspaces without tracking `*.plan.md` in git.
   Existing files are create-only by default; set `sync_subagents=true` to update with backups. `.cursor/` is gitignored at repo root; do not commit generated agent/skill files—edit templates and re-run `prime_workspace`.
 - **Codex config merge**: `prime_workspace()` appends/updates a managed `BRAINDRAIN SUBAGENTS` block in `.codex/config.toml` only when allowed by policy (`sync_subagents=true` for existing files). Existing MCP server entries remain intact.
 - **Project memory artifacts**: initialized by `prime_workspace()` (or `init_project_memory()`) and kept separate from generated protocol files:
@@ -553,6 +594,7 @@ Implemented now (runtime behavior in this repo):
     - `.cursor/hooks/on-stop-gitops.sh`
     - `.cursor/hooks/on-stop-daily-plan-audit.sh`
     - `scripts/run_dream_cron.sh`
+    - `scripts/macos_dream_watch.sh` + `scripts/install_dream_watch_launchd.sh` (macOS host-idle, opt-in)
 
 Memory artifacts and paths:
 

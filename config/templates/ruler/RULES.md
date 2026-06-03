@@ -150,7 +150,7 @@ Example JSONL row:
 
 Clicking **Build** on a Cursor plan runs the **default workspace agent**, not the coordinator subagent. Before any implementation edits when working from a `*.plan.md`:
 
-1. Resolve the plan branch: frontmatter `branch:` → `.braindrain/plan-reports/master-plan.md` → run `python3 scripts/daily_plan_audit.py --repo-root .` if still missing.
+1. Resolve the plan branch: run `python3 scripts/daily_plan_audit.py --repo-root .` (or `/masterplan`) so frontmatter `branch:` is reconciled with **git** and **gh** — do not trust a stale auto-generated slug; then read `.braindrain/plan-reports/master-plan.md` for branch/PR.
 2. **First shell command:** `python3 scripts/plan_build_guard.py --plan <repo-relative-plan-path> --repo-root .`
 3. Proceed only when the guard reports `"ok": true` (creates branch with `git branch` if needed; checkout uses stash + `git switch` when dirty).
 4. Do not implement on an unrelated branch (e.g. a feature branch for a different plan).

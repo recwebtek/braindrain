@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  BRAINDRAIN host-idle dream watcher (macOS, per-workspace)
+
+  Install explicitly (does not run on config enable alone):
+    ./scripts/install_dream_watch_launchd.sh
+
+  Uninstall:
+    launchctl bootout gui/$(id -u)/__LABEL__
+    rm ~/Library/LaunchAgents/__LABEL__.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>__LABEL__</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__REPO_ROOT__/scripts/macos_dream_watch.sh</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__REPO_ROOT__</string>
+    <key>StartInterval</key>
+    <integer>__POLL_INTERVAL__</integer>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>__STDOUT_LOG__</string>
+    <key>StandardErrorPath</key>
+    <string>__STDERR_LOG__</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>BRAINDRAIN_CONFIG</key>
+        <string>__REPO_ROOT__/config/hub_config.yaml</string>
+    </dict>
+</dict>
+</plist>

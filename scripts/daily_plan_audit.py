@@ -1405,15 +1405,80 @@ def _list_repo_branches(repo_root: Path) -> list[str]:
     return names
 
 
-def apply_branch_resolution(cards: dict[str, "PlanCard"], repo_root: Path) -> None:
-    """Resolve plan branch using hybrid precedence.
+def _dedupe_branch_candidates(
+    candidates: list[tuple[str, str]],
+) -> list[tuple[str, str]]:
+    """Keep first source label per branch name."""
+    seen: set[str] = set()
+    out: list[tuple[str, str]] = []
+    for branch, source in candidates:
+        b = branch.strip()
+        if not b or b == "—" or b in seen:
+            continue
+        seen.add(b)
+        out.append((b, source))
+    return out
 
-    Precedence:
-    1) Frontmatter `branch:` (when present),
-    2) `.cursor/.gitops-queue.json` (planSource exact match, then fuzzy),
-    3) `.cursor/.gitops-memory.jsonl`,
-    4) Local git branch names (fuzzy slug match),
-    5) `—`.
+
+def pick_best_branch_candidate(
+    repo_root: Path,
+    candidates: list[tuple[str, str]],
+    local_branches: list[str],
+    *,
+    gh_runner: Callable[[Path, str], list[dict[str, object]] | None] | None = None,
+) -> tuple[str, str]:
+    """Choose branch using git refs + gh PR state, not frontmatter alone.
+
+  Prefers branches that exist locally/remotely and/or have an open PR over stale
+  synthetic frontmatter names (e.g. truncated ``branch_name_for_plan`` slugs).
+    """
+    runner = gh_runner or _run_gh_pr_lookup
+    local_set = set(local_branches)
+    best_branch = ""
+    best_source = "none"
+    best_score = -999
+
+    for branch, source in _dedupe_branch_candidates(candidates):
+        score = 0
+        pr_data = runner(repo_root, branch)
+        if pr_data is None:
+            score -= 5
+        elif pr_data:
+            state = str(pr_data[0].get("state") or "").strip().upper()
+            if state == "OPEN":
+                score += 120
+            elif state in {"MERGED", "CLOSED"}:
+                score += 60
+        if branch in local_set:
+            score += 40
+        if source == "git_local":
+            score += 25
+        if source == "gitops_queue":
+            score += 20
+        if source == "gitops_memory":
+            score += 15
+        if source == "frontmatter":
+            if branch in local_set:
+                score += 10
+            else:
+                score -= 50
+
+        if score > best_score:
+            best_score = score
+            best_branch = branch
+            best_source = source
+
+    if not best_branch:
+        return "—", "none"
+    return best_branch, best_source
+
+
+def apply_branch_resolution(cards: dict[str, "PlanCard"], repo_root: Path) -> None:
+    """Resolve plan branch using hybrid precedence reconciled with git + gh.
+
+    Collect candidates from frontmatter, gitops queue/memory, and git_local fuzzy
+    match, then ``pick_best_branch_candidate`` scores them using local refs and
+    ``gh pr list --head``. Stale frontmatter alone must not hide an existing branch/PR.
     """
     queue_entries = _read_gitops_queue(repo_root)
     queue_branches: list[str] = []
@@ -1435,32 +1500,26 @@ def apply_branch_resolution(cards: dict[str, "PlanCard"], repo_root: Path) -> No
         plan_path = repo_root / card.source
         fm = parse_plan_frontmatter(plan_path) if plan_path.is_file() else {}
         fm_branch = str(fm.get("branch") or "").strip()
+        candidates: list[tuple[str, str]] = []
         if fm_branch:
-            card.branch = fm_branch
-            card.branch_source = "frontmatter"
-            continue
+            candidates.append((fm_branch, "frontmatter"))
         direct_queue = _queue_branch_for_card(card, queue_entries)
         if direct_queue:
-            card.branch = direct_queue
-            card.branch_source = "gitops_queue"
-            continue
+            candidates.append((direct_queue, "gitops_queue"))
         queue_match = _best_matching_branch(card, queue_branches)
         if queue_match:
-            card.branch = queue_match
-            card.branch_source = "gitops_queue"
-            continue
+            candidates.append((queue_match, "gitops_queue"))
         memory_match = _best_matching_branch(card, memory_branches)
         if memory_match:
-            card.branch = memory_match
-            card.branch_source = "gitops_memory"
-            continue
+            candidates.append((memory_match, "gitops_memory"))
         git_match = _best_matching_branch(card, local_branches)
         if git_match:
-            card.branch = git_match
-            card.branch_source = "git_local"
-            continue
-        card.branch = "—"
-        card.branch_source = "none"
+            candidates.append((git_match, "git_local"))
+        branch, source = pick_best_branch_candidate(
+            repo_root, candidates, local_branches
+        )
+        card.branch = branch
+        card.branch_source = source
 
 
 def _run_gh_pr_lookup(repo_root: Path, branch: str) -> list[dict[str, object]] | None:
@@ -1536,10 +1595,21 @@ def apply_pr_resolution(
     *,
     gh_runner: Callable[[Path, str], list[dict[str, object]] | None] | None = None,
 ) -> None:
+    local_branches = _list_repo_branches(repo_root)
     for card in cards.values():
         pr_cell, pr_source = resolve_pr_for_branch(
             repo_root, card.branch, gh_runner=gh_runner
         )
+        if pr_cell in {"none", "—"} and card.branch and card.branch != "—":
+            alt = _best_matching_branch(card, local_branches)
+            if alt and alt != card.branch:
+                alt_cell, alt_source = resolve_pr_for_branch(
+                    repo_root, alt, gh_runner=gh_runner
+                )
+                if alt_cell not in {"none", "—"}:
+                    card.branch = alt
+                    card.branch_source = "git_local"
+                    pr_cell, pr_source = alt_cell, alt_source
         card.pr = pr_cell
         card.pr_source = pr_source
 
@@ -1615,23 +1685,31 @@ def bootstrap_plan_branches_from_git_local(
     repo_root: Path,
     cards: dict[str, "PlanCard"],
 ) -> list[str]:
-    """Persist git_local branch matches into frontmatter for active/merge-ready plans."""
+    """Persist reconciled branch into frontmatter for active/merge-ready plans."""
+    from plan_branch_utils import branch_ref_exists
+
     bootstrap_dispositions = {"active", "merge-ready"}
+    trusted_sources = {"git_local", "gitops_queue", "gitops_memory"}
     updated: list[str] = []
     for source, card in cards.items():
         if card.disposition not in bootstrap_dispositions:
             continue
-        if card.branch_source != "git_local":
+        if card.branch_source not in trusted_sources:
             continue
         if not card.branch or card.branch == "—":
             continue
         path = repo_root / source
         if not path.is_file():
             continue
-        current = path.read_text(encoding="utf-8", errors="ignore")
-        if re.search(r"(?m)^branch\s*:", current):
+        fm = parse_plan_frontmatter(path)
+        fm_branch = str(fm.get("branch") or "").strip()
+        if fm_branch == card.branch:
             continue
-        new_text = _inject_frontmatter_key(current, "branch", card.branch)
+        has_pr = card.pr not in {"none", "—"}
+        if not has_pr and not branch_ref_exists(repo_root, card.branch):
+            continue
+        current = path.read_text(encoding="utf-8", errors="ignore")
+        new_text = _set_frontmatter_key(current, "branch", card.branch)
         if new_text != current:
             path.write_text(new_text, encoding="utf-8")
             updated.append(source)
@@ -1649,6 +1727,22 @@ def _inject_frontmatter_key(text: str, key: str, value: str) -> str:
         new_block = f"---\n{updated_body}---\n"
         return new_block + text[len(fm_block):]
     return f"---\n{key}: {value}\n---\n\n{text}"
+
+
+def _set_frontmatter_key(text: str, key: str, value: str) -> str:
+    """Insert or replace a frontmatter key."""
+    match = FRONTMATTER_BLOCK_RE.match(text)
+    if not match:
+        return _inject_frontmatter_key(text, key, value)
+    fm_block = match.group(0)
+    fm_body = match.group(1)
+    key_re = re.compile(rf"(?m)^{re.escape(key)}\s*:\s*.*$")
+    if key_re.search(fm_body):
+        updated_body = key_re.sub(f"{key}: {value}", fm_body, count=1)
+    else:
+        updated_body = fm_body.rstrip() + f"\n{key}: {value}\n"
+    new_block = f"---\n{updated_body}---\n"
+    return new_block + text[len(fm_block) :]
 
 
 def persist_resolved_plan_branches(
@@ -2258,9 +2352,10 @@ def main() -> int:
         branches_created = ensure_plan_branches(repo_root, cards_by_source)
         apply_branch_resolution(cards_by_source, repo_root)
         apply_pr_resolution(cards_by_source, repo_root)
-    if getattr(args, "bootstrap_branches", False):
-        bootstrap_plan_branches_from_git_local(repo_root, cards_by_source)
-        # Re-resolve so frontmatter picks up bootstrapped branches.
+    branch_frontmatter_updated = bootstrap_plan_branches_from_git_local(
+        repo_root, cards_by_source
+    )
+    if branch_frontmatter_updated:
         apply_branch_resolution(cards_by_source, repo_root)
         apply_pr_resolution(cards_by_source, repo_root)
     branch_links = persist_resolved_plan_branches(repo_root, cards_by_source)

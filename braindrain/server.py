@@ -240,6 +240,12 @@ def _get_dream_engine() -> DreamEngine:
         return _dream_engine
     dreaming_cfg = config.get("dreaming", {}) or {}
     storage_cfg = dreaming_cfg.get("storage", {}) or {}
+    triggers = dreaming_cfg.get("triggers") if isinstance(dreaming_cfg.get("triggers"), dict) else {}
+    host_idle = (
+        triggers.get("macos_host_idle")
+        if isinstance(triggers.get("macos_host_idle"), dict)
+        else {}
+    )
     engine_cfg = {
         "policy_version": dreaming_cfg.get("policy_version", "memory-lessons-v1"),
         "quiet_minutes": int(dreaming_cfg.get("quiet_minutes", 30) or 30),
@@ -250,6 +256,7 @@ def _get_dream_engine() -> DreamEngine:
         "weights": dreaming_cfg.get("weights", {}) or {},
         "deep": dreaming_cfg.get("deep", {}) or {},
         "storage_dir": storage_cfg.get("base_dir", "~/.braindrain/dreaming"),
+        "bypass_session_quiet": bool(host_idle.get("bypass_session_quiet", True)),
     }
     provider_cfg = config.get("provider_context", {}) or {}
     _dream_engine = DreamEngine(
@@ -1069,7 +1076,7 @@ def get_provider_context_policy() -> dict:
 @mcp.tool()
 def run_dream(mode: str = "full", force: bool = False) -> dict:
     """Run Light/REM/Deep memory consolidation."""
-    return _get_dream_engine().run(mode=mode, force=force)
+    return _get_dream_engine().run(mode=mode, force=force, trigger="mcp")
 
 
 @mcp.tool()
