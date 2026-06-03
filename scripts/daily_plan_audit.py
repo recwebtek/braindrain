@@ -367,6 +367,18 @@ class Action:
 
 
 @dataclasses.dataclass
+class ReadyToArchive:
+    """Plan that finished all frontmatter todos but is still disposition-active."""
+
+    plan_slug: str
+    plan_source: str
+    ide: str
+    priority: str
+    reason: str
+    stale_narrative: bool = False
+
+
+@dataclasses.dataclass
 class PlanCard:
     """Plan-level metadata + child item rollup.
 
@@ -1161,6 +1173,59 @@ def detect_actions(
         )
     )
     return actions
+
+
+def detect_ready_to_archive(cards: list["PlanCard"]) -> list[ReadyToArchive]:
+    """Plans with all todos completed but disposition still ``active``."""
+    ready: list[ReadyToArchive] = []
+    for card in cards:
+        if card.is_master or card.disposition != "active":
+            continue
+        if not plan_all_todos_completed(card):
+            continue
+        reason = "all todos completed; disposition still active"
+        if card.stale_narrative:
+            reason += "; stale narrative in body"
+        ready.append(
+            ReadyToArchive(
+                plan_slug=card.slug,
+                plan_source=card.source,
+                ide=card.ide or "—",
+                priority=card.priority,
+                reason=reason,
+                stale_narrative=card.stale_narrative,
+            )
+        )
+    ready.sort(key=lambda r: (_PRIORITY_RANK.get(r.priority, 3), r.ide, r.plan_slug))
+    return ready
+
+
+def render_ready_to_archive_section(
+    entries: list[ReadyToArchive],
+    *,
+    report_date: str = "",
+) -> list[str]:
+    """Markdown lines for the READY_TO_ARCHIVE triage section."""
+    lines: list[str] = ["## READY_TO_ARCHIVE (confirm with user)"]
+    if report_date:
+        lines.append("")
+        lines.append(
+            f"_Generated {report_date}. Run with `--apply-disposition-sync` and "
+            "`--apply-archive` only after you confirm this list._"
+        )
+    lines.append("")
+    if not entries:
+        lines.append("- _None today._")
+        lines.append("")
+        return lines
+    for entry in entries:
+        tag = f"[{entry.ide}:{entry.plan_slug}]"
+        lines.append(
+            f"- {tag} `({entry.priority})` {entry.reason} — confirm archive?"
+        )
+        lines.append(f"  - Source: [`{entry.plan_source}`]({entry.plan_source})")
+    lines.append("")
+    return lines
 
 
 def render_task_board_markdown(
@@ -2043,6 +2108,7 @@ def sync_master_plan(
 def render_next_actions(
     actions: list[Action],
     *,
+    ready_to_archive: list[ReadyToArchive] | None = None,
     report_date: str = "",
     provenance: dict[str, object] | None = None,
 ) -> str:
@@ -2075,28 +2141,29 @@ def render_next_actions(
     if not actions:
         lines.append("- _No active triage actions today._")
         lines.append("")
-        return "\n".join(lines)
+    else:
+        grouped: dict[str, list[Action]] = defaultdict(list)
+        for action in actions:
+            grouped[action.verb].append(action)
 
-    grouped: dict[str, list[Action]] = defaultdict(list)
-    for action in actions:
-        grouped[action.verb].append(action)
-
-    for verb in _VERB_ORDER:
-        bucket = grouped.get(verb, [])
-        if not bucket:
-            continue
-        lines.append(f"## {verb} ({len(bucket)})")
-        lines.append("")
-        for action in bucket:
-            tag = f"[{action.ide or '—'}:{action.plan_slug}]"
-            lines.append(
-                f"- {tag} `({action.priority})` {action.reason} — {action.hint}"
-            )
-            link = f"  - Source: [`{action.plan_source}`]({action.plan_source})"
-            lines.append(link)
-            if action.item_excerpt:
-                lines.append(f"  - Excerpt: _{action.item_excerpt}_")
-        lines.append("")
+        for verb in _VERB_ORDER:
+            bucket = grouped.get(verb, [])
+            if not bucket:
+                continue
+            lines.append(f"## {verb} ({len(bucket)})")
+            lines.append("")
+            for action in bucket:
+                tag = f"[{action.ide or '—'}:{action.plan_slug}]"
+                lines.append(
+                    f"- {tag} `({action.priority})` {action.reason} — {action.hint}"
+                )
+                link = f"  - Source: [`{action.plan_source}`]({action.plan_source})"
+                lines.append(link)
+                if action.item_excerpt:
+                    lines.append(f"  - Excerpt: _{action.item_excerpt}_")
+            lines.append("")
+    if ready_to_archive is not None:
+        lines.extend(render_ready_to_archive_section(ready_to_archive, report_date=report_date))
     return "\n".join(lines)
 
 
@@ -2253,6 +2320,7 @@ def build_report(
     items: list[PlanItem],
     *,
     cards_by_source: dict[str, "PlanCard"] | None = None,
+    ready_to_archive: list[ReadyToArchive] | None = None,
     provenance: dict[str, object] | None = None,
 ) -> str:
     overlaps = detect_overlaps(items)
@@ -2381,7 +2449,25 @@ def build_report(
     body.append(
         f"- Scores: coverage={scores['coverage_score']}, overlap={scores['overlap_score']}, gap={scores['gap_score']}."
     )
+    ready_to_archive = ready_to_archive or []
+    legacy_todo_plans = sum(
+        1
+        for c in cards_by_source.values()
+        if not c.is_master and c.count_source == "body"
+    )
+    if legacy_todo_plans:
+        body.append(
+            f"- {legacy_todo_plans} plan(s) lack structured frontmatter todos "
+            "(using body checklist for counts)."
+        )
+    if ready_to_archive:
+        body.append(
+            f"- READY_TO_ARCHIVE: {len(ready_to_archive)} plan(s) — confirm with user before "
+            "`--apply-archive`."
+        )
     body.append("")
+    if ready_to_archive:
+        body.extend(render_ready_to_archive_section(ready_to_archive, report_date=report_date))
     body.append("## Status Matrix (5-State)")
     body.append("| Status | Count |")
     body.append("|---|---:|")
@@ -2510,6 +2596,8 @@ def main() -> int:
         apply_pr_resolution(cards_by_source, repo_root)
     branch_links = persist_resolved_plan_branches(repo_root, cards_by_source)
 
+    ready_to_archive = detect_ready_to_archive(list(cards_by_source.values()))
+
     report = build_report(
         args.report_date,
         args.trigger,
@@ -2518,6 +2606,7 @@ def main() -> int:
         secondary,
         items,
         cards_by_source=cards_by_source,
+        ready_to_archive=ready_to_archive,
         provenance=provenance,
     )
     if archive_moves:
@@ -2582,6 +2671,7 @@ def main() -> int:
     actions = detect_actions(list(cards_by_source.values()))
     next_actions = render_next_actions(
         actions,
+        ready_to_archive=ready_to_archive,
         report_date=args.report_date,
         provenance=provenance,
     )

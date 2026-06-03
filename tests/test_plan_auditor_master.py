@@ -541,3 +541,42 @@ def test_legacy_plan_without_todos_uses_body_counts(tmp_project_dir: Path) -> No
     assert card.count_source == "body"
     assert card.todo_summary is None
     assert card.counts.get("Outstanding", 0) == 1
+
+
+def test_ready_to_archive_in_next_actions_and_audit(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    plan_path = plans / "archive_me.plan.md"
+    plan_path.write_text(
+        "---\n"
+        "disposition: active\n"
+        "owner: @test\n"
+        "todos:\n"
+        "  - id: done\n"
+        "    content: Finished\n"
+        "    status: completed\n"
+        "---\n"
+        "# Archive me\n",
+        encoding="utf-8",
+    )
+    items = m.collect_plan_items(plan_path, tmp_project_dir)
+    cards = m.build_cards_index(tmp_project_dir, [plan_path], items, default_owner="@test")
+    ready = m.detect_ready_to_archive(list(cards.values()))
+    assert len(ready) == 1
+    assert ready[0].plan_slug == "archive_me"
+    next_md = m.render_next_actions([], ready_to_archive=ready, report_date="2026-06-03")
+    assert "## READY_TO_ARCHIVE (confirm with user)" in next_md
+    assert ":archive_me]" in next_md
+    report = m.build_report(
+        "2026-06-03",
+        "test",
+        tmp_project_dir,
+        [plan_path],
+        [],
+        items,
+        cards_by_source=cards,
+        ready_to_archive=ready,
+    )
+    assert "READY_TO_ARCHIVE: 1 plan(s)" in report
+    assert "## READY_TO_ARCHIVE (confirm with user)" in report
