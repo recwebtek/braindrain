@@ -26,7 +26,7 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
-SCHEMA_VERSION = "1.1"
+SCHEMA_VERSION = "1.2"
 STOP_WORDS = {
     "a",
     "an",
@@ -391,6 +391,9 @@ class PlanCard:
     branch_source: str = "none"
     pr: str = "—"
     pr_source: str = "none"
+    todo_summary: dict[str, int] | None = None
+    count_source: str = "body"
+    stale_narrative: bool = False
 
     @property
     def is_active_for_triage(self) -> bool:
@@ -448,8 +451,9 @@ def build_plan_card(
 
     ide_tag = str(fm.get("ide") or derive_ide_tag(rel))
 
+    text = path.read_text(encoding="utf-8", errors="ignore")
     title = ""
-    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+    for line in text.splitlines():
         m = HEADING_RE.match(line)
         if m:
             title = m.group(1).strip()
@@ -459,6 +463,17 @@ def build_plan_card(
 
     items = items or []
     counts = Counter(i.status for i in items)
+    todos = parse_frontmatter_todos(text)
+    todo_summary = compute_todo_summary(todos) if todos else None
+    count_source = "todos" if todos else "body"
+    stale_narrative = False
+    if todos and todo_summary and todo_summary.get("total", 0) > 0:
+        if todo_summary.get("completed", 0) == todo_summary["total"]:
+            body_items = collect_items(path, repo_root)
+            stale_narrative = any(
+                it.status in {"Blocked", "In Progress", "Outstanding"}
+                for it in body_items
+            )
 
     return PlanCard(
         slug=path.stem.replace(".plan", ""),
@@ -476,6 +491,9 @@ def build_plan_card(
         counts=dict(counts),
         branch="—",
         branch_source="none",
+        todo_summary=todo_summary,
+        count_source=count_source,
+        stale_narrative=stale_narrative,
     )
 
 
@@ -794,6 +812,130 @@ def collect_items(path: Path, repo_root: Path) -> list[PlanItem]:
     return items
 
 
+TODO_ITEM_STATUS_MAP = {
+    "completed": "Implemented",
+    "in_progress": "In Progress",
+    "pending": "Outstanding",
+}
+
+
+def parse_frontmatter_todos(text: str) -> list[dict[str, str]]:
+    """Parse structured ``todos:`` entries from plan frontmatter."""
+    match = FRONTMATTER_BLOCK_RE.match(text)
+    if not match:
+        return []
+    todos: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+    in_todos = False
+    for raw in match.group(1).splitlines():
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        if re.match(r"^todos:\s*$", stripped):
+            in_todos = True
+            continue
+        if not in_todos:
+            continue
+        item_start = re.match(r"^\s*-\s+id:\s*(.+)$", raw)
+        if item_start:
+            if current:
+                todos.append(current)
+            current = {
+                "id": _strip_quotes(item_start.group(1).strip()),
+                "content": "",
+                "status": "pending",
+            }
+            continue
+        if current is None:
+            if FRONTMATTER_KV_RE.match(raw):
+                in_todos = False
+            continue
+        content_match = re.match(r"^\s+content:\s*(.+)$", raw)
+        if content_match:
+            current["content"] = _strip_quotes(content_match.group(1).strip())
+            continue
+        status_match = re.match(r"^\s+status:\s*(.+)$", raw)
+        if status_match:
+            current["status"] = _strip_quotes(status_match.group(1).strip()).lower()
+            continue
+        if FRONTMATTER_KV_RE.match(raw):
+            in_todos = False
+            if current:
+                todos.append(current)
+                current = None
+    if current:
+        todos.append(current)
+    return todos
+
+
+def compute_todo_summary(todos: list[dict[str, str]]) -> dict[str, int]:
+    summary = {
+        "total": len(todos),
+        "completed": 0,
+        "pending": 0,
+        "in_progress": 0,
+        "cancelled": 0,
+    }
+    for todo in todos:
+        status = str(todo.get("status") or "pending").lower()
+        if status == "completed":
+            summary["completed"] += 1
+        elif status == "in_progress":
+            summary["in_progress"] += 1
+        elif status == "cancelled":
+            summary["cancelled"] += 1
+        else:
+            summary["pending"] += 1
+    return summary
+
+
+def plan_all_todos_completed(card: "PlanCard") -> bool:
+    summary = card.todo_summary
+    if not summary or summary.get("total", 0) == 0:
+        return False
+    done = summary.get("completed", 0) + summary.get("cancelled", 0)
+    return done >= summary["total"]
+
+
+def items_from_todos(
+    path: Path,
+    repo_root: Path,
+    todos: list[dict[str, str]],
+) -> list[PlanItem]:
+    """Build PlanItem rows from frontmatter todos (status histogram source)."""
+    rel = path.relative_to(repo_root).as_posix()
+    items: list[PlanItem] = []
+    for todo in todos:
+        todo_id = str(todo.get("id") or "todo").strip() or "todo"
+        raw_status = str(todo.get("status") or "pending").lower()
+        if raw_status == "cancelled":
+            continue
+        status = TODO_ITEM_STATUS_MAP.get(raw_status, "Unknown")
+        body = str(todo.get("content") or todo_id).strip() or todo_id
+        confidence = "high" if raw_status in {"completed", "pending"} else "medium"
+        items.append(
+            PlanItem(
+                item=body,
+                source=rel,
+                status=status,
+                confidence=confidence,
+                evidence=[f"{rel}#todo:{todo_id}"],
+                why=f"Derived from frontmatter todo `{todo_id}` status `{raw_status}`.",
+                tokens=tokenize(body),
+            )
+        )
+    return items
+
+
+def collect_plan_items(path: Path, repo_root: Path) -> list[PlanItem]:
+    """Collect plan items: frontmatter todos when present, else body bullets."""
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    todos = parse_frontmatter_todos(text)
+    if todos:
+        return items_from_todos(path, repo_root, todos)
+    return collect_items(path, repo_root)
+
+
 def jaccard(left: set[str], right: set[str]) -> float:
     if not left or not right:
         return 0.0
@@ -942,6 +1084,8 @@ def detect_actions(
         excerpt = _first_active_item_excerpt(card)
 
         if card.disposition == "active":
+            if plan_all_todos_completed(card):
+                continue
             has_active_item = any(
                 it.status in {"Blocked", "In Progress", "Outstanding"}
                 for it in card.items
@@ -2038,12 +2182,17 @@ def render_master_mirror(
                 lines.append(f"### Disposition: `{current_disp}`")
                 lines.append("")
                 lines.append(
-                    "| Plan | Owner | Branch | PR | Priority | Items (Impl/Active/Blocked/Out/Unk) | Source |"
+                    "| Plan | Owner | Branch | PR | Priority | Todos (done/total) | Items (Impl/Active/Blocked/Out/Unk) | Source |"
                 )
                 lines.append(
-                    "|------|-------|--------|----|----------|--------------------------------------|--------|"
+                    "|------|-------|--------|----|----------|--------------------|--------------------------------------|--------|"
                 )
             counts = card.counts or {}
+            if card.todo_summary:
+                ts = card.todo_summary
+                todos_cell = f"{ts.get('completed', 0)}/{ts.get('total', 0)}"
+            else:
+                todos_cell = "—"
             items_cell = (
                 f"{counts.get('Implemented', 0)}/"
                 f"{counts.get('In Progress', 0)}/"
@@ -2060,6 +2209,7 @@ def render_master_mirror(
                 f"| `{card.branch}` "
                 f"| {card.pr} "
                 f"| {card.priority} "
+                f"| {todos_cell} "
                 f"| {items_cell} "
                 f"| `{card.source}` |"
             )
@@ -2340,9 +2490,9 @@ def main() -> int:
 
     items: list[PlanItem] = []
     for path in primary:
-        items.extend(collect_items(path, repo_root))
+        items.extend(collect_plan_items(path, repo_root))
     for path in secondary:
-        items.extend(collect_items(path, repo_root))
+        items.extend(collect_plan_items(path, repo_root))
 
     cards_by_source = build_cards_index(
         repo_root, primary, items, default_owner=default_owner

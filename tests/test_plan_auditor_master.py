@@ -467,3 +467,77 @@ def test_ensure_plan_branches_creates_ref_and_frontmatter(tmp_project_dir: Path)
     assert "branch: feature/new-feature" in plan_path.read_text(encoding="utf-8")
     assert card.branch == "feature/new-feature"
     assert card.branch_source == "audit_created"
+
+
+def test_todo_counts_ignore_open_body_checklist(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    plan_path = plans / "done.plan.md"
+    plan_path.write_text(
+        "---\n"
+        "disposition: active\n"
+        "owner: @test\n"
+        "todos:\n"
+        "  - id: a\n"
+        "    content: First task\n"
+        "    status: completed\n"
+        "  - id: b\n"
+        "    content: Second task\n"
+        "    status: completed\n"
+        "---\n"
+        "# Done plan\n"
+        "- [ ] still open in body but ignored for counts\n",
+        encoding="utf-8",
+    )
+    items = m.collect_plan_items(plan_path, tmp_project_dir)
+    cards = m.build_cards_index(tmp_project_dir, [plan_path], items, default_owner="@test")
+    card = cards[".cursor/plans/done.plan.md"]
+    assert card.count_source == "todos"
+    assert card.counts.get("Implemented", 0) == 2
+    assert card.counts.get("Outstanding", 0) == 0
+    assert card.todo_summary == {
+        "total": 2,
+        "completed": 2,
+        "pending": 0,
+        "in_progress": 0,
+        "cancelled": 0,
+    }
+    assert card.stale_narrative is True
+
+
+def test_active_plan_all_todos_done_skips_implement_verb(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    plan_path = plans / "ready.plan.md"
+    plan_path.write_text(
+        "---\n"
+        "disposition: active\n"
+        "owner: @test\n"
+        "todos:\n"
+        "  - id: only\n"
+        "    content: Ship it\n"
+        "    status: completed\n"
+        "---\n"
+        "# Ready\n",
+        encoding="utf-8",
+    )
+    items = m.collect_plan_items(plan_path, tmp_project_dir)
+    cards = m.build_cards_index(tmp_project_dir, [plan_path], items, default_owner="@test")
+    actions = m.detect_actions(list(cards.values()))
+    assert not any(a.plan_slug == "ready" and a.verb == "IMPLEMENT" for a in actions)
+
+
+def test_legacy_plan_without_todos_uses_body_counts(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    plan_path = plans / "legacy.plan.md"
+    plan_path.write_text("# Legacy\n- [ ] open item\n", encoding="utf-8")
+    items = m.collect_plan_items(plan_path, tmp_project_dir)
+    cards = m.build_cards_index(tmp_project_dir, [plan_path], items, default_owner="@test")
+    card = cards[".cursor/plans/legacy.plan.md"]
+    assert card.count_source == "body"
+    assert card.todo_summary is None
+    assert card.counts.get("Outstanding", 0) == 1
