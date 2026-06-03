@@ -710,3 +710,96 @@ def test_apply_archive_after_disposition_sync_in_same_run(tmp_project_dir: Path)
     )
     assert archived
     assert (plans / ".plan.archives" / "done.plan.md").is_file()
+
+
+def test_master_mirror_excludes_plan_archives_from_drift(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    plans = tmp_project_dir / ".cursor" / "plans"
+    archive_dir = plans / ".plan.archives"
+    archive_dir.mkdir(parents=True)
+    (archive_dir / "old.plan.md").write_text(
+        "---\ndisposition: archived\n---\n# Old\n",
+        encoding="utf-8",
+    )
+    (plans / "active.plan.md").write_text(
+        "---\ndisposition: active\n---\n# Active\n- [ ] todo\n",
+        encoding="utf-8",
+    )
+    (plans / "_master.plan.md").write_text(
+        "---\narchived_plans:\n  - old.plan.md\n---\n\n"
+        "# Master\n\n## active\n\n- [Active](active.plan.md)\n",
+        encoding="utf-8",
+    )
+    plan_path = plans / "active.plan.md"
+    items = m.collect_plan_items(plan_path, tmp_project_dir)
+    cards = m.build_cards_index(tmp_project_dir, [plan_path], items, default_owner="@test")
+    master_doc = m.parse_master_plan(plans / "_master.plan.md", tmp_project_dir)
+    mirror = m.render_master_mirror(
+        list(cards.values()), master_doc, repo_root=tmp_project_dir
+    )
+    assert "### On disk but missing from curated master:" not in mirror
+    assert "archived plan(s) under `.plan.archives/`" in mirror
+
+
+def test_sync_master_archived_batch_writes_pr_fields(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    plans = tmp_project_dir / ".cursor" / "plans"
+    archive_dir = plans / ".plan.archives"
+    archive_dir.mkdir(parents=True)
+    (archive_dir / "shipped.plan.md").write_text(
+        "---\n"
+        "disposition: archived\n"
+        "branch: feature/shipped\n"
+        "overview: Shipped the widget pipeline.\n"
+        "owner: @test\n"
+        "dri: @test\n"
+        "---\n"
+        "# Shipped\n",
+        encoding="utf-8",
+    )
+    master_path = plans / "_master.plan.md"
+    master_path.write_text("---\narchived_plans: []\n---\n\n# Master\n\n## archived\n\n", encoding="utf-8")
+
+    def fake_gh(_root: Path, branch: str) -> list[dict[str, object]] | None:
+        if branch == "feature/shipped":
+            return [
+                {
+                    "number": 9,
+                    "state": "MERGED",
+                    "url": "https://github.com/o/r/pull/9",
+                    "title": "Ship widgets",
+                    "body": "Merged after CI green.",
+                }
+            ]
+        return []
+
+    # apply_pr_resolution uses gh_runner; patch at fetch in sync uses _fetch_pr_details
+    import daily_plan_audit as mod
+
+    original = mod._fetch_pr_details
+
+    def fake_details(repo_root: Path, branch: str):
+        if branch == "feature/shipped":
+            return {
+                "number": "9",
+                "state": "merged",
+                "url": "https://github.com/o/r/pull/9",
+                "title": "Ship widgets",
+                "body": "Merged after CI green.",
+            }
+        return original(repo_root, branch)
+
+    mod._fetch_pr_details = fake_details
+    try:
+        synced = m.sync_master_archived_batch(tmp_project_dir, master_path, default_owner="@test")
+    finally:
+        mod._fetch_pr_details = original
+
+    assert synced == ["shipped.plan.md"]
+    text = master_path.read_text(encoding="utf-8")
+    assert "Branch: `feature/shipped`" in text
+    assert "[#9 merged]" in text
+    assert "Ship widgets" in text
+    assert "Plan summary: Shipped the widget pipeline." in text
+    assert "archived_plans:" in text
+    assert "  - shipped.plan.md" in text

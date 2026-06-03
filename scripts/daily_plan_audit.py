@@ -106,6 +106,7 @@ VALID_DISPOSITIONS = (
     "archived",
 )
 DEFAULT_DISPOSITION = "active"
+ARCHIVED_BATCH_LIMIT = 10
 
 # Map disposition -> action verb shown in next-actions queue. The `active`
 # disposition resolves to IMPLEMENT only when item-level signals say so;
@@ -851,20 +852,12 @@ def _move_master_plan_between_sections(
     master_path.write_text(fm_block + "\n".join(new_lines).rstrip() + "\n", encoding="utf-8")
 
 
-def _append_master_archived_plans_frontmatter(master_path: Path, plan_basename: str) -> None:
+def _set_master_archived_plans_frontmatter(
+    master_path: Path,
+    plan_basenames: list[str],
+) -> None:
+    """Replace ``archived_plans:`` with the current archived batch (max 10)."""
     text = master_path.read_text(encoding="utf-8", errors="ignore")
-    fm = parse_plan_frontmatter(text)
-    raw = fm.get("archived_plans")
-    if raw is None:
-        raw = fm.get("archive")
-    entries: list[str] = []
-    if isinstance(raw, str):
-        entries = [raw]
-    elif isinstance(raw, list):
-        entries = [str(x) for x in raw]
-    if plan_basename not in entries and plan_basename not in [Path(e).name for e in entries]:
-        entries.append(plan_basename)
-    # Rebuild archived_plans as YAML list in frontmatter.
     match = FRONTMATTER_BLOCK_RE.match(text)
     if not match:
         return
@@ -875,7 +868,7 @@ def _append_master_archived_plans_frontmatter(master_path: Path, plan_basename: 
         if line.startswith("archived_plans:") or line.startswith("archive:"):
             if not replaced:
                 new_body.append("archived_plans:")
-                for entry in entries:
+                for entry in plan_basenames:
                     new_body.append(f"  - {entry}")
                 replaced = True
             continue
@@ -884,11 +877,221 @@ def _append_master_archived_plans_frontmatter(master_path: Path, plan_basename: 
         new_body.append(line)
     if not replaced:
         new_body.append("archived_plans:")
-        for entry in entries:
+        for entry in plan_basenames:
             new_body.append(f"  - {entry}")
     new_fm = "---\n" + "\n".join(new_body) + "\n---\n"
     rest = text[match.end() :]
     master_path.write_text(new_fm + rest, encoding="utf-8")
+
+
+def _master_section_bounds(
+    body_lines: list[str],
+    section_name: str,
+) -> tuple[int, int] | None:
+    header = f"## {section_name}"
+    start = None
+    for idx, line in enumerate(body_lines):
+        if line.strip().lower() == header.lower():
+            start = idx
+            break
+    if start is None:
+        return None
+    end = len(body_lines)
+    for idx in range(start + 1, len(body_lines)):
+        if body_lines[idx].startswith("## "):
+            end = idx
+            break
+    return start, end
+
+
+def _replace_master_section(
+    master_path: Path,
+    section_name: str,
+    section_lines: list[str],
+) -> None:
+    """Replace the body of a ``## section`` in ``_master.plan.md``."""
+    text = master_path.read_text(encoding="utf-8", errors="ignore")
+    fm_match = FRONTMATTER_BLOCK_RE.match(text)
+    fm_block = fm_match.group(0) if fm_match else ""
+    body_lines = text[len(fm_block) :].splitlines()
+    bounds = _master_section_bounds(body_lines, section_name)
+    if bounds is None:
+        if body_lines and body_lines[-1].strip():
+            body_lines.append("")
+        body_lines.append(f"## {section_name}")
+        body_lines.append("")
+        body_lines.extend(section_lines)
+    else:
+        start, end = bounds
+        body_lines = (
+            body_lines[: start + 1]
+            + [""]
+            + section_lines
+            + body_lines[end:]
+        )
+    master_path.write_text(fm_block + "\n".join(body_lines).rstrip() + "\n", encoding="utf-8")
+
+
+def _is_archived_storage_path(rel_path: str) -> bool:
+    return "/.plan.archives/" in rel_path.replace("\\", "/")
+
+
+def discover_recent_archived_plans(
+    repo_root: Path,
+    *,
+    limit: int = ARCHIVED_BATCH_LIMIT,
+) -> list[Path]:
+    """Newest archived plan files under ``<ide>/plans/.plan.archives/``."""
+    paths: list[Path] = []
+    for folder in KNOWN_IDE_DOTFOLDERS:
+        archive_dir = repo_root / folder / "plans" / ".plan.archives"
+        if archive_dir.is_dir():
+            paths.extend(archive_dir.glob("*.plan.md"))
+    paths.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return paths[:limit]
+
+
+def _fetch_pr_details(
+    repo_root: Path,
+    branch: str,
+) -> dict[str, str] | None:
+    """Return PR title/body/url/state for ``branch`` via gh, or None."""
+    if not branch or branch in {"—", "-"}:
+        return None
+    try:
+        proc = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "list",
+                "--head",
+                branch,
+                "--json",
+                "number,title,body,url,state",
+                "--limit",
+                "1",
+            ],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        payload = json.loads(proc.stdout or "[]")
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, list) or not payload:
+        return None
+    row = payload[0]
+    if not isinstance(row, dict):
+        return None
+    return {
+        "number": str(row.get("number") or ""),
+        "title": str(row.get("title") or "").strip(),
+        "body": str(row.get("body") or "").strip(),
+        "url": str(row.get("url") or "").strip(),
+        "state": str(row.get("state") or "").strip().lower(),
+    }
+
+
+def _truncate_summary(text: str, limit: int = 220) -> str:
+    cleaned = re.sub(r"\s+", " ", (text or "").strip())
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 3].rstrip() + "..."
+
+
+def _format_archived_master_lines(
+    card: "PlanCard",
+    rel_link: str,
+    fm: dict[str, object],
+    pr_details: dict[str, str] | None,
+) -> list[str]:
+    """Multi-line archived entry for ``_master.plan.md``."""
+    summary = _truncate_summary(
+        str(fm.get("overview") or fm.get("name") or card.title)
+    )
+    lines = [
+        f"- [{card.title}]({rel_link}) — DRI: {card.dri}",
+        f"  - Branch: `{card.branch}`",
+    ]
+    if pr_details and pr_details.get("url"):
+        state = pr_details.get("state") or "unknown"
+        num = pr_details.get("number") or "?"
+        title = pr_details.get("title") or "PR"
+        url = pr_details["url"]
+        lines.append(
+            f"  - PR: [#{num} {state}]({url}) — {title}"
+        )
+        pr_body = _truncate_summary(pr_details.get("body") or "", limit=180)
+        if pr_body:
+            lines.append(f"  - PR description: {pr_body}")
+    elif card.pr not in {"—", "none"}:
+        lines.append(f"  - PR: {card.pr}")
+    else:
+        lines.append("  - PR: none")
+    lines.append(f"  - Plan summary: {summary}")
+    return lines
+
+
+def sync_master_archived_batch(
+    repo_root: Path,
+    master_path: Path,
+    *,
+    default_owner: str | None = None,
+) -> list[str]:
+    """Rewrite ``## archived`` with the latest batch (branch, PR, summary)."""
+    if not master_path.is_file():
+        return []
+
+    archived_paths = discover_recent_archived_plans(repo_root)
+    section_lines: list[str] = [
+        f"_Last archived batch (newest first, max {ARCHIVED_BATCH_LIMIT}). "
+        "Regenerated by `scripts/daily_plan_audit.py` — not the active build queue._",
+        "",
+    ]
+    basenames: list[str] = []
+
+    if not archived_paths:
+        section_lines.append("- _No archived plans on disk._")
+    else:
+        archived_cards: dict[str, "PlanCard"] = {}
+        for path in archived_paths:
+            rel = path.relative_to(repo_root).as_posix()
+            basenames.append(path.name)
+            plan_items = collect_plan_items(path, repo_root)
+            archived_cards[rel] = build_plan_card(
+                path,
+                repo_root,
+                items=plan_items,
+                default_owner=default_owner,
+            )
+        apply_branch_resolution(archived_cards, repo_root)
+        apply_pr_resolution(archived_cards, repo_root)
+
+        master_dir = master_path.parent
+        for path in archived_paths:
+            rel = path.relative_to(repo_root).as_posix()
+            card = archived_cards[rel]
+            fm = parse_plan_frontmatter(path)
+            rel_link = os.path.relpath(
+                path.resolve(),
+                start=master_dir.resolve(),
+            ).replace("\\", "/")
+            pr_details = _fetch_pr_details(repo_root, card.branch)
+            section_lines.extend(
+                _format_archived_master_lines(card, rel_link, fm, pr_details)
+            )
+            section_lines.append("")
+
+    _replace_master_section(master_path, "archived", section_lines)
+    _set_master_archived_plans_frontmatter(master_path, basenames)
+    return basenames
 
 
 def apply_archive_plans(
@@ -935,12 +1138,9 @@ def apply_archive_plans(
             plan_paths.append(master_path)
         plan_paths.extend(report_paths)
         rewrite_plan_links_in_paths(plan_paths, old_rel, new_rel)
-        if master_path and master_path.is_file():
-            _move_master_plan_between_sections(
-                master_path, repo_root, card, old_rel, new_rel
-            )
-            _append_master_archived_plans_frontmatter(master_path, Path(old_rel).name)
         archived.append(new_rel)
+    if master_path and master_path.is_file() and archived:
+        sync_master_archived_batch(repo_root, master_path)
     return archived
 
 
@@ -2622,25 +2822,26 @@ def render_master_mirror(
             )
         lines.append("")
 
-    # Drift detection (archive-aware; metadata-only archives are not drift).
-    on_disk = {c.source for c in cards}
-    if repo_root is not None:
-        for folder in KNOWN_IDE_DOTFOLDERS:
-            archive_dir = repo_root / folder / "plans" / ".plan.archives"
-            if archive_dir.is_dir():
-                for path in archive_dir.glob("*.plan.md"):
-                    on_disk.add(path.relative_to(repo_root.resolve()).as_posix())
+    # Drift detection: active index vs on-disk plans (not archive storage).
+    on_disk_active = {c.source for c in cards if not _is_archived_storage_path(c.source)}
     in_master = set(children)
     metadata = master_archived_metadata_entries(master_doc)
     only_master: list[str] = []
-    for src in sorted(in_master - on_disk):
+    for src in sorted(in_master - on_disk_active):
+        if _is_archived_storage_path(src):
+            continue
         if repo_root and resolve_plan_link_path(repo_root, src):
             continue
         base = Path(_normalize_plan_source_path(src)).name
         if src in metadata or base in metadata:
             continue
         only_master.append(src)
-    only_disk = sorted(on_disk - in_master)
+    only_disk = sorted(
+        p for p in (on_disk_active - in_master) if not _is_archived_storage_path(p)
+    )
+    archived_on_disk = 0
+    if repo_root is not None:
+        archived_on_disk = len(discover_recent_archived_plans(repo_root, limit=999))
 
     lines.append("## Drift")
     lines.append("")
@@ -2651,7 +2852,12 @@ def render_master_mirror(
             "create `_master.plan.md` to formalize the index."
         )
     elif not only_disk and not only_master:
-        lines.append("- _No drift: curated master matches discovered plans._")
+        lines.append("- _No drift: curated master matches discovered active plans._")
+        if archived_on_disk:
+            lines.append(
+                f"- {archived_on_disk} archived plan(s) under `.plan.archives/` "
+                f"(see `_master.plan.md` ## archived, max {ARCHIVED_BATCH_LIMIT} shown)."
+            )
     else:
         if only_disk:
             lines.append("### On disk but missing from curated master:")
@@ -3068,6 +3274,15 @@ def main() -> int:
         provenance=provenance,
     )
     (out_dir / "plan-task-board.md").write_text(board, encoding="utf-8")
+
+    archived_batch_synced: list[str] = []
+    if master_path and master_path.is_file():
+        archived_batch_synced = sync_master_archived_batch(
+            repo_root,
+            master_path,
+            default_owner=default_owner,
+        )
+        master_doc = parse_master_plan(master_path, repo_root)
 
     # Master mirror (drift-aware).
     synced_master_entries = sync_master_plan(
