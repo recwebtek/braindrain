@@ -12,8 +12,15 @@ Run planning close-out for this workspace: refresh `.braindrain/plan-reports/` f
 From repo root:
 
 ```bash
+# read-only (default)
 python3 scripts/daily_plan_audit.py --repo-root . --trigger "manual-masterplan-command"
+
+# after you confirm the READY_TO_ARCHIVE list in next-actions.md
+python3 scripts/daily_plan_audit.py --repo-root . --trigger "manual-masterplan-command" \
+  --apply-disposition-sync --apply-archive
 ```
+
+Write-back flags (`--apply-disposition-sync`, `--apply-archive`) are **human + CLI only**. The daily-plan-auditor subagent and stop hook never pass them unless you explicitly request apply in the same turn.
 
 ## What the auditor does (machine-local plans)
 

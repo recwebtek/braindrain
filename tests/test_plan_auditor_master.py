@@ -580,3 +580,28 @@ def test_ready_to_archive_in_next_actions_and_audit(tmp_project_dir: Path) -> No
     )
     assert "READY_TO_ARCHIVE: 1 plan(s)" in report
     assert "## READY_TO_ARCHIVE (confirm with user)" in report
+
+
+def test_apply_disposition_sync_only_when_flag_set(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    plan_path = plans / "sync_me.plan.md"
+    plan_path.write_text(
+        "---\n"
+        "disposition: active\n"
+        "owner: @test\n"
+        "todos:\n"
+        "  - id: x\n"
+        "    content: Done\n"
+        "    status: completed\n"
+        "---\n"
+        "# Sync\n",
+        encoding="utf-8",
+    )
+    items = m.collect_plan_items(plan_path, tmp_project_dir)
+    cards = m.build_cards_index(tmp_project_dir, [plan_path], items, default_owner="@test")
+    assert "disposition: implemented" not in plan_path.read_text(encoding="utf-8")
+    updated = m.apply_disposition_sync(tmp_project_dir, cards)
+    assert updated == [".cursor/plans/sync_me.plan.md"]
+    assert "disposition: implemented" in plan_path.read_text(encoding="utf-8")

@@ -567,6 +567,23 @@ def parse_args() -> argparse.Namespace:
         dest="ensure_branches",
         help="Skip automatic branch creation for active plans.",
     )
+    parser.add_argument(
+        "--apply-disposition-sync",
+        action="store_true",
+        help=(
+            "Write disposition: implemented for active plans whose frontmatter "
+            "todos are all completed (default: report-only)."
+        ),
+    )
+    parser.add_argument(
+        "--apply-archive",
+        action="store_true",
+        help=(
+            "Archive READY_TO_ARCHIVE plans: move to .plan.archives/, set "
+            "disposition: archived, rewrite links, update _master.plan.md "
+            "(requires explicit human confirmation; default off)."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -1198,6 +1215,29 @@ def detect_ready_to_archive(cards: list["PlanCard"]) -> list[ReadyToArchive]:
         )
     ready.sort(key=lambda r: (_PRIORITY_RANK.get(r.priority, 3), r.ide, r.plan_slug))
     return ready
+
+
+def apply_disposition_sync(
+    repo_root: Path,
+    cards: dict[str, "PlanCard"],
+) -> list[str]:
+    """Set ``disposition: implemented`` when all todos are completed."""
+    updated: list[str] = []
+    for rel, card in cards.items():
+        if card.is_master or card.disposition != "active":
+            continue
+        if not plan_all_todos_completed(card):
+            continue
+        path = repo_root / rel
+        if not path.is_file():
+            continue
+        current = path.read_text(encoding="utf-8", errors="ignore")
+        new_text = _set_frontmatter_key(current, "disposition", "implemented")
+        if new_text != current:
+            path.write_text(new_text, encoding="utf-8")
+            card.disposition = "implemented"
+            updated.append(rel)
+    return updated
 
 
 def render_ready_to_archive_section(
@@ -2596,6 +2636,10 @@ def main() -> int:
         apply_pr_resolution(cards_by_source, repo_root)
     branch_links = persist_resolved_plan_branches(repo_root, cards_by_source)
 
+    disposition_synced: list[str] = []
+    if getattr(args, "apply_disposition_sync", False):
+        disposition_synced = apply_disposition_sync(repo_root, cards_by_source)
+
     ready_to_archive = detect_ready_to_archive(list(cards_by_source.values()))
 
     report = build_report(
@@ -2628,6 +2672,13 @@ def main() -> int:
             report
             + "\n\n## Plan branches created (this run)\n\n"
             + "\n".join(f"- `{p}`" for p in branches_created)
+            + "\n"
+        )
+    if disposition_synced:
+        report = (
+            report
+            + "\n\n## Disposition sync (this run)\n\n"
+            + "\n".join(f"- `disposition: implemented` → `{p}`" for p in disposition_synced)
             + "\n"
         )
     dated_path = out_dir / f"plan-audit-{args.report_date}.md"
@@ -2685,6 +2736,12 @@ def main() -> int:
         next_actions += (
             "\n## Plan branch links (this run)\n\n"
             + "\n".join(f"- frontmatter updated: `{src}`" for src in branch_links)
+            + "\n"
+        )
+    if disposition_synced:
+        next_actions += (
+            "\n## Disposition sync (this run)\n\n"
+            + "\n".join(f"- `disposition: implemented` → `{src}`" for src in disposition_synced)
             + "\n"
         )
     (out_dir / "next-actions.md").write_text(next_actions, encoding="utf-8")

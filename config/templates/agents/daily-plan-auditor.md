@@ -28,6 +28,14 @@ By default the auditor **creates missing branches** for active plans (`--ensure-
 
 For automation/tests only, `--skip-archive` avoids moving archived plans.
 
+**Read-only by default:** do not pass `--apply-disposition-sync` or `--apply-archive` unless the user explicitly asks to apply write-back in the same turn. Default runs and stop-hook invocations stay report-only.
+
+```bash
+# optional write-back (human-confirmed only)
+python3 scripts/daily_plan_audit.py --repo-root . --trigger "manual-plan-audit" \
+  --apply-disposition-sync --apply-archive
+```
+
 ## Archive protocol
 
 Plans move to `<ide>/plans/.plan.archives/` when:
