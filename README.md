@@ -604,8 +604,8 @@ Memory artifacts and paths:
 - Daily planning audit reports path:
   - `.braindrain/plan-reports/plan-audit-YYYY-MM-DD.md` (full report, now plan-centric cards grouped by IDE -> disposition)
   - `.braindrain/plan-reports/latest.md` (latest mirror)
-  - `.braindrain/plan-reports/plan-task-board.md` (active item board with IDE + inherited owner)
-  - `.braindrain/plan-reports/master-plan.md` (generated master mirror + drift detection + **Branch** and **PR** columns)
+  - `.braindrain/plan-reports/plan-task-board.md` (active item board with **Seq** / **Plan** columns, sorted by `_master.plan.md` execution order then item status)
+  - `.braindrain/plan-reports/master-plan.md` (generated master mirror + **Implementation sequence** build queue + drift detection + **Branch** and **PR** columns)
   - `.braindrain/plan-reports/next-actions.md` (verb queue: `MERGE`, `FIX`, `REPLAN`, `RESEARCH`, `IMPLEMENT`, `BACKLOG`)
   - Primary plan discovery now scans known IDE plan dirs (`.cursor/plans`, `.codex/plans`, `.kiro/plans`, `.windsurf/plans`, etc.), and each plan/action is tagged with its IDE source.
   - Branch resolution for each plan is hybrid by precedence: frontmatter `branch:` -> `.cursor/.gitops-queue.json` (`planSource` exact match, then fuzzy) -> `.cursor/.gitops-memory.jsonl` -> local git branch slug match (`git_local`) -> `—`.

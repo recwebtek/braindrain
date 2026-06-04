@@ -28,6 +28,18 @@ By default the auditor **creates missing branches** for active plans (`--ensure-
 
 For automation/tests only, `--skip-archive` avoids moving archived plans.
 
+**Read-only by default:** do not pass `--apply-disposition-sync` or `--apply-archive` unless the user explicitly asks to apply write-back in the same turn. Default runs and stop-hook invocations stay report-only.
+
+```bash
+# optional write-back (human-confirmed only)
+python3 scripts/daily_plan_audit.py --repo-root . --trigger "manual-plan-audit" \
+  --apply-disposition-sync --apply-archive
+
+# optional overlap relation write-back (high-confidence path/branch/token only)
+python3 scripts/daily_plan_audit.py --repo-root . --trigger "manual-plan-audit" \
+  --apply-overlap-relations
+```
+
 ## Archive protocol
 
 Plans move to `<ide>/plans/.plan.archives/` when:
@@ -36,6 +48,88 @@ Plans move to `<ide>/plans/.plan.archives/` when:
 - `_master.plan.md` lists them under `archived_plans:` or `archive:` (paths relative to that `plans/` dir).
 
 After a move, update links in `_master.plan.md` on the next edit so drift reports stay clean.
+
+## Multi-phase branch + PR registry (required for phased plans)
+
+When a plan uses **more than one git branch** (e.g. `my-feature-phase0`, `my-feature-phase1`, `my-feature-phase2-3`):
+
+1. Maintain **`branches:`** in plan frontmatter (ordered list of all phase branch names).
+2. Set **`branch:`** to the **active** phase branch you are working on now.
+3. Run the auditor (or `/masterplan`) — it **auto-writes `phase_branches:`** with per-branch `pr:` URLs from `gh pr list --head <branch> --state all`.
+4. Earlier phases without their own PR head **inherit** the next phase PR (e.g. phase0 → phase1’s PR) with an explanatory `note:`.
+5. Do **not** rely on a single top-level `pr:` — the registry replaces it when `branches:` has 2+ entries.
+
+Example:
+
+```yaml
+branch: my-feature-phase4
+branches:
+  - my-feature-phase0
+  - my-feature-phase1
+  - my-feature-phase2-3
+  - my-feature-phase4
+phase_branches:
+  - branch: my-feature-phase0
+    phase: "0"
+    pr: https://github.com/org/repo/pull/109
+    note: no separate PR head; inherited from `my-feature-phase1` (#109)
+  - branch: my-feature-phase1
+    phase: "1"
+    pr: https://github.com/org/repo/pull/109
+    pr_state: OPEN
+```
+
+Reports show aggregated PRs (`#109, #110`) and a per-phase table in plan cards.
+
+## Master execution order (overseer)
+
+`_master.plan.md` drives **implementation sequence** in generated reports:
+
+| Source | Precedence |
+|--------|------------|
+| `execution_order:` frontmatter | Overrides body link order (paths relative to the `plans/` dir) |
+| `## active` markdown links | Top-to-bottom link order (default) |
+| Heuristic tail | Plans on disk but not indexed, or non–build-queue dispositions excluded |
+
+Optional master frontmatter:
+
+```yaml
+execution_order:
+  - first.plan.md
+  - second.plan.md
+goalposts:
+  - "Ship X without changing Y"
+```
+
+**Build queue** excludes `merge-ready`, `implemented`, and `archived` plans from the numbered sequence (they still appear in disposition tables).
+
+Surfaces after each run:
+
+- `plan-task-board.md` — `Seq` + `Plan` columns, sorted by plan rank then item status
+- `master-plan.md` — **Implementation sequence (build queue)**, **Overlap clusters**, **Goal alignment** before IDE tables
+- `overlap-relations.md` — snapshot of plan-level overlap pairs and clusters
+- `next-actions.md` — within each verb bucket, actions sort by plan rank then priority
+
+## Overlap relations (overseer)
+
+Plan-level overlap signals (report-only by default):
+
+| Signal | Rule | Severity |
+|--------|------|----------|
+| Shared path refs | Same repo-relative path in active items of two plans | high |
+| Token Jaccard | Plan-level token overlap ≥ 0.55 | medium/high |
+| Same branch | Two active plans share identical `branch:` | high |
+| `supersedes` | Already declared in frontmatter | informational |
+
+Optional frontmatter vocabulary: `supersedes`, `duplicates`, `relates_to`, `blocks` (scalar or list).
+
+`--apply-overlap-relations` appends `relates_to` or `duplicates` for high-confidence pairs only; never overwrites existing `supersedes` / `duplicates`.
+
+## Goal alignment
+
+Loads goal lines from `.cursor/PRD.md` (Goals / Success criteria), `.cursor/TASK-GRAPH.md` (Stage headings), `.cursor/project-context.json`, and `_master.plan.md` `goalposts:`.
+
+Scores each active plan 0–100; flags plans below 40 in the audit executive summary. See **Goal alignment** table in `master-plan.md`.
 
 ## Response format
 
@@ -48,10 +142,13 @@ Return JSON only:
     "dated": ".braindrain/plan-reports/plan-audit-YYYY-MM-DD.md",
     "taskBoard": ".braindrain/plan-reports/plan-task-board.md",
     "masterMirror": ".braindrain/plan-reports/master-plan.md",
+    "overlapRelations": ".braindrain/plan-reports/overlap-relations.md",
     "nextActions": ".braindrain/plan-reports/next-actions.md"
   },
   "summary": "one paragraph: coverage, top risk, drift vs master if any",
   "recommendedVerbs": ["MERGE", "REPLAN", "RESEARCH", "IMPLEMENT", "FIX", "BACKLOG"],
+  "implementationSequence": [".cursor/plans/example.plan.md"],
+  "overlapClusters": [["plan-a", "plan-b"]],
   "archiveMoves": [".cursor/plans/.plan.archives/example.plan.md"]
 }
 ```
@@ -64,7 +161,7 @@ Return JSON only:
 - Populate PR column from the **reconciled** branch; if lookup is `none`, retry fuzzy `git_local` candidates before reporting `none`.
 - When a plan is resolved from gitops context and `branch:` is missing, persist that `branch:` into plan frontmatter during the run.
 - Flag plans whose opening **Problem Summary** contradict completed todos or shipped code as **stale narrative**; recommend `disposition: archived` or a replan file — do not surface stale prose as IMPLEMENT work.
-- Replan work: prefer a **new** plan file and link supersession in `_master.plan.md` rather than silently overwriting history (see coordinator / architect guidance).
+- Replan work: prefer a **new** plan file, set `supersedes:` on the new plan, archive the old plan in `_master.plan.md`, and re-run the auditor — do not silently overwrite history (see coordinator / architect guidance).
 - Research-heavy follow-ups: delegate to the `research` subagent, then fold findings back into the parent plan.
 - Ensure plan/report frontmatter contains model provenance fields:
   `created_by_model`, `created_at`, `last_modified_by_model`, `last_modified_at`, `cursor_mode`.

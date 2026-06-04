@@ -74,5 +74,6 @@ Instructions specifically for the Sonnet coordinator:
 - Flag any ambiguities from intake as `[ASSUMPTION: ...]` inline.
 - If AI compatibility was requested, include full LLMs.txt schema in PRD.
 - If you create or materially update any `*.plan.md` under an IDE `plans/` directory (for example `.cursor/plans/`), follow **Planning session close-out** in Ruler `RULES.md` (link new plans in `_master.plan.md`, then run `daily-plan-auditor` or `scripts/daily_plan_audit.py`).
+- When superseding an older plan, set `supersedes:` on the new file, archive the old plan in the master index, and re-run the auditor for overlap/sequence reports.
 
 After writing all files: "Architecture complete. Run /coordinate to begin execution."

@@ -163,11 +163,16 @@ When you **create or finish editing** a tracked plan file under an IDE `plans/` 
 
 **Planning-owned agents** (for example `architect`, `coordinator`, or any agent authoring `*.plan.md` in a `plans/` tree) **must** complete this close-out **before ending the turn** when a new or materially updated plan was written:
 
-1. Ensure `_master.plan.md` links any new active plans (markdown links to `*.plan.md` files).
+1. Ensure `_master.plan.md` links any new active plans (markdown links under `## active`, top-to-bottom = default build order). Optional frontmatter: `execution_order:` (override list), `goalposts:` (alignment hints for overseer reports).
+   - **Multi-phase plans:** maintain `branches:` (all phase branch names), `branch:` (active phase), and re-run the auditor so `phase_branches:` is auto-filled with each phase’s PR (see `daily-plan-auditor.md`).
 2. Run the planning auditor so reports stay current — either invoke the `daily-plan-auditor` subagent or run:
    `python3 scripts/daily_plan_audit.py --repo-root . --trigger "post-planning-session"`
    (The Cursor stop hook may also run the auditor, but it is daily-gated; session close-out should not rely on the hook alone.)
 3. For **replan** work, prefer a **new** plan file and record supersession in the master index rather than overwriting the old file in place.
+   - Set `supersedes:` on the new plan pointing at the older slug.
+   - Set the old plan `disposition: archived` (or list under `archived_plans:` / `## archived` in `_master.plan.md`).
+   - Optional relation frontmatter: `duplicates:`, `relates_to:`, `blocks:` (scalar or list).
+   - Re-run the auditor (`/masterplan` or `scripts/daily_plan_audit.py`) so implementation sequence and overlap reports refresh.
 4. Mark abandoned plans `disposition: archived` (or `archived: true` / `status: archived`), or list them under `archived_plans:` / `archive:` in `_master.plan.md` frontmatter; the next auditor run moves them to `.plan.archives/` under the same `plans/` directory.
 
 ### Model provenance and footer policy
