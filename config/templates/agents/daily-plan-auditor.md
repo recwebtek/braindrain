@@ -34,6 +34,10 @@ For automation/tests only, `--skip-archive` avoids moving archived plans.
 # optional write-back (human-confirmed only)
 python3 scripts/daily_plan_audit.py --repo-root . --trigger "manual-plan-audit" \
   --apply-disposition-sync --apply-archive
+
+# optional overlap relation write-back (high-confidence path/branch/token only)
+python3 scripts/daily_plan_audit.py --repo-root . --trigger "manual-plan-audit" \
+  --apply-overlap-relations
 ```
 
 ## Archive protocol
@@ -70,8 +74,30 @@ goalposts:
 Surfaces after each run:
 
 - `plan-task-board.md` — `Seq` + `Plan` columns, sorted by plan rank then item status
-- `master-plan.md` — **Implementation sequence (build queue)** section before IDE tables
+- `master-plan.md` — **Implementation sequence (build queue)**, **Overlap clusters**, **Goal alignment** before IDE tables
+- `overlap-relations.md` — snapshot of plan-level overlap pairs and clusters
 - `next-actions.md` — within each verb bucket, actions sort by plan rank then priority
+
+## Overlap relations (overseer)
+
+Plan-level overlap signals (report-only by default):
+
+| Signal | Rule | Severity |
+|--------|------|----------|
+| Shared path refs | Same repo-relative path in active items of two plans | high |
+| Token Jaccard | Plan-level token overlap ≥ 0.55 | medium/high |
+| Same branch | Two active plans share identical `branch:` | high |
+| `supersedes` | Already declared in frontmatter | informational |
+
+Optional frontmatter vocabulary: `supersedes`, `duplicates`, `relates_to`, `blocks` (scalar or list).
+
+`--apply-overlap-relations` appends `relates_to` or `duplicates` for high-confidence pairs only; never overwrites existing `supersedes` / `duplicates`.
+
+## Goal alignment
+
+Loads goal lines from `.cursor/PRD.md` (Goals / Success criteria), `.cursor/TASK-GRAPH.md` (Stage headings), `.cursor/project-context.json`, and `_master.plan.md` `goalposts:`.
+
+Scores each active plan 0–100; flags plans below 40 in the audit executive summary. See **Goal alignment** table in `master-plan.md`.
 
 ## Response format
 
@@ -84,10 +110,13 @@ Return JSON only:
     "dated": ".braindrain/plan-reports/plan-audit-YYYY-MM-DD.md",
     "taskBoard": ".braindrain/plan-reports/plan-task-board.md",
     "masterMirror": ".braindrain/plan-reports/master-plan.md",
+    "overlapRelations": ".braindrain/plan-reports/overlap-relations.md",
     "nextActions": ".braindrain/plan-reports/next-actions.md"
   },
   "summary": "one paragraph: coverage, top risk, drift vs master if any",
   "recommendedVerbs": ["MERGE", "REPLAN", "RESEARCH", "IMPLEMENT", "FIX", "BACKLOG"],
+  "implementationSequence": [".cursor/plans/example.plan.md"],
+  "overlapClusters": [["plan-a", "plan-b"]],
   "archiveMoves": [".cursor/plans/.plan.archives/example.plan.md"]
 }
 ```
@@ -100,7 +129,7 @@ Return JSON only:
 - Populate PR column from the **reconciled** branch; if lookup is `none`, retry fuzzy `git_local` candidates before reporting `none`.
 - When a plan is resolved from gitops context and `branch:` is missing, persist that `branch:` into plan frontmatter during the run.
 - Flag plans whose opening **Problem Summary** contradict completed todos or shipped code as **stale narrative**; recommend `disposition: archived` or a replan file — do not surface stale prose as IMPLEMENT work.
-- Replan work: prefer a **new** plan file and link supersession in `_master.plan.md` rather than silently overwriting history (see coordinator / architect guidance).
+- Replan work: prefer a **new** plan file, set `supersedes:` on the new plan, archive the old plan in `_master.plan.md`, and re-run the auditor — do not silently overwrite history (see coordinator / architect guidance).
 - Research-heavy follow-ups: delegate to the `research` subagent, then fold findings back into the parent plan.
 - Ensure plan/report frontmatter contains model provenance fields:
   `created_by_model`, `created_at`, `last_modified_by_model`, `last_modified_at`, `cursor_mode`.

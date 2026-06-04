@@ -74,6 +74,8 @@ If no branch exists yet for the plan, dispatch gitops `branch-setup` first, then
 
 When you **write or materially edit** any `*.plan.md` under an IDE `plans/` tree, finish with planning close-out per Ruler `RULES.md`: update `_master.plan.md` links if needed, then invoke `daily-plan-auditor` or run `scripts/daily_plan_audit.py` (do not rely only on the daily-gated stop hook).
 
+For **replan** work: set `supersedes:` on the new plan, archive or list the superseded plan in `_master.plan.md`, and re-run the auditor so overlap clusters and goal alignment refresh. Before `[BUILD]`, read implementation sequence #1 from `.braindrain/plan-reports/master-plan.md` (or task board `Seq` column) and respect `blocks:` / `supersedes:` on the selected plan.
+
 ## Progress Tracking
 
 Maintain `.cursor/PROGRESS.md`:
