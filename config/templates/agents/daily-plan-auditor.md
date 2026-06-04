@@ -45,6 +45,34 @@ Plans move to `<ide>/plans/.plan.archives/` when:
 
 After a move, update links in `_master.plan.md` on the next edit so drift reports stay clean.
 
+## Master execution order (overseer)
+
+`_master.plan.md` drives **implementation sequence** in generated reports:
+
+| Source | Precedence |
+|--------|------------|
+| `execution_order:` frontmatter | Overrides body link order (paths relative to the `plans/` dir) |
+| `## active` markdown links | Top-to-bottom link order (default) |
+| Heuristic tail | Plans on disk but not indexed, or non–build-queue dispositions excluded |
+
+Optional master frontmatter:
+
+```yaml
+execution_order:
+  - first.plan.md
+  - second.plan.md
+goalposts:
+  - "Ship X without changing Y"
+```
+
+**Build queue** excludes `merge-ready`, `implemented`, and `archived` plans from the numbered sequence (they still appear in disposition tables).
+
+Surfaces after each run:
+
+- `plan-task-board.md` — `Seq` + `Plan` columns, sorted by plan rank then item status
+- `master-plan.md` — **Implementation sequence (build queue)** section before IDE tables
+- `next-actions.md` — within each verb bucket, actions sort by plan rank then priority
+
 ## Response format
 
 Return JSON only:
