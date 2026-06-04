@@ -595,6 +595,14 @@ def parse_args() -> argparse.Namespace:
             "(requires explicit human confirmation; default off)."
         ),
     )
+    parser.add_argument(
+        "--apply-overlap-relations",
+        action="store_true",
+        help=(
+            "Write high-confidence relates_to / duplicates frontmatter for "
+            "plan overlap pairs (default: report-only)."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -1477,6 +1485,585 @@ def detect_overlaps(items: list[PlanItem]) -> list[dict[str, str]]:
     return overlaps
 
 
+PLAN_RELATION_KEYS = ("supersedes", "duplicates", "relates_to", "blocks")
+GOAL_SECTION_HEADING_RE = re.compile(
+    r"^\s*#{1,3}\s+(goals|success criteria|objectives)\b",
+    re.IGNORECASE,
+)
+STAGE_HEADING_RE = re.compile(r"^\s*##\s+Stage\s+\d+", re.IGNORECASE)
+DEFAULT_GOAL_ALIGNMENT_MIN_SCORE = 40
+
+
+@dataclasses.dataclass
+class PlanOverlapEdge:
+    """Plan-level overlap signal between two active plans."""
+
+    source_a: str
+    source_b: str
+    signal: str
+    severity: str
+    detail: str
+    similarity: float = 0.0
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "source_a": self.source_a,
+            "source_b": self.source_b,
+            "signal": self.signal,
+            "severity": self.severity,
+            "detail": self.detail,
+            "similarity": f"{self.similarity:.2f}" if self.similarity else "",
+        }
+
+
+@dataclasses.dataclass
+class PlanGoalAlignment:
+    """Goal-alignment score for an active plan."""
+
+    source: str
+    slug: str
+    title: str
+    goal_tags: list[str]
+    alignment_score: int
+    unaligned_risk: str
+
+
+class _UnionFind:
+    def __init__(self, nodes: list[str]) -> None:
+        self.parent = {n: n for n in nodes}
+
+    def find(self, node: str) -> str:
+        while self.parent[node] != node:
+            self.parent[node] = self.parent[self.parent[node]]
+            node = self.parent[node]
+        return node
+
+    def union(self, left: str, right: str) -> None:
+        root_left = self.find(left)
+        root_right = self.find(right)
+        if root_left != root_right:
+            self.parent[root_right] = root_left
+
+    def clusters(self) -> list[list[str]]:
+        groups: dict[str, list[str]] = defaultdict(list)
+        for node in self.parent:
+            groups[self.find(node)].append(node)
+        return [sorted(group) for group in groups.values() if len(group) > 1]
+
+
+def _frontmatter_relation_values(fm: dict[str, object], key: str) -> list[str]:
+    raw = fm.get(key)
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return [str(item).strip() for item in raw if str(item).strip()]
+    value = str(raw).strip()
+    return [value] if value else []
+
+
+def _resolve_plan_relation_target(
+    target: str,
+    from_source: str,
+    repo_root: Path,
+) -> list[str]:
+    target = target.strip()
+    if not target:
+        return []
+    plans_dir = (repo_root / Path(from_source).parent).resolve()
+    candidates = [
+        (plans_dir / target).resolve(),
+        (repo_root / target).resolve(),
+    ]
+    found: list[str] = []
+    for candidate in candidates:
+        try:
+            rel = candidate.relative_to(repo_root.resolve()).as_posix()
+        except ValueError:
+            continue
+        if rel.endswith(".plan.md"):
+            found.append(rel)
+    if found:
+        return found
+    base = Path(target).name
+    for folder in KNOWN_IDE_DOTFOLDERS:
+        plans_dir = repo_root / folder / "plans"
+        if not plans_dir.is_dir():
+            continue
+        for path in plans_dir.rglob(base):
+            if path.is_file():
+                found.append(path.relative_to(repo_root).as_posix())
+    return found
+
+
+def _is_overlap_eligible(card: "PlanCard") -> bool:
+    return not card.is_master and card.is_active_for_triage
+
+
+def _collect_plan_path_refs(items: list[PlanItem], source: str) -> set[str]:
+    active_statuses = {"Outstanding", "In Progress", "Blocked"}
+    refs: set[str] = set()
+    for item in items:
+        if item.source != source or item.status not in active_statuses:
+            continue
+        for evidence in item.evidence:
+            if "/" in evidence and not evidence.startswith("http"):
+                refs.add(evidence.split("#", 1)[0])
+        refs.update(extract_path_refs(item.item))
+    return refs
+
+
+def _aggregate_plan_tokens(items: list[PlanItem], source: str) -> set[str]:
+    tokens: set[str] = set()
+    for item in items:
+        if item.source == source:
+            tokens.update(item.tokens)
+    return tokens
+
+
+def _titles_align(card_a: "PlanCard", card_b: "PlanCard") -> bool:
+    left = tokenize(card_a.title)
+    right = tokenize(card_b.title)
+    if not left or not right:
+        return False
+    return jaccard(left, right) >= 0.4
+
+
+def detect_plan_overlaps(
+    cards_by_source: dict[str, "PlanCard"],
+    items: list[PlanItem],
+    *,
+    repo_root: Path,
+    jaccard_threshold: float = 0.55,
+) -> tuple[list[PlanOverlapEdge], list[list[str]]]:
+    """Detect plan-level overlap via paths, tokens, branches, and relations."""
+    eligible = {
+        source: card
+        for source, card in cards_by_source.items()
+        if _is_overlap_eligible(card)
+    }
+    sources = sorted(eligible.keys())
+    seen: set[tuple[str, str, str]] = set()
+    edges: list[PlanOverlapEdge] = []
+
+    def add_edge(
+        left: str,
+        right: str,
+        signal: str,
+        severity: str,
+        detail: str,
+        *,
+        similarity: float = 0.0,
+    ) -> None:
+        if left == right:
+            return
+        pair = (left, right) if left <= right else (right, left)
+        dedupe_key = (pair[0], pair[1], signal)
+        if dedupe_key in seen:
+            return
+        seen.add(dedupe_key)
+        edges.append(
+            PlanOverlapEdge(
+                pair[0],
+                pair[1],
+                signal,
+                severity,
+                detail,
+                similarity=similarity,
+            )
+        )
+
+    paths_by_source = {
+        source: _collect_plan_path_refs(items, source) for source in sources
+    }
+    for idx, source_a in enumerate(sources):
+        for source_b in sources[idx + 1 :]:
+            shared = paths_by_source[source_a] & paths_by_source[source_b]
+            if shared:
+                sample = ", ".join(sorted(shared)[:3])
+                add_edge(
+                    source_a,
+                    source_b,
+                    "path",
+                    "high",
+                    f"shared paths: {sample}",
+                )
+
+    tokens_by_source = {
+        source: _aggregate_plan_tokens(items, source) for source in sources
+    }
+    for idx, source_a in enumerate(sources):
+        for source_b in sources[idx + 1 :]:
+            score = jaccard(tokens_by_source[source_a], tokens_by_source[source_b])
+            if score >= jaccard_threshold:
+                severity = "high" if score >= 0.75 else "medium"
+                add_edge(
+                    source_a,
+                    source_b,
+                    "token",
+                    severity,
+                    f"plan-level token jaccard={score:.2f}",
+                    similarity=score,
+                )
+
+    branch_map: dict[str, list[str]] = defaultdict(list)
+    for source, card in eligible.items():
+        if card.branch and card.branch not in ("—", ""):
+            branch_map[card.branch].append(source)
+    for branch, branch_sources in branch_map.items():
+        if len(branch_sources) < 2:
+            continue
+        ordered = sorted(branch_sources)
+        for idx, source_a in enumerate(ordered):
+            for source_b in ordered[idx + 1 :]:
+                add_edge(
+                    source_a,
+                    source_b,
+                    "branch",
+                    "high",
+                    f"identical branch `{branch}`",
+                )
+
+    for source, card in eligible.items():
+        path = repo_root / source
+        if not path.is_file():
+            continue
+        fm = parse_plan_frontmatter(path)
+        for target in _frontmatter_relation_values(fm, "supersedes"):
+            for other in _resolve_plan_relation_target(target, source, repo_root):
+                if other in eligible and other != source:
+                    add_edge(
+                        source,
+                        other,
+                        "supersedes",
+                        "informational",
+                        f"`{card.slug}` supersedes `{Path(other).stem}`",
+                    )
+
+    union_find = _UnionFind(sources)
+    for edge in edges:
+        if edge.severity in {"high", "medium"}:
+            union_find.union(edge.source_a, edge.source_b)
+    clusters = union_find.clusters()
+    edges.sort(
+        key=lambda edge: (
+            edge.severity == "informational",
+            edge.severity == "medium",
+            -edge.similarity,
+            edge.source_a,
+            edge.source_b,
+        )
+    )
+    return edges, clusters
+
+
+def _append_frontmatter_list_value(text: str, key: str, value: str) -> str:
+    """Append a list item under ``key`` without overwriting existing relation keys."""
+    match = FRONTMATTER_BLOCK_RE.match(text)
+    if not match:
+        return f"---\n{key}:\n  - {value}\n---\n\n{text}"
+    fm_body = match.group(1)
+    fm = _parse_frontmatter_body(fm_body)
+    existing = _frontmatter_relation_values(fm, key)
+    if value in existing or any(Path(item).name == Path(value).name for item in existing):
+        return text
+    if key not in fm:
+        updated_body = fm_body.rstrip() + f"\n{key}:\n  - {value}\n"
+    elif isinstance(fm.get(key), str) and str(fm.get(key)).strip():
+        old = str(fm[key]).strip()
+        updated_body = re.sub(
+            rf"(?m)^{re.escape(key)}\s*:\s*.+$",
+            f"{key}:\n  - {old}\n  - {value}",
+            fm_body,
+            count=1,
+        )
+    else:
+        lines = fm_body.splitlines()
+        insert_at = len(lines)
+        in_key = False
+        for idx, line in enumerate(lines):
+            if re.match(rf"^{re.escape(key)}\s*:\s*$", line.strip()):
+                in_key = True
+                continue
+            if in_key and line and not line.startswith((" ", "-")):
+                insert_at = idx
+                break
+        lines.insert(insert_at, f"  - {value}")
+        updated_body = "\n".join(lines)
+        if not updated_body.endswith("\n"):
+            updated_body += "\n"
+    new_block = f"---\n{updated_body}---\n"
+    return new_block + text[len(match.group(0)) :]
+
+
+def apply_overlap_relations(
+    repo_root: Path,
+    cards_by_source: dict[str, "PlanCard"],
+    edges: list[PlanOverlapEdge],
+    *,
+    duplicate_similarity: float = 0.75,
+) -> list[str]:
+    """Opt-in write-back for high-confidence plan overlap relations."""
+    updated: list[str] = []
+    for edge in edges:
+        if edge.severity not in {"high", "medium"}:
+            continue
+        card_a = cards_by_source.get(edge.source_a)
+        card_b = cards_by_source.get(edge.source_b)
+        if not card_a or not card_b:
+            continue
+        use_duplicates = (
+            edge.signal == "token"
+            and edge.similarity >= duplicate_similarity
+            and _titles_align(card_a, card_b)
+        )
+        relation_key = "duplicates" if use_duplicates else "relates_to"
+        for source, other_source in ((edge.source_a, edge.source_b), (edge.source_b, edge.source_a)):
+            if edge.signal == "path" or edge.signal == "branch" or edge.signal == "token":
+                pass
+            else:
+                continue
+            path = repo_root / source
+            if not path.is_file():
+                continue
+            current = path.read_text(encoding="utf-8", errors="ignore")
+            fm = parse_plan_frontmatter(current)
+            if _frontmatter_relation_values(fm, "supersedes"):
+                continue
+            if _frontmatter_relation_values(fm, "duplicates"):
+                continue
+            if use_duplicates and _frontmatter_relation_values(fm, "duplicates"):
+                continue
+            other_name = Path(other_source).name
+            if relation_key == "relates_to":
+                if any(
+                    Path(item).name == other_name
+                    for item in _frontmatter_relation_values(fm, "relates_to")
+                ):
+                    continue
+            key = relation_key
+            new_text = _append_frontmatter_list_value(current, key, other_name)
+            if new_text != current:
+                path.write_text(new_text, encoding="utf-8")
+                if source not in updated:
+                    updated.append(source)
+    return updated
+
+
+def render_overlap_clusters_section(
+    edges: list[PlanOverlapEdge],
+    clusters: list[list[str]],
+    cards_by_source: dict[str, "PlanCard"],
+) -> list[str]:
+    lines = ["## Overlap clusters", ""]
+    if not edges and not clusters:
+        lines.append("- _No plan-level overlaps detected._")
+        lines.append("")
+        return lines
+    if clusters:
+        lines.append("### Clusters")
+        for idx, cluster in enumerate(clusters, start=1):
+            labels = []
+            for source in cluster:
+                card = cards_by_source.get(source)
+                labels.append(card.slug if card else Path(source).stem)
+            lines.append(f"- Cluster {idx}: " + ", ".join(f"`{label}`" for label in labels))
+        lines.append("")
+    lines.append("### Pairs")
+    if not edges:
+        lines.append("- _None_")
+    else:
+        for edge in edges[:25]:
+            sim = f", similarity={edge.similarity:.2f}" if edge.similarity else ""
+            lines.append(
+                f"- `{edge.source_a}` <-> `{edge.source_b}` "
+                f"({edge.signal}, {edge.severity}{sim}): {edge.detail}"
+            )
+    lines.append("")
+    return lines
+
+
+def render_overlap_relations_markdown(
+    report_date: str,
+    edges: list[PlanOverlapEdge],
+    clusters: list[list[str]],
+    cards_by_source: dict[str, "PlanCard"],
+) -> str:
+    lines = [
+        "# Overlap relations",
+        "",
+        f"_Generated {report_date} by `scripts/daily_plan_audit.py`. "
+        "Report-only by default; use `--apply-overlap-relations` to write "
+        "high-confidence `relates_to` / `duplicates` frontmatter._",
+        "",
+    ]
+    lines.extend(render_overlap_clusters_section(edges, clusters, cards_by_source))
+    return "\n".join(lines)
+
+
+def load_goal_context(
+    repo_root: Path,
+    master_doc: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Load goal lines from PRD, TASK-GRAPH, intake JSON, and master goalposts."""
+    goals: list[str] = []
+    sources: list[str] = []
+
+    prd_path = repo_root / ".cursor" / "PRD.md"
+    if prd_path.is_file():
+        prd_text = prd_path.read_text(encoding="utf-8", errors="ignore")
+        in_goal_section = False
+        for line in prd_text.splitlines():
+            if GOAL_SECTION_HEADING_RE.match(line):
+                in_goal_section = True
+                goals.append(line.lstrip("#").strip())
+                continue
+            if in_goal_section:
+                if re.match(r"^\s*#{1,3}\s+", line) and not GOAL_SECTION_HEADING_RE.match(line):
+                    in_goal_section = False
+                    continue
+                bullet = ITEM_LINE_RE.match(line)
+                if bullet:
+                    goals.append(bullet.group(1).strip())
+        if goals:
+            sources.append(".cursor/PRD.md")
+
+    task_graph_path = repo_root / ".cursor" / "TASK-GRAPH.md"
+    if task_graph_path.is_file():
+        stage_lines = [
+            line.lstrip("#").strip()
+            for line in task_graph_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+            if STAGE_HEADING_RE.match(line)
+        ]
+        if stage_lines:
+            goals.extend(stage_lines)
+            sources.append(".cursor/TASK-GRAPH.md")
+
+    project_context_path = repo_root / ".cursor" / "project-context.json"
+    if project_context_path.is_file():
+        try:
+            payload = json.loads(project_context_path.read_text(encoding="utf-8"))
+            added = False
+            for key in ("goals", "success_criteria"):
+                raw = payload.get(key)
+                if isinstance(raw, list):
+                    goals.extend(str(item).strip() for item in raw if str(item).strip())
+                    added = True
+                elif isinstance(raw, str) and raw.strip():
+                    goals.append(raw.strip())
+                    added = True
+            if added:
+                sources.append(".cursor/project-context.json")
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    master_doc = master_doc or {}
+    frontmatter = master_doc.get("frontmatter") or {}
+    goalposts = frontmatter.get("goalposts")
+    if isinstance(goalposts, list):
+        posted = [str(item).strip() for item in goalposts if str(item).strip()]
+        if posted:
+            goals.extend(posted)
+            sources.append("_master.plan.md:goalposts")
+
+    seen: set[str] = set()
+    unique_goals: list[str] = []
+    for goal in goals:
+        normalized = goal.strip()
+        key = normalized.lower()
+        if normalized and key not in seen:
+            seen.add(key)
+            unique_goals.append(normalized)
+    return {"goals": unique_goals, "sources": sources}
+
+
+def score_plan_goal_alignment(card: "PlanCard", goal_lines: list[str]) -> PlanGoalAlignment:
+    if not goal_lines:
+        return PlanGoalAlignment(
+            source=card.source,
+            slug=card.slug,
+            title=card.title,
+            goal_tags=[],
+            alignment_score=0,
+            unaligned_risk="unknown",
+        )
+    plan_text = card.title + " " + " ".join(item.item for item in card.items)
+    plan_tokens = tokenize(plan_text)
+    scored: list[tuple[str, float]] = []
+    for goal in goal_lines:
+        goal_tokens = tokenize(goal)
+        if not goal_tokens:
+            continue
+        scored.append((goal, jaccard(plan_tokens, goal_tokens)))
+    scored.sort(key=lambda pair: -pair[1])
+    top_matches = scored[:3]
+    goal_tags = [goal for goal, score in top_matches if score > 0]
+    best_score = top_matches[0][1] if top_matches else 0.0
+    alignment_score = int(round(best_score * 100))
+    if alignment_score >= 70:
+        risk = "low"
+    elif alignment_score >= DEFAULT_GOAL_ALIGNMENT_MIN_SCORE:
+        risk = "medium"
+    else:
+        risk = "high"
+    return PlanGoalAlignment(
+        source=card.source,
+        slug=card.slug,
+        title=card.title,
+        goal_tags=goal_tags[:3],
+        alignment_score=alignment_score,
+        unaligned_risk=risk,
+    )
+
+
+def compute_goal_alignments(
+    cards_by_source: dict[str, "PlanCard"],
+    goal_context: dict[str, object],
+) -> list[PlanGoalAlignment]:
+    goal_lines = list(goal_context.get("goals") or [])
+    alignments: list[PlanGoalAlignment] = []
+    for card in cards_by_source.values():
+        if card.is_master or not card.is_active_for_triage:
+            continue
+        if card.disposition in {"scratched", "implemented", "archived", "backlogged"}:
+            continue
+        alignments.append(score_plan_goal_alignment(card, goal_lines))
+    alignments.sort(key=lambda row: (row.alignment_score, row.slug))
+    return alignments
+
+
+def render_goal_alignment_section(
+    alignments: list[PlanGoalAlignment],
+    goal_context: dict[str, object],
+) -> list[str]:
+    lines = ["## Goal alignment", ""]
+    sources = list(goal_context.get("sources") or [])
+    if sources:
+        lines.append(
+            "_Goal sources: " + ", ".join(f"`{source}`" for source in sources) + "_"
+        )
+        lines.append("")
+    if not alignments:
+        lines.append("- _No active plans to score._")
+        lines.append("")
+        return lines
+    lines.extend(
+        [
+            "| Plan | Goal tags | Score | Unaligned risk |",
+            "|------|-----------|------:|----------------|",
+        ]
+    )
+    for row in sorted(alignments, key=lambda item: item.alignment_score):
+        tags = ", ".join(row.goal_tags[:3]) if row.goal_tags else "—"
+        if len(tags) > 72:
+            tags = tags[:69] + "..."
+        title_cell = row.title.replace("|", "\\|")
+        lines.append(
+            f"| [{title_cell}]({row.source}) | {tags} | {row.alignment_score} | {row.unaligned_risk} |"
+        )
+    lines.append("")
+    return lines
+
+
 # Item-level delegation marker: `delegate:` followed by a non-empty target.
 # Used to detect "agent says they're handing this off but didn't say to whom".
 DELEGATION_DECLARED_RE = re.compile(r"\bdelegate(?:d_to|s_to|s|d)?\s*:", re.IGNORECASE)
@@ -1926,15 +2513,26 @@ def render_task_board_markdown(
     return "\n".join(lines)
 
 
-def memory_context(repo_root: Path) -> dict[str, object]:
+def memory_context(
+    repo_root: Path,
+    *,
+    master_doc: dict[str, object] | None = None,
+) -> dict[str, object]:
     candidates = [
         repo_root / ".braindrain" / "AGENT_MEMORY.md",
         repo_root / ".cursor" / "hooks" / "state" / "continual-learning-index.json",
+        repo_root / ".cursor" / "PRD.md",
+        repo_root / ".cursor" / "TASK-GRAPH.md",
+        repo_root / ".cursor" / "project-context.json",
     ]
-    existing = [p for p in candidates if p.exists()]
+    existing = [path for path in candidates if path.exists()]
+    goal_context = load_goal_context(repo_root, master_doc)
+    goal_sources = [str(source) for source in goal_context.get("sources", [])]
     return {
-        "used": bool(existing),
-        "sources": [p.relative_to(repo_root).as_posix() for p in existing],
+        "used": bool(existing) or bool(goal_context.get("goals")),
+        "sources": [path.relative_to(repo_root).as_posix() for path in existing],
+        "goal_sources": goal_sources,
+        "goal_count": len(goal_context.get("goals") or []),
     }
 
 
@@ -2988,6 +3586,10 @@ def render_master_mirror(
     plan_ranks: dict[str, int] | None = None,
     rank_source: str = "heuristic",
     actions: list[Action] | None = None,
+    overlap_edges: list[PlanOverlapEdge] | None = None,
+    overlap_clusters: list[list[str]] | None = None,
+    goal_alignments: list[PlanGoalAlignment] | None = None,
+    goal_context: dict[str, object] | None = None,
 ) -> str:
     """Generated mirror of the master plan with rollup + drift detection.
 
@@ -3048,6 +3650,18 @@ def render_master_mirror(
             actions=actions,
         )
     )
+    overlap_edges = overlap_edges or []
+    overlap_clusters = overlap_clusters or []
+    goal_alignments = goal_alignments or []
+    goal_context = goal_context or {}
+    lines.extend(
+        render_overlap_clusters_section(
+            overlap_edges,
+            overlap_clusters,
+            cards_by_source,
+        )
+    )
+    lines.extend(render_goal_alignment_section(goal_alignments, goal_context))
 
     by_ide: dict[str, list[PlanCard]] = defaultdict(list)
     for card in cards:
@@ -3177,13 +3791,23 @@ def build_report(
     cards_by_source: dict[str, "PlanCard"] | None = None,
     ready_to_archive: list[ReadyToArchive] | None = None,
     provenance: dict[str, object] | None = None,
+    master_doc: dict[str, object] | None = None,
+    overlap_edges: list[PlanOverlapEdge] | None = None,
+    overlap_clusters: list[list[str]] | None = None,
+    goal_alignments: list[PlanGoalAlignment] | None = None,
+    goal_context: dict[str, object] | None = None,
+    goal_alignment_min_score: int = DEFAULT_GOAL_ALIGNMENT_MIN_SCORE,
 ) -> str:
     overlaps = detect_overlaps(items)
     cards_by_source = cards_by_source or {}
     gaps = detect_gaps(items, cards_by_source=cards_by_source)
     scores = score_report(items, overlaps, gaps)
     summary_counts = Counter(item.status for item in items)
-    mem = memory_context(repo_root)
+    mem = memory_context(repo_root, master_doc=master_doc)
+    overlap_edges = overlap_edges or []
+    overlap_clusters = overlap_clusters or []
+    goal_alignments = goal_alignments or []
+    goal_context = goal_context or {}
 
     def _item_has_inherited_owner(it: PlanItem) -> bool:
         if has_explicit_owner(it.item):
@@ -3221,6 +3845,21 @@ def build_report(
         top_risks.append("Active items are missing test hints and/or path evidence in plan text.")
     if overlaps:
         top_risks.append("Overlapping plan entries may create duplicated delivery work.")
+    low_alignment = [
+        row
+        for row in goal_alignments
+        if row.alignment_score < goal_alignment_min_score and row.unaligned_risk == "high"
+    ]
+    if low_alignment:
+        top_risks.append(
+            f"{len(low_alignment)} active plan(s) score below {goal_alignment_min_score} "
+            "on goal alignment."
+        )
+    if overlap_edges:
+        top_risks.append(
+            f"{len(overlap_edges)} plan-level overlap signal(s) detected "
+            "(paths, tokens, branches, or relations)."
+        )
     if not top_risks:
         top_risks.append("No major risks detected from current planning artifacts.")
 
@@ -3271,6 +3910,14 @@ def build_report(
         body.append(f"    - \"{source}\"")
     if not frontmatter["memory_context"]["sources"]:
         body.append("    - \"none\"")
+    body.append("  goal_sources:")
+    for source in frontmatter["memory_context"].get("goal_sources", []):
+        body.append(f"    - \"{source}\"")
+    if not frontmatter["memory_context"].get("goal_sources"):
+        body.append("    - \"none\"")
+    body.append(
+        f"  goal_count: {frontmatter['memory_context'].get('goal_count', 0)}"
+    )
     body.append("provenance:")
     body.append(
         f"  created_by_model: \"{str(provenance.get('created_by_model', 'auto'))}\""
@@ -3320,6 +3967,11 @@ def build_report(
             f"- READY_TO_ARCHIVE: {len(ready_to_archive)} plan(s) — confirm with user before "
             "`--apply-archive`."
         )
+    if low_alignment:
+        body.append(
+            f"- Goal alignment: {len(low_alignment)} active plan(s) score below "
+            f"{goal_alignment_min_score} — review Goal alignment in `master-plan.md`."
+        )
     body.append("")
     if ready_to_archive:
         body.extend(render_ready_to_archive_section(ready_to_archive, report_date=report_date))
@@ -3345,18 +3997,42 @@ def build_report(
     body.extend(render_status_section("Unknown", grouped["Unknown"]))
 
     body.append("## Overlap Analysis")
-    if not overlaps:
+    if not overlaps and not overlap_edges:
         body.append("- None")
     else:
-        for overlap in overlaps[:20]:
-            body.append(
-                "- "
-                f"`{overlap['source_a']}` <-> `{overlap['source_b']}` "
-                f"(similarity={overlap['similarity']}, severity={overlap['severity']})"
-            )
-            body.append(f"  - A: {overlap['item_a']}")
-            body.append(f"  - B: {overlap['item_b']}")
+        if overlap_edges:
+            body.append("### Plan-level overlaps")
+            for edge in overlap_edges[:20]:
+                sim = f", similarity={edge.similarity:.2f}" if edge.similarity else ""
+                body.append(
+                    f"- `{edge.source_a}` <-> `{edge.source_b}` "
+                    f"({edge.signal}, {edge.severity}{sim}): {edge.detail}"
+                )
+            if overlap_clusters:
+                body.append("")
+                body.append("### Overlap clusters")
+                for idx, cluster in enumerate(overlap_clusters[:10], start=1):
+                    body.append(
+                        f"- Cluster {idx}: "
+                        + ", ".join(f"`{Path(source).stem}`" for source in cluster)
+                    )
+            body.append("")
+        body.append("### Item-level overlaps")
+        if not overlaps:
+            body.append("- None")
+        else:
+            for overlap in overlaps[:20]:
+                body.append(
+                    "- "
+                    f"`{overlap['source_a']}` <-> `{overlap['source_b']}` "
+                    f"(similarity={overlap['similarity']}, severity={overlap['severity']})"
+                )
+                body.append(f"  - A: {overlap['item_a']}")
+                body.append(f"  - B: {overlap['item_b']}")
     body.append("")
+
+    if goal_alignments:
+        body.extend(render_goal_alignment_section(goal_alignments, goal_context))
 
     body.append("## Gap Analysis")
     if not gaps:
@@ -3375,6 +4051,11 @@ def build_report(
             body.append(f"- Source: `{source}`")
     else:
         body.append("- Source: none available")
+    if mem.get("goal_sources"):
+        body.append("- Goal sources:")
+        for source in mem.get("goal_sources", []):
+            body.append(f"  - `{source}`")
+    body.append(f"- Goal lines loaded: `{mem.get('goal_count', 0)}`")
     body.append("")
 
     body.append("## Recommended Next Actions")
@@ -3503,6 +4184,22 @@ def main() -> int:
             apply_pr_resolution(cards_by_source, repo_root)
         ready_to_archive = detect_ready_to_archive(list(cards_by_source.values()))
 
+    overlap_edges, overlap_clusters = detect_plan_overlaps(
+        cards_by_source,
+        items,
+        repo_root=repo_root,
+    )
+    overlap_relations_applied: list[str] = []
+    if getattr(args, "apply_overlap_relations", False):
+        overlap_relations_applied = apply_overlap_relations(
+            repo_root,
+            cards_by_source,
+            overlap_edges,
+        )
+
+    goal_context = load_goal_context(repo_root, master_doc)
+    goal_alignments = compute_goal_alignments(cards_by_source, goal_context)
+
     report = build_report(
         args.report_date,
         args.trigger,
@@ -3513,6 +4210,11 @@ def main() -> int:
         cards_by_source=cards_by_source,
         ready_to_archive=ready_to_archive,
         provenance=provenance,
+        master_doc=master_doc,
+        overlap_edges=overlap_edges,
+        overlap_clusters=overlap_clusters,
+        goal_alignments=goal_alignments,
+        goal_context=goal_context,
     )
     if archive_moves:
         report = (
@@ -3554,6 +4256,13 @@ def main() -> int:
             report
             + "\n\n## Stale master links removed (this run)\n\n"
             + "\n".join(f"- `{p}`" for p in pruned_stale_links)
+            + "\n"
+        )
+    if overlap_relations_applied:
+        report = (
+            report
+            + "\n\n## Plan files updated (overlap)\n\n"
+            + "\n".join(f"- `{p}`" for p in overlap_relations_applied)
             + "\n"
         )
     dated_path = out_dir / f"plan-audit-{args.report_date}.md"
@@ -3605,8 +4314,20 @@ def main() -> int:
         plan_ranks=plan_ranks,
         rank_source=rank_source,
         actions=actions,
+        overlap_edges=overlap_edges,
+        overlap_clusters=overlap_clusters,
+        goal_alignments=goal_alignments,
+        goal_context=goal_context,
     )
     (out_dir / "master-plan.md").write_text(mirror, encoding="utf-8")
+
+    overlap_relations = render_overlap_relations_markdown(
+        args.report_date,
+        overlap_edges,
+        overlap_clusters,
+        cards_by_source,
+    )
+    (out_dir / "overlap-relations.md").write_text(overlap_relations, encoding="utf-8")
 
     # Triage queue (`next-actions.md`).
     next_actions = render_next_actions(
@@ -3638,6 +4359,12 @@ def main() -> int:
         next_actions += (
             "\n## Plans archived (this run)\n\n"
             + "\n".join(f"- `{src}`" for src in archive_applied)
+            + "\n"
+        )
+    if overlap_relations_applied:
+        next_actions += (
+            "\n## Overlap relations applied (this run)\n\n"
+            + "\n".join(f"- `{src}`" for src in overlap_relations_applied)
             + "\n"
         )
     (out_dir / "next-actions.md").write_text(next_actions, encoding="utf-8")
