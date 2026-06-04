@@ -1767,11 +1767,76 @@ def render_ready_to_archive_section(
     return lines
 
 
+def render_implementation_sequence_section(
+    cards_by_source: dict[str, "PlanCard"],
+    plan_ranks: dict[str, int],
+    *,
+    rank_source: str = "heuristic",
+    actions: list[Action] | None = None,
+) -> list[str]:
+    """Markdown section: numbered build queue from ``compute_plan_ranks``."""
+    actions = actions or []
+    actions_by_source: dict[str, list[Action]] = defaultdict(list)
+    for action in actions:
+        actions_by_source[action.plan_source].append(action)
+
+    queue_cards = [
+        cards_by_source[src]
+        for src, _rank in sorted(plan_ranks.items(), key=lambda x: x[1])
+        if src in cards_by_source and _card_in_build_queue(cards_by_source[src])
+    ]
+    lines: list[str] = [
+        "## Implementation sequence (build queue)",
+        "",
+        f"_Rank source: `{rank_source}` — order from `_master.plan.md` "
+        "(`execution_order:` or `## active` links), then heuristic tail._",
+        "",
+    ]
+    if not queue_cards:
+        lines.append("- _No plans in the build queue._")
+        lines.append("")
+        return lines
+
+    lines.extend(
+        [
+            "| # | Plan | Priority | Disposition | Branch | Next verb | Source |",
+            "|---|------|----------|-------------|--------|-----------|--------|",
+        ]
+    )
+    for card in queue_cards:
+        seq = plan_ranks.get(card.source, 0)
+        acts = actions_by_source.get(card.source, [])
+        next_verb = acts[0].verb if acts else DISPOSITION_VERB.get(card.disposition, "—")
+        if card.disposition == "active" and next_verb == "—":
+            if plan_all_todos_completed(card):
+                next_verb = "—"
+            elif any(
+                it.status in {"Blocked", "In Progress", "Outstanding"}
+                for it in card.items
+            ):
+                next_verb = "IMPLEMENT"
+        title_cell = card.title.replace("|", "\\|")
+        if len(title_cell) > 60:
+            title_cell = title_cell[:57] + "..."
+        lines.append(
+            f"| {seq} "
+            f"| [{title_cell}]({card.source}) "
+            f"| {card.priority} "
+            f"| `{card.disposition}` "
+            f"| `{card.branch}` "
+            f"| {next_verb} "
+            f"| `{card.source}` |"
+        )
+    lines.append("")
+    return lines
+
+
 def render_task_board_markdown(
     report_date: str,
     items: list[PlanItem],
     *,
     cards_by_source: dict[str, "PlanCard"] | None = None,
+    plan_ranks: dict[str, int] | None = None,
     provenance: dict[str, object] | None = None,
 ) -> str:
     """Single markdown table of active work, regenerated each audit run.
@@ -1781,6 +1846,7 @@ def render_task_board_markdown(
     travels in a new ``IDE`` column.
     """
     cards_by_source = cards_by_source or {}
+    plan_ranks = plan_ranks or {}
     rows: list[PlanItem] = [
         i
         for i in items
@@ -1788,6 +1854,7 @@ def render_task_board_markdown(
     ]
     rows.sort(
         key=lambda i: (
+            plan_ranks.get(i.source, 9999),
             {"Blocked": 0, "In Progress": 1, "Outstanding": 2}[i.status],
             i.source,
             i.item[:80],
@@ -1812,8 +1879,8 @@ def render_task_board_markdown(
     )
     lines.extend(
         [
-        "| IDE | Status | Owner | Item | Source | Gaps |",
-        "|-----|--------|-------|------|--------|------|",
+        "| Seq | Plan | IDE | Status | Owner | Item | Source | Gaps |",
+        "|-----|------|-----|--------|-------|------|--------|------|",
         ]
     )
     for item in rows:
@@ -1841,11 +1908,20 @@ def render_task_board_markdown(
             item_cell = item_cell[:117] + "..."
         src_cell = f"`{item.source}`"
         ide_cell = (plan_card.ide if plan_card and plan_card.ide else "—")
+        seq_cell = str(plan_ranks.get(item.source, "—"))
+        plan_cell = "—"
+        if plan_card:
+            plan_cell = plan_card.title.replace("|", "\\|")
+            if len(plan_cell) > 40:
+                plan_cell = plan_cell[:37] + "..."
         lines.append(
-            f"| {ide_cell} | {item.status} | {owner_cell} | {item_cell} | {src_cell} | {gaps_cell} |"
+            f"| {seq_cell} | {plan_cell} | {ide_cell} | {item.status} | {owner_cell} | "
+            f"{item_cell} | {src_cell} | {gaps_cell} |"
         )
     if not rows:
-        lines.append("| — | — | — | _No blocked/in-progress/outstanding items parsed._ | — | — |")
+        lines.append(
+            "| — | — | — | — | — | _No blocked/in-progress/outstanding items parsed._ | — | — |"
+        )
     lines.append("")
     return "\n".join(lines)
 
@@ -1905,6 +1981,11 @@ _DISPOSITION_ORDER = (
     "backlogged",
     "scratched",
     "implemented",
+)
+
+# Plans excluded from the overseer "build queue" / implementation sequence.
+_BUILD_QUEUE_EXCLUDED_DISPOSITIONS = frozenset(
+    {"implemented", "archived", "merge-ready"}
 )
 
 
@@ -2526,15 +2607,201 @@ def persist_resolved_plan_branches(
 _MD_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 
 
+def _resolve_master_plan_link(
+    target: str,
+    master_dir: Path,
+    repo_root: Path,
+    *,
+    seen: set[str] | None = None,
+) -> str | None:
+    """Resolve a markdown plan link to a repo-relative ``*.plan.md`` path."""
+    target = target.strip()
+    if not target or target.startswith(("http://", "https://", "#", "mailto:")):
+        return None
+    if not target.endswith(".plan.md"):
+        return None
+    candidates = [
+        (master_dir / target).resolve(),
+        (repo_root / target).resolve(),
+    ]
+    rel: str | None = None
+    for candidate in candidates:
+        try:
+            rel = candidate.relative_to(repo_root.resolve()).as_posix()
+            break
+        except ValueError:
+            continue
+    if rel is None:
+        return None
+    if seen is not None:
+        if rel in seen:
+            return None
+        seen.add(rel)
+    return rel
+
+
+def _collect_master_section_children(
+    body: str,
+    section: str,
+    master_dir: Path,
+    repo_root: Path,
+) -> list[str]:
+    """Plan links under ``## <section>`` in declaration order (top-to-bottom)."""
+    lines = body.splitlines()
+    header = f"## {section}"
+    start: int | None = None
+    for idx, line in enumerate(lines):
+        if line.strip().lower() == header.lower():
+            start = idx + 1
+            break
+    if start is None:
+        return []
+    seen: set[str] = set()
+    children: list[str] = []
+    for line in lines[start:]:
+        if line.startswith("## "):
+            break
+        for _label, target in _MD_LINK_RE.findall(line):
+            rel = _resolve_master_plan_link(
+                target, master_dir, repo_root, seen=seen
+            )
+            if rel:
+                children.append(rel)
+    return children
+
+
+def _resolve_execution_order_entries(
+    entries: list[object],
+    master_dir: Path,
+    repo_root: Path,
+) -> list[str]:
+    """Normalize ``execution_order`` frontmatter paths to repo-relative sources."""
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for raw in entries:
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        rel = _resolve_master_plan_link(raw.strip(), master_dir, repo_root, seen=seen)
+        if rel:
+            ordered.append(rel)
+    return ordered
+
+
+def _card_in_build_queue(card: "PlanCard") -> bool:
+    if card.is_master:
+        return False
+    if card.disposition in _BUILD_QUEUE_EXCLUDED_DISPOSITIONS:
+        return False
+    if _is_archived_storage_path(card.source):
+        return False
+    return True
+
+
+def _heuristic_plan_sort_key(card: "PlanCard") -> tuple[object, ...]:
+    return (
+        _DISPOSITION_ORDER.index(card.disposition)
+        if card.disposition in _DISPOSITION_ORDER
+        else 99,
+        _PRIORITY_RANK.get(card.priority, 3),
+        card.slug,
+    )
+
+
+def compute_plan_ranks(
+    master_doc: dict[str, object] | None,
+    cards_by_source: dict[str, "PlanCard"],
+    *,
+    repo_root: Path,
+    master_path: Path | None = None,
+) -> tuple[dict[str, int], str]:
+    """Assign 1-based execution ranks for the build queue.
+
+    Order precedence:
+      1. ``execution_order:`` frontmatter on ``_master.plan.md``
+      2. Markdown links under ``## active`` (top-to-bottom)
+      3. Active-disposition subset of all master body links
+      4. Heuristic disposition + priority + slug when no master
+    """
+    ranks: dict[str, int] = {}
+    rank_source = "heuristic"
+    ordered_sources: list[str] = []
+
+    master_dir = (
+        master_path.parent.resolve()
+        if master_path and master_path.is_file()
+        else (repo_root / ".cursor" / "plans").resolve()
+    )
+
+    if master_doc:
+        fm = master_doc.get("frontmatter") or {}
+        exec_raw = fm.get("execution_order")
+        if isinstance(exec_raw, list) and exec_raw:
+            ordered_sources = _resolve_execution_order_entries(
+                exec_raw, master_dir, repo_root
+            )
+            rank_source = "master_frontmatter"
+        else:
+            active_children: list[str] = list(
+                master_doc.get("active_children", [])  # type: ignore[arg-type]
+            )
+            if active_children:
+                ordered_sources = active_children
+                rank_source = "master_body"
+            else:
+                children: list[str] = list(master_doc.get("children", []))  # type: ignore[arg-type]
+                ordered_sources = [
+                    src
+                    for src in children
+                    if (c := cards_by_source.get(src)) and c.disposition == "active"
+                ]
+                if ordered_sources:
+                    rank_source = "master_body"
+
+    rank_counter = 0
+    for src in ordered_sources:
+        card = cards_by_source.get(src)
+        if not card or not _card_in_build_queue(card):
+            continue
+        rank_counter += 1
+        ranks[src] = rank_counter
+
+    unranked = [
+        c
+        for c in cards_by_source.values()
+        if _card_in_build_queue(c) and c.source not in ranks
+    ]
+    if unranked:
+        unranked.sort(key=_heuristic_plan_sort_key)
+        for card in unranked:
+            rank_counter += 1
+            ranks[card.source] = rank_counter
+        if rank_source == "heuristic" and not ordered_sources:
+            pass
+        elif ordered_sources:
+            rank_source = f"{rank_source}+heuristic_tail"
+
+    if not master_doc and not ranks:
+        all_queue = [
+            c for c in cards_by_source.values() if _card_in_build_queue(c)
+        ]
+        all_queue.sort(key=_heuristic_plan_sort_key)
+        for idx, card in enumerate(all_queue, start=1):
+            ranks[card.source] = idx
+        rank_source = "heuristic"
+
+    return ranks, rank_source
+
+
 def parse_master_plan(master_path: Path, repo_root: Path) -> dict[str, object]:
     """Extract the list of child plans referenced by `_master.plan.md`.
 
     Returns a dict with:
       - ``frontmatter``: parsed YAML
-      - ``children``: list of repo-relative paths in declaration order
+      - ``children``: list of repo-relative paths in declaration order (full body)
+      - ``active_children``: links under ``## active`` only (execution order default)
     """
     if not master_path.is_file():
-        return {"frontmatter": {}, "children": []}
+        return {"frontmatter": {}, "children": [], "active_children": []}
 
     fm = parse_plan_frontmatter(master_path)
     text = master_path.read_text(encoding="utf-8", errors="ignore")
@@ -2543,23 +2810,18 @@ def parse_master_plan(master_path: Path, repo_root: Path) -> dict[str, object]:
     master_dir = master_path.parent
     seen: set[str] = set()
     children: list[str] = []
-    for label, target in _MD_LINK_RE.findall(body):
-        target = target.strip()
-        if not target or target.startswith(("http://", "https://", "#", "mailto:")):
-            continue
-        if not target.endswith(".plan.md"):
-            continue
-        # Resolve the link relative to the master file, then make repo-relative.
-        candidate = (master_dir / target).resolve()
-        try:
-            rel = candidate.relative_to(repo_root.resolve()).as_posix()
-        except ValueError:
-            continue
-        if rel in seen:
-            continue
-        seen.add(rel)
-        children.append(rel)
-    return {"frontmatter": fm, "children": children}
+    for _label, target in _MD_LINK_RE.findall(body):
+        rel = _resolve_master_plan_link(target, master_dir, repo_root, seen=seen)
+        if rel:
+            children.append(rel)
+    active_children = _collect_master_section_children(
+        body, "active", master_dir, repo_root
+    )
+    return {
+        "frontmatter": fm,
+        "children": children,
+        "active_children": active_children,
+    }
 
 
 def sync_master_plan(
@@ -2650,6 +2912,7 @@ def render_next_actions(
     ready_to_archive: list[ReadyToArchive] | None = None,
     report_date: str = "",
     provenance: dict[str, object] | None = None,
+    plan_ranks: dict[str, int] | None = None,
 ) -> str:
     """Render the triage queue grouped by verb.
 
@@ -2691,6 +2954,15 @@ def render_next_actions(
                 continue
             lines.append(f"## {verb} ({len(bucket)})")
             lines.append("")
+            plan_ranks = plan_ranks or {}
+            bucket.sort(
+                key=lambda a: (
+                    plan_ranks.get(a.plan_source, 9999),
+                    _PRIORITY_RANK.get(a.priority, 3),
+                    a.ide,
+                    a.plan_slug,
+                )
+            )
             for action in bucket:
                 tag = f"[{action.ide or '—'}:{action.plan_slug}]"
                 lines.append(
@@ -2713,6 +2985,9 @@ def render_master_mirror(
     repo_root: Path | None = None,
     report_date: str = "",
     provenance: dict[str, object] | None = None,
+    plan_ranks: dict[str, int] | None = None,
+    rank_source: str = "heuristic",
+    actions: list[Action] | None = None,
 ) -> str:
     """Generated mirror of the master plan with rollup + drift detection.
 
@@ -2762,6 +3037,17 @@ def render_master_mirror(
         lines.append("- _No plans discovered._")
         lines.append("")
         return "\n".join(lines)
+
+    plan_ranks = plan_ranks or {}
+    cards_by_source = {c.source: c for c in cards if not c.is_master}
+    lines.extend(
+        render_implementation_sequence_section(
+            cards_by_source,
+            plan_ranks,
+            rank_source=rank_source,
+            actions=actions,
+        )
+    )
 
     by_ide: dict[str, list[PlanCard]] = defaultdict(list)
     for card in cards:
@@ -2839,6 +3125,11 @@ def render_master_mirror(
     only_disk = sorted(
         p for p in (on_disk_active - in_master) if not _is_archived_storage_path(p)
     )
+    unranked_build = sorted(
+        src
+        for src, card in cards_by_source.items()
+        if _card_in_build_queue(card) and src not in plan_ranks
+    )
     archived_on_disk = 0
     if repo_root is not None:
         archived_on_disk = len(discover_recent_archived_plans(repo_root, limit=999))
@@ -2867,6 +3158,10 @@ def render_master_mirror(
             lines.append("### In curated master but missing from disk:")
             for src in only_master:
                 lines.append(f"- `{src}`")
+        if unranked_build and children:
+            lines.append("### Build-queue plans not in master index:")
+            for src in unranked_build:
+                lines.append(f"- `{src}` (ranked at end via heuristic)")
     lines.append("")
     return "\n".join(lines)
 
@@ -3267,10 +3562,19 @@ def main() -> int:
     latest_path = out_dir / "latest.md"
     shutil.copyfile(dated_path, latest_path)
 
+    plan_ranks, rank_source = compute_plan_ranks(
+        master_doc,
+        cards_by_source,
+        repo_root=repo_root,
+        master_path=master_path,
+    )
+    actions = detect_actions(list(cards_by_source.values()))
+
     board = render_task_board_markdown(
         args.report_date,
         items,
         cards_by_source=cards_by_source,
+        plan_ranks=plan_ranks,
         provenance=provenance,
     )
     (out_dir / "plan-task-board.md").write_text(board, encoding="utf-8")
@@ -3298,16 +3602,19 @@ def main() -> int:
         repo_root=repo_root,
         report_date=args.report_date,
         provenance=provenance,
+        plan_ranks=plan_ranks,
+        rank_source=rank_source,
+        actions=actions,
     )
     (out_dir / "master-plan.md").write_text(mirror, encoding="utf-8")
 
     # Triage queue (`next-actions.md`).
-    actions = detect_actions(list(cards_by_source.values()))
     next_actions = render_next_actions(
         actions,
         ready_to_archive=ready_to_archive,
         report_date=args.report_date,
         provenance=provenance,
+        plan_ranks=plan_ranks,
     )
     if synced_master_entries:
         next_actions += (
