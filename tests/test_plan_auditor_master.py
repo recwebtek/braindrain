@@ -803,3 +803,168 @@ def test_sync_master_archived_batch_writes_pr_fields(tmp_project_dir: Path) -> N
     assert "Plan summary: Shipped the widget pipeline." in text
     assert "archived_plans:" in text
     assert "  - shipped.plan.md" in text
+
+
+def test_parse_master_plan_active_children_section(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    (plans / "first.plan.md").write_text("---\ndisposition: active\n---\n# First\n", encoding="utf-8")
+    (plans / "second.plan.md").write_text("---\ndisposition: active\n---\n# Second\n", encoding="utf-8")
+    master_path = plans / "_master.plan.md"
+    master_path.write_text(
+        "---\n---\n\n# Master\n\n## active\n\n"
+        "- [First](first.plan.md)\n"
+        "- [Second](second.plan.md)\n",
+        encoding="utf-8",
+    )
+    doc = m.parse_master_plan(master_path, tmp_project_dir)
+    assert doc["active_children"] == [
+        ".cursor/plans/first.plan.md",
+        ".cursor/plans/second.plan.md",
+    ]
+
+
+def test_compute_plan_ranks_follows_master_active_order(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    for slug, title in (("plan_a.plan.md", "Plan A"), ("plan_b.plan.md", "Plan B")):
+        (plans / slug).write_text(
+            f"---\ndisposition: active\npriority: P1\n---\n# {title}\n- [ ] work item here\n",
+            encoding="utf-8",
+        )
+    master_path = plans / "_master.plan.md"
+    master_path.write_text(
+        "---\n---\n\n# Master\n\n## active\n\n"
+        "- [A](plan_a.plan.md)\n"
+        "- [B](plan_b.plan.md)\n",
+        encoding="utf-8",
+    )
+    items: list[m.PlanItem] = []
+    cards: dict[str, m.PlanCard] = {}
+    for slug in ("plan_a.plan.md", "plan_b.plan.md"):
+        path = plans / slug
+        items.extend(m.collect_plan_items(path, tmp_project_dir))
+        card = m.build_plan_card(path, tmp_project_dir, items, default_owner="@test")
+        cards[card.source] = card
+    master_doc = m.parse_master_plan(master_path, tmp_project_dir)
+    ranks, rank_source = m.compute_plan_ranks(
+        master_doc, cards, repo_root=tmp_project_dir, master_path=master_path
+    )
+    assert rank_source == "master_body"
+    assert ranks[".cursor/plans/plan_a.plan.md"] == 1
+    assert ranks[".cursor/plans/plan_b.plan.md"] == 2
+
+
+def test_execution_order_frontmatter_overrides_body(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    for slug in ("plan_a.plan.md", "plan_b.plan.md"):
+        (plans / slug).write_text(
+            "---\ndisposition: active\n---\n# X\n- [ ] work item here\n",
+            encoding="utf-8",
+        )
+    master_path = plans / "_master.plan.md"
+    master_path.write_text(
+        "---\n"
+        "execution_order:\n"
+        "  - plan_b.plan.md\n"
+        "  - plan_a.plan.md\n"
+        "---\n\n# Master\n\n## active\n\n"
+        "- [A](plan_a.plan.md)\n"
+        "- [B](plan_b.plan.md)\n",
+        encoding="utf-8",
+    )
+    items: list[m.PlanItem] = []
+    cards: dict[str, m.PlanCard] = {}
+    for slug in ("plan_a.plan.md", "plan_b.plan.md"):
+        path = plans / slug
+        items.extend(m.collect_plan_items(path, tmp_project_dir))
+        card = m.build_plan_card(path, tmp_project_dir, items, default_owner="@test")
+        cards[card.source] = card
+    master_doc = m.parse_master_plan(master_path, tmp_project_dir)
+    ranks, rank_source = m.compute_plan_ranks(
+        master_doc, cards, repo_root=tmp_project_dir, master_path=master_path
+    )
+    assert rank_source == "master_frontmatter"
+    assert ranks[".cursor/plans/plan_b.plan.md"] == 1
+    assert ranks[".cursor/plans/plan_a.plan.md"] == 2
+
+
+def test_task_board_and_mirror_implementation_sequence(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    (plans / "early.plan.md").write_text(
+        "---\ndisposition: active\npriority: P0\n---\n# Early\n- [ ] ship early milestone\n",
+        encoding="utf-8",
+    )
+    (plans / "late.plan.md").write_text(
+        "---\ndisposition: active\npriority: P0\n---\n# Late\n- [ ] ship late milestone\n",
+        encoding="utf-8",
+    )
+    master_path = plans / "_master.plan.md"
+    master_path.write_text(
+        "---\n---\n\n# Master\n\n## active\n\n"
+        "- [Early](early.plan.md)\n"
+        "- [Late](late.plan.md)\n",
+        encoding="utf-8",
+    )
+    items: list[m.PlanItem] = []
+    cards: dict[str, m.PlanCard] = {}
+    for slug in ("early.plan.md", "late.plan.md"):
+        path = plans / slug
+        items.extend(m.collect_plan_items(path, tmp_project_dir))
+        card = m.build_plan_card(path, tmp_project_dir, items, default_owner="@test")
+        cards[card.source] = card
+    master_doc = m.parse_master_plan(master_path, tmp_project_dir)
+    ranks, rank_source = m.compute_plan_ranks(
+        master_doc, cards, repo_root=tmp_project_dir, master_path=master_path
+    )
+    actions = m.detect_actions(list(cards.values()))
+    board = m.render_task_board_markdown(
+        "2026-06-04", items, cards_by_source=cards, plan_ranks=ranks
+    )
+    assert "| Seq | Plan |" in board
+    assert "| 1 |" in board and "| 2 |" in board
+    assert board.index("early.plan.md") < board.index("late.plan.md")
+    assert board.index("| 1 |") < board.index("| 2 |")
+    mirror = m.render_master_mirror(
+        list(cards.values()),
+        master_doc,
+        repo_root=tmp_project_dir,
+        plan_ranks=ranks,
+        rank_source=rank_source,
+        actions=actions,
+    )
+    assert "## Implementation sequence (build queue)" in mirror
+    seq_early = mirror.find("| 1 ")
+    seq_late = mirror.find("| 2 ")
+    assert seq_early != -1 and seq_late != -1 and seq_early < seq_late
+
+
+def test_compute_plan_ranks_heuristic_without_master(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    (plans / "z_backlog.plan.md").write_text(
+        "---\ndisposition: backlogged\npriority: P2\n---\n# Z\n",
+        encoding="utf-8",
+    )
+    (plans / "a_active.plan.md").write_text(
+        "---\ndisposition: active\npriority: P1\n---\n# A\n- [ ] work item here\n",
+        encoding="utf-8",
+    )
+    items: list[m.PlanItem] = []
+    cards: dict[str, m.PlanCard] = {}
+    for slug in ("z_backlog.plan.md", "a_active.plan.md"):
+        path = plans / slug
+        items.extend(m.collect_plan_items(path, tmp_project_dir))
+        card = m.build_plan_card(path, tmp_project_dir, items, default_owner="@test")
+        cards[card.source] = card
+    ranks, rank_source = m.compute_plan_ranks(None, cards, repo_root=tmp_project_dir)
+    assert rank_source == "heuristic"
+    assert ranks[".cursor/plans/a_active.plan.md"] == 1
+    assert ranks[".cursor/plans/z_backlog.plan.md"] == 2
