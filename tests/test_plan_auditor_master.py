@@ -1192,3 +1192,57 @@ def test_format_plan_pr_summary_aggregates() -> None:
         ],
     )
     assert m.format_plan_pr_summary(card) == "#109, #110"
+
+
+def test_load_planning_auditor_config_defaults(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    cfg = m.load_planning_auditor_config(tmp_project_dir)
+    assert cfg["overlap_jaccard_threshold"] == m.DEFAULT_OVERLAP_JACCARD_THRESHOLD
+    assert cfg["apply_overlap_relations"] is False
+    assert cfg["apply_goal_tags"] is False
+    assert cfg["goal_alignment_min_score"] == m.DEFAULT_GOAL_ALIGNMENT_MIN_SCORE
+
+
+def test_load_planning_auditor_config_from_hub_yaml(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    config_dir = tmp_project_dir / "config"
+    config_dir.mkdir(parents=True)
+    (config_dir / "hub_config.yaml").write_text(
+        "planning_auditor:\n"
+        "  overlap_jaccard_threshold: 0.42\n"
+        "  apply_overlap_relations: true\n"
+        "  apply_goal_tags: true\n"
+        "  goal_alignment_min_score: 25\n",
+        encoding="utf-8",
+    )
+    cfg = m.load_planning_auditor_config(tmp_project_dir)
+    assert cfg["overlap_jaccard_threshold"] == 0.42
+    assert cfg["apply_overlap_relations"] is True
+    assert cfg["apply_goal_tags"] is True
+    assert cfg["goal_alignment_min_score"] == 25
+
+
+def test_resolve_planning_auditor_cli_overrides_yaml(tmp_project_dir: Path) -> None:
+    import argparse
+
+    m = _load_audit_module()
+    config_dir = tmp_project_dir / "config"
+    config_dir.mkdir(parents=True)
+    (config_dir / "hub_config.yaml").write_text(
+        "planning_auditor:\n  apply_overlap_relations: true\n",
+        encoding="utf-8",
+    )
+    args = argparse.Namespace(
+        repo_root=str(tmp_project_dir),
+        apply_overlap_relations=False,
+        apply_goal_tags=False,
+        overlap_jaccard_threshold=None,
+        goal_alignment_min_score=None,
+    )
+    runtime = m.resolve_planning_auditor_runtime(args, tmp_project_dir)
+    assert runtime["apply_overlap_relations"] is True
+    args.overlap_jaccard_threshold = 0.33
+    args.goal_alignment_min_score = 55
+    runtime = m.resolve_planning_auditor_runtime(args, tmp_project_dir)
+    assert runtime["overlap_jaccard_threshold"] == 0.33
+    assert runtime["goal_alignment_min_score"] == 55

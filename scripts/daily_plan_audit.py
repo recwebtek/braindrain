@@ -611,7 +611,33 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help=(
             "Write high-confidence relates_to / duplicates frontmatter for "
-            "plan overlap pairs (default: report-only)."
+            "plan overlap pairs (default: report-only; hub_config can default on)."
+        ),
+    )
+    parser.add_argument(
+        "--apply-goal-tags",
+        action="store_true",
+        help=(
+            "Write goal_tags frontmatter from alignment scoring (default: "
+            "report-only; hub_config can default on)."
+        ),
+    )
+    parser.add_argument(
+        "--overlap-jaccard-threshold",
+        type=float,
+        default=None,
+        help=(
+            "Plan-level token overlap threshold (default: planning_auditor in "
+            "hub_config.yaml or 0.55)."
+        ),
+    )
+    parser.add_argument(
+        "--goal-alignment-min-score",
+        type=int,
+        default=None,
+        help=(
+            "Executive-summary low-alignment threshold (default: planning_auditor "
+            "in hub_config.yaml or 40)."
         ),
     )
     return parser.parse_args()
@@ -1834,6 +1860,71 @@ GOAL_SECTION_HEADING_RE = re.compile(
 )
 STAGE_HEADING_RE = re.compile(r"^\s*##\s+Stage\s+\d+", re.IGNORECASE)
 DEFAULT_GOAL_ALIGNMENT_MIN_SCORE = 40
+DEFAULT_OVERLAP_JACCARD_THRESHOLD = 0.55
+
+PLANNING_AUDITOR_DEFAULTS: dict[str, object] = {
+    "overlap_jaccard_threshold": DEFAULT_OVERLAP_JACCARD_THRESHOLD,
+    "apply_overlap_relations": False,
+    "apply_goal_tags": False,
+    "goal_alignment_min_score": DEFAULT_GOAL_ALIGNMENT_MIN_SCORE,
+}
+
+
+def _resolve_hub_config_path(repo_root: Path) -> Path | None:
+    env_path = os.environ.get("BRAINDRAIN_CONFIG", "").strip()
+    if env_path:
+        candidate = Path(env_path).expanduser()
+        if candidate.is_file():
+            return candidate
+    hub_default = repo_root / "config" / "hub_config.yaml"
+    if hub_default.is_file():
+        return hub_default
+    return None
+
+
+def load_planning_auditor_config(repo_root: Path) -> dict[str, object]:
+    """Load ``planning_auditor`` block from hub_config (safe defaults if missing)."""
+    settings = dict(PLANNING_AUDITOR_DEFAULTS)
+    config_path = _resolve_hub_config_path(repo_root)
+    if not config_path:
+        return settings
+    try:
+        import yaml
+    except ImportError:
+        return settings
+    try:
+        raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    except OSError:
+        return settings
+    block = raw.get("planning_auditor")
+    if not isinstance(block, dict):
+        return settings
+    if "overlap_jaccard_threshold" in block:
+        settings["overlap_jaccard_threshold"] = float(block["overlap_jaccard_threshold"])
+    if "apply_overlap_relations" in block:
+        settings["apply_overlap_relations"] = bool(block["apply_overlap_relations"])
+    if "apply_goal_tags" in block:
+        settings["apply_goal_tags"] = bool(block["apply_goal_tags"])
+    if "goal_alignment_min_score" in block:
+        settings["goal_alignment_min_score"] = int(block["goal_alignment_min_score"])
+    return settings
+
+
+def resolve_planning_auditor_runtime(
+    args: argparse.Namespace,
+    repo_root: Path,
+) -> dict[str, object]:
+    """Merge hub_config defaults with explicit CLI flags (CLI wins when set)."""
+    runtime = load_planning_auditor_config(repo_root)
+    if getattr(args, "overlap_jaccard_threshold", None) is not None:
+        runtime["overlap_jaccard_threshold"] = float(args.overlap_jaccard_threshold)
+    if getattr(args, "goal_alignment_min_score", None) is not None:
+        runtime["goal_alignment_min_score"] = int(args.goal_alignment_min_score)
+    if getattr(args, "apply_overlap_relations", False):
+        runtime["apply_overlap_relations"] = True
+    if getattr(args, "apply_goal_tags", False):
+        runtime["apply_goal_tags"] = True
+    return runtime
 
 
 @dataclasses.dataclass
@@ -2188,6 +2279,37 @@ def apply_overlap_relations(
                 path.write_text(new_text, encoding="utf-8")
                 if source not in updated:
                     updated.append(source)
+    return updated
+
+
+def apply_goal_tags(
+    repo_root: Path,
+    cards_by_source: dict[str, "PlanCard"],
+    alignments: list[PlanGoalAlignment],
+) -> list[str]:
+    """Opt-in write-back for goal_tags on active plans with alignment matches."""
+    updated: list[str] = []
+    by_source = {row.source: row for row in alignments}
+    for source, card in cards_by_source.items():
+        if card.disposition not in {"active", "merge-ready", "needs-fix", "research-needed"}:
+            continue
+        row = by_source.get(source)
+        if not row or not row.goal_tags:
+            continue
+        path = repo_root / source
+        if not path.is_file():
+            continue
+        current = path.read_text(encoding="utf-8", errors="ignore")
+        fm = parse_plan_frontmatter(current)
+        existing = _frontmatter_relation_values(fm, "goal_tags")
+        if existing:
+            continue
+        new_text = current
+        for tag in row.goal_tags[:3]:
+            new_text = _append_frontmatter_list_value(new_text, "goal_tags", tag)
+        if new_text != current:
+            path.write_text(new_text, encoding="utf-8")
+            updated.append(source)
     return updated
 
 
@@ -4445,6 +4567,11 @@ def build_report(
 def main() -> int:
     args = parse_args()
     repo_root = Path(args.repo_root).resolve()
+    auditor_runtime = resolve_planning_auditor_runtime(args, repo_root)
+    overlap_jaccard_threshold = float(auditor_runtime["overlap_jaccard_threshold"])
+    goal_alignment_min_score = int(auditor_runtime["goal_alignment_min_score"])
+    apply_overlap_relations = bool(auditor_runtime["apply_overlap_relations"])
+    apply_goal_tags = bool(auditor_runtime["apply_goal_tags"])
     trace_path = Path(args.trace_path)
     if not trace_path.is_absolute():
         trace_path = repo_root / trace_path
@@ -4548,9 +4675,10 @@ def main() -> int:
         cards_by_source,
         items,
         repo_root=repo_root,
+        jaccard_threshold=overlap_jaccard_threshold,
     )
     overlap_relations_applied: list[str] = []
-    if getattr(args, "apply_overlap_relations", False):
+    if apply_overlap_relations:
         overlap_relations_applied = apply_overlap_relations(
             repo_root,
             cards_by_source,
@@ -4559,6 +4687,13 @@ def main() -> int:
 
     goal_context = load_goal_context(repo_root, master_doc)
     goal_alignments = compute_goal_alignments(cards_by_source, goal_context)
+    goal_tags_applied: list[str] = []
+    if apply_goal_tags:
+        goal_tags_applied = apply_goal_tags(
+            repo_root,
+            cards_by_source,
+            goal_alignments,
+        )
 
     report = build_report(
         args.report_date,
@@ -4575,6 +4710,7 @@ def main() -> int:
         overlap_clusters=overlap_clusters,
         goal_alignments=goal_alignments,
         goal_context=goal_context,
+        goal_alignment_min_score=goal_alignment_min_score,
     )
     if archive_moves:
         report = (
@@ -4623,6 +4759,13 @@ def main() -> int:
             report
             + "\n\n## Plan files updated (overlap)\n\n"
             + "\n".join(f"- `{p}`" for p in overlap_relations_applied)
+            + "\n"
+        )
+    if goal_tags_applied:
+        report = (
+            report
+            + "\n\n## Plan files updated (goal tags)\n\n"
+            + "\n".join(f"- `{p}`" for p in goal_tags_applied)
             + "\n"
         )
     dated_path = out_dir / f"plan-audit-{args.report_date}.md"
@@ -4725,6 +4868,12 @@ def main() -> int:
         next_actions += (
             "\n## Overlap relations applied (this run)\n\n"
             + "\n".join(f"- `{src}`" for src in overlap_relations_applied)
+            + "\n"
+        )
+    if goal_tags_applied:
+        next_actions += (
+            "\n## Goal tags applied (this run)\n\n"
+            + "\n".join(f"- `{src}`" for src in goal_tags_applied)
             + "\n"
         )
     (out_dir / "next-actions.md").write_text(next_actions, encoding="utf-8")

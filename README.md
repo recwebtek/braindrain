@@ -606,7 +606,30 @@ Memory artifacts and paths:
   - `.braindrain/plan-reports/latest.md` (latest mirror)
   - `.braindrain/plan-reports/plan-task-board.md` (active item board with **Seq** / **Plan** columns, sorted by `_master.plan.md` execution order then item status)
   - `.braindrain/plan-reports/master-plan.md` (generated master mirror + **Implementation sequence** build queue + drift detection + **Branch** and **PR** columns)
-  - `.braindrain/plan-reports/next-actions.md` (verb queue: `MERGE`, `FIX`, `REPLAN`, `RESEARCH`, `IMPLEMENT`, `BACKLOG`)
+  - `.braindrain/plan-reports/overlap-relations.md` (plan-level overlap pairs and clusters snapshot)
+  - `.braindrain/plan-reports/next-actions.md` (verb queue: `MERGE`, `FIX`, `REPLAN`, `RESEARCH`, `IMPLEMENT`, `BACKLOG`, **READY_TO_ARCHIVE**)
+
+### Planning overseer (`/masterplan`)
+
+The daily auditor (`scripts/daily_plan_audit.py`, Cursor `/masterplan`) treats **frontmatter `todos`** as the status source when present, orders the build queue from `_master.plan.md` (`execution_order:` or `## active` link order), and adds overseer sections to `master-plan.md`:
+
+- **Implementation sequence** — numbered build queue (excludes archived / implemented / merge-ready)
+- **Overlap clusters** — shared paths, token Jaccard, identical branches, declared `supersedes`
+- **Goal alignment** — scores active plans against goals from `.cursor/PRD.md`, `.cursor/TASK-GRAPH.md`, `.cursor/project-context.json`, and `_master.plan.md` `goalposts:`
+
+Run read-only by default. Human-confirmed write-back uses explicit CLI flags (never the daily-gated stop hook):
+
+```bash
+python3 scripts/daily_plan_audit.py --repo-root . --trigger "manual-masterplan-command"
+python3 scripts/daily_plan_audit.py --repo-root . --trigger "manual-masterplan-command" \
+  --apply-disposition-sync --apply-archive
+python3 scripts/daily_plan_audit.py --repo-root . --trigger "manual-masterplan-command" \
+  --apply-overlap-relations
+python3 scripts/daily_plan_audit.py --repo-root . --trigger "manual-masterplan-command" \
+  --apply-goal-tags
+```
+
+Optional defaults in `config/hub_config.yaml` under `planning_auditor:` (`overlap_jaccard_threshold`, `apply_overlap_relations`, `apply_goal_tags`, `goal_alignment_min_score`). CLI threshold and `--apply-*` flags override YAML for one-off runs. Machine-local run paths: `.braindrain/OPS.md`.
   - Primary plan discovery now scans known IDE plan dirs (`.cursor/plans`, `.codex/plans`, `.kiro/plans`, `.windsurf/plans`, etc.), and each plan/action is tagged with its IDE source.
   - Branch resolution for each plan is hybrid by precedence: frontmatter `branch:` -> `.cursor/.gitops-queue.json` (`planSource` exact match, then fuzzy) -> `.cursor/.gitops-memory.jsonl` -> local git branch slug match (`git_local`) -> `—`.
   - PR column: `gh pr list --head <branch> --state all` when `gh` is available (`none` if no PR; `—` if gh unavailable).

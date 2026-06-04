@@ -363,6 +363,14 @@ dreaming:
 provider_context:
   strategy: provider-native-first
 
+# ─── PLANNING AUDITOR (daily_plan_audit.py / /masterplan) ───────
+# Defaults are safe/off. CLI flags (--apply-*) override these for one-off runs.
+planning_auditor:
+  overlap_jaccard_threshold: 0.55
+  apply_overlap_relations: false
+  apply_goal_tags: false
+  goal_alignment_min_score: 40
+
 # ─── COST TRACKING ─────────────────────────────────────────────
 cost_tracking:
   enabled: true
