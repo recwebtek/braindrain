@@ -49,6 +49,38 @@ Plans move to `<ide>/plans/.plan.archives/` when:
 
 After a move, update links in `_master.plan.md` on the next edit so drift reports stay clean.
 
+## Multi-phase branch + PR registry (required for phased plans)
+
+When a plan uses **more than one git branch** (e.g. `my-feature-phase0`, `my-feature-phase1`, `my-feature-phase2-3`):
+
+1. Maintain **`branches:`** in plan frontmatter (ordered list of all phase branch names).
+2. Set **`branch:`** to the **active** phase branch you are working on now.
+3. Run the auditor (or `/masterplan`) — it **auto-writes `phase_branches:`** with per-branch `pr:` URLs from `gh pr list --head <branch> --state all`.
+4. Earlier phases without their own PR head **inherit** the next phase PR (e.g. phase0 → phase1’s PR) with an explanatory `note:`.
+5. Do **not** rely on a single top-level `pr:` — the registry replaces it when `branches:` has 2+ entries.
+
+Example:
+
+```yaml
+branch: my-feature-phase4
+branches:
+  - my-feature-phase0
+  - my-feature-phase1
+  - my-feature-phase2-3
+  - my-feature-phase4
+phase_branches:
+  - branch: my-feature-phase0
+    phase: "0"
+    pr: https://github.com/org/repo/pull/109
+    note: no separate PR head; inherited from `my-feature-phase1` (#109)
+  - branch: my-feature-phase1
+    phase: "1"
+    pr: https://github.com/org/repo/pull/109
+    pr_state: OPEN
+```
+
+Reports show aggregated PRs (`#109, #110`) and a per-phase table in plan cards.
+
 ## Master execution order (overseer)
 
 `_master.plan.md` drives **implementation sequence** in generated reports:

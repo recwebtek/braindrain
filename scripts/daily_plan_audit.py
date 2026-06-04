@@ -414,6 +414,8 @@ class PlanCard:
     branch_source: str = "none"
     pr: str = "—"
     pr_source: str = "none"
+    branches: list[str] = dataclasses.field(default_factory=list)
+    phase_branches: list[dict[str, str]] = dataclasses.field(default_factory=list)
     todo_summary: dict[str, int] | None = None
     count_source: str = "body"
     stale_narrative: bool = False
@@ -498,6 +500,13 @@ def build_plan_card(
                 for it in body_items
             )
 
+    branch_list = fm.get("branches") or []
+    if isinstance(branch_list, str):
+        branch_list = [branch_list]
+    branches = [str(item).strip() for item in branch_list if str(item).strip()]
+    phase_branches = parse_frontmatter_phase_branches(text)
+    fm_branch = str(fm.get("branch") or "").strip()
+
     return PlanCard(
         slug=path.stem.replace(".plan", ""),
         title=title,
@@ -512,8 +521,10 @@ def build_plan_card(
         is_master=bool(fm.get("isMaster") or fm.get("is_master")),
         items=items,
         counts=dict(counts),
-        branch="—",
-        branch_source="none",
+        branch=fm_branch or "—",
+        branch_source="frontmatter" if fm_branch else "none",
+        branches=branches,
+        phase_branches=phase_branches,
         todo_summary=todo_summary,
         count_source=count_source,
         stale_narrative=stale_narrative,
@@ -962,6 +973,8 @@ def discover_recent_archived_plans(
 def _fetch_pr_details(
     repo_root: Path,
     branch: str,
+    *,
+    state: str = "open",
 ) -> dict[str, str] | None:
     """Return PR title/body/url/state for ``branch`` via gh, or None."""
     if not branch or branch in {"—", "-"}:
@@ -974,6 +987,8 @@ def _fetch_pr_details(
                 "list",
                 "--head",
                 branch,
+                "--state",
+                state,
                 "--json",
                 "number,title,body,url,state",
                 "--limit",
@@ -1414,6 +1429,333 @@ def plan_all_todos_completed(card: "PlanCard") -> bool:
         return False
     done = summary.get("completed", 0) + summary.get("cancelled", 0)
     return done >= summary["total"]
+
+
+PHASE_BRANCH_ITEM_KEYS = ("branch", "phase", "pr", "pr_state", "note")
+
+
+def parse_frontmatter_phase_branches(text: str) -> list[dict[str, str]]:
+    """Parse ``phase_branches:`` list entries from plan frontmatter."""
+    fm_lines: list[str] = []
+    pos = 0
+    while pos < len(text):
+        match = FRONTMATTER_BLOCK_RE.match(text[pos:])
+        if not match:
+            break
+        fm_lines.extend(match.group(1).splitlines())
+        pos += match.end()
+        remainder = text[pos:].lstrip("\n")
+        if remainder.startswith("---"):
+            pos = len(text) - len(remainder)
+            continue
+        break
+    if not fm_lines:
+        return []
+    entries: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+    in_block = False
+    for raw in fm_lines:
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        if re.match(r"^phase_branches:\s*$", stripped):
+            in_block = True
+            continue
+        if not in_block:
+            continue
+        item_start = re.match(r"^\s*-\s+branch:\s*(.+)$", raw)
+        if item_start:
+            if current:
+                entries.append(current)
+            current = {
+                "branch": _strip_quotes(item_start.group(1).strip()),
+            }
+            continue
+        if current is None:
+            if FRONTMATTER_KV_RE.match(raw):
+                in_block = False
+            continue
+        matched_field = False
+        for key in PHASE_BRANCH_ITEM_KEYS[1:]:
+            field_match = re.match(rf"^\s+{key}:\s*(.+)$", raw)
+            if field_match:
+                current[key] = _strip_quotes(field_match.group(1).strip())
+                matched_field = True
+                break
+        if not matched_field and FRONTMATTER_KV_RE.match(raw):
+            in_block = False
+            if current:
+                entries.append(current)
+                current = None
+    if current:
+        entries.append(current)
+    return entries
+
+
+def _infer_phase_label(branch_name: str) -> str:
+    match = re.search(r"-phase([0-9]+(?:-[0-9]+)?)$", branch_name)
+    if match:
+        return match.group(1)
+    return ""
+
+
+def _plan_branch_family_prefix(card: "PlanCard") -> str:
+    for branch_name in card.branches or []:
+        match = re.match(r"^(.*)-phase", branch_name)
+        if match and match.group(1):
+            return match.group(1)
+    slug = card.slug.replace("_", "-")
+    match = re.match(r"^(.*?)(?:-[0-9a-f]{6,}|\.plan)?$", slug)
+    if match and match.group(1):
+        return match.group(1).rstrip("-")
+    return slug
+
+
+def discover_plan_branch_registry(
+    card: "PlanCard",
+    local_branches: list[str],
+) -> list[str]:
+    """Return ordered phase branch names for a multi-phase plan."""
+    if card.branches:
+        return list(card.branches)
+    prefix = _plan_branch_family_prefix(card)
+    if not prefix:
+        return []
+    matches = [
+        branch
+        for branch in local_branches
+        if branch == prefix or branch.startswith(f"{prefix}-phase")
+    ]
+
+    def sort_key(name: str) -> tuple[int, str]:
+        phase = _infer_phase_label(name)
+        if not phase:
+            return (0, name)
+        head = phase.split("-", 1)[0]
+        try:
+            return (int(head), phase)
+        except ValueError:
+            return (999, phase)
+
+    return sorted(set(matches), key=sort_key)
+
+
+def _phase_branch_pr_fallback(
+    branch_name: str,
+    ordered_branches: list[str],
+    resolved: dict[str, dict[str, str]],
+) -> dict[str, str] | None:
+    """When an earlier phase branch has no PR head, inherit from a later phase."""
+    try:
+        idx = ordered_branches.index(branch_name)
+    except ValueError:
+        return None
+    for later in ordered_branches[idx + 1 :]:
+        details = resolved.get(later)
+        if details and details.get("url"):
+            return {
+                **details,
+                "note": (
+                    f"no separate PR head; inherited from `{later}` "
+                    f"(#{details.get('number', '?')})"
+                ),
+            }
+    return None
+
+
+def build_phase_branch_records(
+    repo_root: Path,
+    branch_names: list[str],
+    existing: list[dict[str, str]] | None = None,
+) -> list[dict[str, str]]:
+    """Resolve gh PR metadata for each phase branch."""
+    existing_by_branch = {
+        str(row.get("branch") or "").strip(): row
+        for row in (existing or [])
+        if str(row.get("branch") or "").strip()
+    }
+    resolved: dict[str, dict[str, str]] = {}
+    for branch_name in branch_names:
+        details = _fetch_pr_details(repo_root, branch_name, state="all")
+        if details:
+            resolved[branch_name] = details
+    records: list[dict[str, str]] = []
+    for branch_name in branch_names:
+        prior = existing_by_branch.get(branch_name, {})
+        details = resolved.get(branch_name)
+        if not details:
+            details = _phase_branch_pr_fallback(branch_name, branch_names, resolved)
+        record = {
+            "branch": branch_name,
+            "phase": prior.get("phase") or _infer_phase_label(branch_name),
+            "pr": (details or {}).get("url") or prior.get("pr") or "",
+            "pr_state": (details or {}).get("state") or prior.get("pr_state") or "",
+            "note": prior.get("note") or (details or {}).get("note") or "",
+        }
+        if details and details.get("note") and not prior.get("note"):
+            record["note"] = details["note"]
+        records.append(record)
+    return records
+
+
+def _render_phase_branches_frontmatter(records: list[dict[str, str]]) -> list[str]:
+    lines = ["phase_branches:"]
+    for record in records:
+        lines.append(f"  - branch: {record.get('branch', '')}")
+        phase = record.get("phase") or _infer_phase_label(record.get("branch", ""))
+        if phase:
+            lines.append(f'    phase: "{phase}"')
+        pr_url = str(record.get("pr") or "").strip()
+        if pr_url:
+            lines.append(f"    pr: {pr_url}")
+        pr_state = str(record.get("pr_state") or "").strip()
+        if pr_state:
+            lines.append(f"    pr_state: {pr_state}")
+        note = str(record.get("note") or "").strip()
+        if note:
+            escaped = note.replace('"', '\\"')
+            lines.append(f'    note: "{escaped}"')
+    return lines
+
+
+def _remove_frontmatter_block(fm_body: str, key: str) -> str:
+    lines = fm_body.splitlines()
+    kept: list[str] = []
+    skipping = False
+    for line in lines:
+        if re.match(rf"^{re.escape(key)}\s*:\s*$", line.strip()):
+            skipping = True
+            continue
+        if skipping:
+            if line and not line.startswith((" ", "-")) and FRONTMATTER_KV_RE.match(line):
+                skipping = False
+            else:
+                continue
+        kept.append(line)
+    return "\n".join(kept).strip("\n")
+
+
+def _remove_frontmatter_scalar(fm_body: str, key: str) -> str:
+    return re.sub(rf"(?m)^{re.escape(key)}\s*:\s*.*\n?", "", fm_body)
+
+
+def _set_frontmatter_yaml_block(text: str, key: str, block_lines: list[str]) -> str:
+    match = FRONTMATTER_BLOCK_RE.match(text)
+    if not match:
+        body = "\n".join(block_lines) + "\n"
+        return f"---\n{body}---\n\n{text}"
+    fm_body = match.group(1)
+    fm_body = _remove_frontmatter_block(fm_body, key)
+    fm_body = fm_body.rstrip()
+    block_text = "\n".join(block_lines).rstrip() + "\n"
+    if fm_body:
+        fm_body += "\n" + block_text
+    else:
+        fm_body = block_text
+    new_block = f"---\n{fm_body}---\n"
+    return new_block + text[len(match.group(0)) :]
+
+
+def format_plan_pr_summary(card: "PlanCard") -> str:
+    """Aggregate PR numbers from phase branch registry when present."""
+    if not card.phase_branches:
+        return card.pr
+    numbers: list[int] = []
+    for row in card.phase_branches:
+        url = str(row.get("pr") or "")
+        match = re.search(r"/pull/(\d+)", url)
+        if match:
+            numbers.append(int(match.group(1)))
+    if not numbers:
+        return card.pr
+    unique = sorted(set(numbers))
+    return ", ".join(f"#{num}" for num in unique)
+
+
+def sync_plan_phase_branches(
+    repo_root: Path,
+    cards: dict[str, "PlanCard"],
+) -> list[str]:
+    """Sync ``phase_branches`` + ``branches`` frontmatter for multi-phase plans."""
+    local_branches = _list_repo_branches(repo_root)
+    updated: list[str] = []
+    for source, card in cards.items():
+        if card.is_master:
+            continue
+        branch_names = discover_plan_branch_registry(card, local_branches)
+        if len(branch_names) < 2 and not card.branches:
+            continue
+        if not branch_names and card.branch and card.branch not in {"—", ""}:
+            branch_names = [card.branch]
+        if len(branch_names) < 2:
+            continue
+        path = repo_root / source
+        if not path.is_file():
+            continue
+        current = path.read_text(encoding="utf-8", errors="ignore")
+        records = build_phase_branch_records(
+            repo_root,
+            branch_names,
+            existing=parse_frontmatter_phase_branches(current),
+        )
+        new_text = _set_frontmatter_yaml_block(
+            current,
+            "phase_branches",
+            _render_phase_branches_frontmatter(records),
+        )
+        match = FRONTMATTER_BLOCK_RE.match(new_text)
+        if match:
+            fm_body = match.group(1)
+            fm_body = _remove_frontmatter_scalar(fm_body, "pr")
+            if branch_names != card.branches:
+                branches_lines = ["branches:"] + [
+                    f"  - {branch_name}" for branch_name in branch_names
+                ]
+                fm_body = _remove_frontmatter_block(fm_body, "branches")
+                fm_body = fm_body.rstrip() + "\n" + "\n".join(branches_lines) + "\n"
+            new_block = f"---\n{fm_body}---\n"
+            new_text = new_block + new_text[len(match.group(0)) :]
+        if new_text != current:
+            path.write_text(new_text, encoding="utf-8")
+            updated.append(source)
+        card.branches = branch_names
+        card.phase_branches = records
+        card.pr = format_plan_pr_summary(card)
+        card.pr_source = "phase_branches"
+    return updated
+
+
+def append_plan_branch_registry(
+    repo_root: Path,
+    plan_source: str,
+    branch_name: str,
+) -> bool:
+    """Append a newly created phase branch to plan ``branches:`` registry."""
+    path = repo_root / plan_source
+    if not path.is_file() or not branch_name:
+        return False
+    current = path.read_text(encoding="utf-8", errors="ignore")
+    fm = parse_plan_frontmatter(current)
+    branches = fm.get("branches") or []
+    if isinstance(branches, str):
+        branches = [branches]
+    branch_list = [str(item).strip() for item in branches if str(item).strip()]
+    if branch_name in branch_list:
+        return False
+    branch_list.append(branch_name)
+    match = FRONTMATTER_BLOCK_RE.match(current)
+    if not match:
+        return False
+    fm_body = match.group(1)
+    fm_body = _remove_frontmatter_block(fm_body, "branches")
+    branches_lines = ["branches:"] + [f"  - {name}" for name in branch_list]
+    fm_body = fm_body.rstrip() + "\n" + "\n".join(branches_lines) + "\n"
+    new_block = f"---\n{fm_body}---\n"
+    new_text = new_block + current[len(match.group(0)) :]
+    if new_text == current:
+        return False
+    path.write_text(new_text, encoding="utf-8")
+    return True
 
 
 def items_from_todos(
@@ -2653,7 +2995,19 @@ def render_plan_cards(
             lines.append(
                 f"  - Branch: `{card.branch}` (source: `{card.branch_source}`)"
             )
-            lines.append(f"  - PR: {card.pr} (source: `{card.pr_source}`)")
+            lines.append(f"  - PR: {format_plan_pr_summary(card)} (source: `{card.pr_source}`)")
+            if len(card.phase_branches) > 1:
+                lines.append("  - Phase branches:")
+                for row in card.phase_branches:
+                    phase = row.get("phase") or _infer_phase_label(row.get("branch", ""))
+                    pr_url = str(row.get("pr") or "").strip()
+                    pr_cell = pr_url if pr_url else "—"
+                    note = str(row.get("note") or "").strip()
+                    label = f"phase {phase}" if phase else row.get("branch", "")
+                    line = f"    - `{row.get('branch', '')}` ({label}): {pr_cell}"
+                    if note:
+                        line += f" — _{note}_"
+                    lines.append(line)
             lines.append(f"  - Delegated to: {delegated}")
             lines.append(f"  - Items: {' / '.join(rollup_parts)}")
             lines.append(f"  - Next action: {top_verb}")
@@ -2688,6 +3042,7 @@ def build_cards_index(
         cards[rel] = card
     apply_branch_resolution(cards, repo_root)
     apply_pr_resolution(cards, repo_root)
+    sync_plan_phase_branches(repo_root, cards)
     return cards
 
 
@@ -2947,6 +3302,10 @@ def apply_branch_resolution(cards: dict[str, "PlanCard"], repo_root: Path) -> No
         )
         card.branch = branch
         card.branch_source = source
+        explicit_branch = str(fm.get("branch") or "").strip()
+        if explicit_branch and explicit_branch not in {"—", "-"}:
+            card.branch = explicit_branch
+            card.branch_source = "frontmatter"
 
 
 def _run_gh_pr_lookup(repo_root: Path, branch: str) -> list[dict[str, object]] | None:
@@ -3101,6 +3460,7 @@ def ensure_plan_branches(
             new_text = _inject_frontmatter_key(current, "branch", branch)
             if new_text != current:
                 plan_path.write_text(new_text, encoding="utf-8")
+        append_plan_branch_registry(repo_root, source, branch)
         created_sources.append(source)
         card.branch = branch
         card.branch_source = "audit_created"
@@ -3714,7 +4074,7 @@ def render_master_mirror(
                 f"| [{title_cell}]({card.source}) "
                 f"| {card.owner} "
                 f"| `{card.branch}` "
-                f"| {card.pr} "
+                f"| {format_plan_pr_summary(card)} "
                 f"| {card.priority} "
                 f"| {todos_cell} "
                 f"| {items_cell} "

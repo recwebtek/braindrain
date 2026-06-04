@@ -1083,3 +1083,112 @@ def test_load_goal_context_and_alignment_scores(tmp_project_dir: Path) -> None:
     mem = m.memory_context(tmp_project_dir)
     assert mem.get("goal_count", 0) >= 1
     assert ".cursor/PRD.md" in mem["sources"]
+
+
+def test_parse_frontmatter_phase_branches() -> None:
+    m = _load_audit_module()
+    text = (
+        "---\n"
+        "branch: feat-phase2\n"
+        "branches:\n"
+        "  - feat-phase0\n"
+        "  - feat-phase1\n"
+        "phase_branches:\n"
+        "  - branch: feat-phase0\n"
+        "    phase: \"0\"\n"
+        "    pr: https://github.com/org/repo/pull/1\n"
+        "  - branch: feat-phase1\n"
+        "    phase: \"1\"\n"
+        "    pr: https://github.com/org/repo/pull/2\n"
+        "    pr_state: OPEN\n"
+        "---\n\n"
+        "# Plan\n"
+    )
+    rows = m.parse_frontmatter_phase_branches(text)
+    assert len(rows) == 2
+    assert rows[0]["branch"] == "feat-phase0"
+    assert rows[0]["pr"].endswith("/pull/1")
+    assert rows[1]["pr_state"] == "OPEN"
+
+
+def test_sync_plan_phase_branches_writes_registry(
+    tmp_project_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    m = _load_audit_module()
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    plan_path = plans / "overseer.plan.md"
+    plan_path.write_text(
+        "---\n"
+        "disposition: active\n"
+        "branch: overseer-phase2-3\n"
+        "branches:\n"
+        "  - overseer-phase0\n"
+        "  - overseer-phase1\n"
+        "  - overseer-phase2-3\n"
+        "---\n\n"
+        "# Overseer\n"
+        "- [ ] work item for phase branch registry\n",
+        encoding="utf-8",
+    )
+
+    def fake_fetch(
+        repo_root: Path,
+        branch: str,
+        *,
+        state: str = "open",
+    ) -> dict[str, str] | None:
+        if branch == "overseer-phase1":
+            return {
+                "number": "109",
+                "url": "https://github.com/recwebtek/braindrain/pull/109",
+                "state": "OPEN",
+                "title": "phase1",
+                "body": "",
+            }
+        if branch == "overseer-phase2-3":
+            return {
+                "number": "110",
+                "url": "https://github.com/recwebtek/braindrain/pull/110",
+                "state": "OPEN",
+                "title": "phase23",
+                "body": "",
+            }
+        return None
+
+    monkeypatch.setattr(m, "_fetch_pr_details", fake_fetch)
+    items = m.collect_plan_items(plan_path, tmp_project_dir)
+    card = m.build_plan_card(plan_path, tmp_project_dir, items, default_owner="@test")
+    cards = {card.source: card}
+    updated = m.sync_plan_phase_branches(tmp_project_dir, cards)
+    assert updated == [card.source]
+    text = plan_path.read_text(encoding="utf-8")
+    assert "phase_branches:" in text
+    assert "pull/109" in text
+    assert "pull/110" in text
+    assert "overseer-phase0" in text
+    assert "inherited" in text.lower() or "pull/109" in text
+    assert "pr: https://" not in text.split("phase_branches:")[0]
+    assert cards[card.source].pr == "#109, #110"
+
+
+def test_format_plan_pr_summary_aggregates() -> None:
+    m = _load_audit_module()
+    card = m.PlanCard(
+        slug="x",
+        title="X",
+        source=".cursor/plans/x.plan.md",
+        ide="cursor",
+        owner="@test",
+        dri="@test",
+        disposition="active",
+        priority="P2",
+        parent="_master",
+        delegated_to=[],
+        is_master=False,
+        phase_branches=[
+            {"branch": "a", "pr": "https://github.com/o/r/pull/109"},
+            {"branch": "b", "pr": "https://github.com/o/r/pull/110"},
+        ],
+    )
+    assert m.format_plan_pr_summary(card) == "#109, #110"

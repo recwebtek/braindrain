@@ -164,6 +164,7 @@ When you **create or finish editing** a tracked plan file under an IDE `plans/` 
 **Planning-owned agents** (for example `architect`, `coordinator`, or any agent authoring `*.plan.md` in a `plans/` tree) **must** complete this close-out **before ending the turn** when a new or materially updated plan was written:
 
 1. Ensure `_master.plan.md` links any new active plans (markdown links under `## active`, top-to-bottom = default build order). Optional frontmatter: `execution_order:` (override list), `goalposts:` (alignment hints for overseer reports).
+   - **Multi-phase plans:** maintain `branches:` (all phase branch names), `branch:` (active phase), and re-run the auditor so `phase_branches:` is auto-filled with each phase’s PR (see `daily-plan-auditor.md`).
 2. Run the planning auditor so reports stay current — either invoke the `daily-plan-auditor` subagent or run:
    `python3 scripts/daily_plan_audit.py --repo-root . --trigger "post-planning-session"`
    (The Cursor stop hook may also run the auditor, but it is daily-gated; session close-out should not rely on the hook alone.)
