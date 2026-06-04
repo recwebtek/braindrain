@@ -125,11 +125,25 @@ Optional frontmatter vocabulary: `supersedes`, `duplicates`, `relates_to`, `bloc
 
 `--apply-overlap-relations` appends `relates_to` or `duplicates` for high-confidence pairs only; never overwrites existing `supersedes` / `duplicates`.
 
+### Hub config (`config/hub_config.yaml`)
+
+Optional `planning_auditor` block sets defaults (all off/safe). CLI `--apply-*` and threshold flags override for one-off runs:
+
+```yaml
+planning_auditor:
+  overlap_jaccard_threshold: 0.55
+  apply_overlap_relations: false
+  apply_goal_tags: false
+  goal_alignment_min_score: 40
+```
+
 ## Goal alignment
 
 Loads goal lines from `.cursor/PRD.md` (Goals / Success criteria), `.cursor/TASK-GRAPH.md` (Stage headings), `.cursor/project-context.json`, and `_master.plan.md` `goalposts:`.
 
-Scores each active plan 0–100; flags plans below 40 in the audit executive summary. See **Goal alignment** table in `master-plan.md`.
+Scores each active plan 0–100; flags plans below `goal_alignment_min_score` (default 40) in the audit executive summary. See **Goal alignment** table in `master-plan.md`.
+
+`--apply-goal-tags` writes top `goal_tags` into plan frontmatter when absent (never overwrites existing `goal_tags`).
 
 ## Response format
 

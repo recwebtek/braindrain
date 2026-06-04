@@ -22,9 +22,15 @@ python3 scripts/daily_plan_audit.py --repo-root . --trigger "manual-masterplan-c
 # optional: write high-confidence overlap relations to plan frontmatter
 python3 scripts/daily_plan_audit.py --repo-root . --trigger "manual-masterplan-command" \
   --apply-overlap-relations
+
+# optional: write goal_tags from alignment scoring
+python3 scripts/daily_plan_audit.py --repo-root . --trigger "manual-masterplan-command" \
+  --apply-goal-tags
 ```
 
-Write-back flags (`--apply-disposition-sync`, `--apply-archive`, `--apply-overlap-relations`) are **human + CLI only**. The daily-plan-auditor subagent and stop hook never pass them unless you explicitly request apply in the same turn.
+Defaults for overlap threshold and apply flags can also live in `config/hub_config.yaml` under `planning_auditor:` (CLI overrides YAML for one-off runs).
+
+Write-back flags (`--apply-disposition-sync`, `--apply-archive`, `--apply-overlap-relations`, `--apply-goal-tags`) are **human + CLI only**. The daily-plan-auditor subagent and stop hook never pass them unless you explicitly request apply in the same turn.
 
 ## What the auditor does (machine-local plans)
 

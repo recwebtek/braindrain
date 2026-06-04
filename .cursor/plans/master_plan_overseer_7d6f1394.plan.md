@@ -24,35 +24,14 @@ todos:
     content: Add load_goal_context() from PRD/TASK-GRAPH/project-context/master goalposts; score active plans; add Goal alignment table to master mirror and audit summary
     status: completed
   - id: config-agents-docs
-    content: "Phase 4 (partial): planning_auditor hub_config block + full agent/RULES/README/OPS — SCHEMA 1.2 and masterplan/daily-plan-auditor templates done in Phase 0"
-    status: pending
+    content: "Phase 4: planning_auditor hub_config block + agent/docs (--apply-goal-tags, hub_config defaults); LivingDash collector deferred until sidecar ships"
+    status: completed
   - id: tests
     content: Phase 0 tests done in test_plan_auditor_master.py; Phase 1 sequence tests done; Phase 2 overlap tests done
     status: completed
 isProject: false
-branch: master-plan-overseer-phase4
-branches:
-  - master-plan-overseer-phase0
-  - master-plan-overseer-phase1
-  - master-plan-overseer-phase2-3
-  - master-plan-overseer-phase4
-phase_branches:
-  - branch: master-plan-overseer-phase0
-    phase: "0"
-    pr: https://github.com/recwebtek/braindrain/pull/109
-    pr_state: open
-    note: "no separate PR head; inherited from `master-plan-overseer-phase1` (#109)"
-  - branch: master-plan-overseer-phase1
-    phase: "1"
-    pr: https://github.com/recwebtek/braindrain/pull/109
-    pr_state: open
-  - branch: master-plan-overseer-phase2-3
-    phase: "2-3"
-    pr: https://github.com/recwebtek/braindrain/pull/110
-    pr_state: open
-  - branch: master-plan-overseer-phase4
-    phase: "4"
 ---
+
 # Master plan overseer — sequencing, overlap, goal alignment
 
 ## Current state (gaps)
