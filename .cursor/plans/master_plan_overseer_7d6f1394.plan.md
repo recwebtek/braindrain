@@ -36,7 +36,22 @@ branches:
   - master-plan-overseer-phase1
   - master-plan-overseer-phase2-3
   - master-plan-overseer-phase4
-pr: https://github.com/recwebtek/braindrain/pull/110
+phase_branches:
+  - branch: master-plan-overseer-phase0
+    phase: "0"
+    pr: https://github.com/recwebtek/braindrain/pull/109
+    pr_state: open
+    note: "no separate PR head; inherited from `master-plan-overseer-phase1` (#109)"
+  - branch: master-plan-overseer-phase1
+    phase: "1"
+    pr: https://github.com/recwebtek/braindrain/pull/109
+    pr_state: open
+  - branch: master-plan-overseer-phase2-3
+    phase: "2-3"
+    pr: https://github.com/recwebtek/braindrain/pull/110
+    pr_state: open
+  - branch: master-plan-overseer-phase4
+    phase: "4"
 ---
 # Master plan overseer — sequencing, overlap, goal alignment
 
@@ -80,8 +95,7 @@ flowchart LR
 
 **Architect / coordinator** already produce ordered work at the **task-graph** layer ([`config/templates/agents/architect.md`](config/templates/agents/architect.md): `.cursor/PRD.md`, `.cursor/TASK-GRAPH.md`), but **Cursor `*.plan.md` files are not wired to that order** — that is the overseer gap.
 
-**Status-truth gap (grill-me locked):** [`classify_status`](scripts/daily_plan_audit.py) infers Implemented/Outstanding from **body bullets**, not frontmatter `todos`. Plans with all todos `completed` still show `Implemented=0` and stay in IMPLEMENT queue when `disposition: active`.
----
+**Status-truth gap (grill-me locked):** [`classify_status`](scripts/daily_plan_audit.py) infers Implemented/Outstanding from **body bullets**, not frontmatter `todos`. Plans with all todos `completed` still show `Implemented=0` and stay in IMPLEMENT queue when `disposition: active`.---
 ## Grill-me status
 
 **Closed for Phase 0** (2026-06-02). Phases 1–4 remain specified but out of Phase 0 implementation scope until `/masterplan` validates status-truth on this branch.
