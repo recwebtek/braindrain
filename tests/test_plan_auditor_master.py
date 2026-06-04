@@ -968,3 +968,118 @@ def test_compute_plan_ranks_heuristic_without_master(tmp_project_dir: Path) -> N
     assert rank_source == "heuristic"
     assert ranks[".cursor/plans/a_active.plan.md"] == 1
     assert ranks[".cursor/plans/z_backlog.plan.md"] == 2
+
+
+def test_detect_plan_overlaps_shared_path(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    shared = "braindrain/server.py"
+    (plans / "alpha.plan.md").write_text(
+        f"---\ndisposition: active\n---\n# Alpha\n- [ ] update `{shared}` handler\n",
+        encoding="utf-8",
+    )
+    (plans / "beta.plan.md").write_text(
+        f"---\ndisposition: active\n---\n# Beta\n- [ ] refactor `{shared}` startup\n",
+        encoding="utf-8",
+    )
+    items: list[m.PlanItem] = []
+    cards: dict[str, m.PlanCard] = {}
+    for slug in ("alpha.plan.md", "beta.plan.md"):
+        path = plans / slug
+        plan_items = m.collect_plan_items(path, tmp_project_dir)
+        items.extend(plan_items)
+        card = m.build_plan_card(path, tmp_project_dir, plan_items, default_owner="@test")
+        cards[card.source] = card
+    edges, clusters = m.detect_plan_overlaps(
+        cards, items, repo_root=tmp_project_dir
+    )
+    path_edges = [edge for edge in edges if edge.signal == "path"]
+    assert path_edges
+    assert path_edges[0].severity == "high"
+    assert len(clusters) == 1
+    assert len(clusters[0]) == 2
+
+
+def test_apply_overlap_relations_appends_relates_to(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    shared = "braindrain/server.py"
+    (plans / "alpha.plan.md").write_text(
+        f"---\ndisposition: active\n---\n# Alpha\n- [ ] update `{shared}` handler\n",
+        encoding="utf-8",
+    )
+    (plans / "beta.plan.md").write_text(
+        f"---\ndisposition: active\n---\n# Beta\n- [ ] refactor `{shared}` startup\n",
+        encoding="utf-8",
+    )
+    items: list[m.PlanItem] = []
+    cards: dict[str, m.PlanCard] = {}
+    for slug in ("alpha.plan.md", "beta.plan.md"):
+        path = plans / slug
+        plan_items = m.collect_plan_items(path, tmp_project_dir)
+        items.extend(plan_items)
+        card = m.build_plan_card(path, tmp_project_dir, plan_items, default_owner="@test")
+        cards[card.source] = card
+    edges, _clusters = m.detect_plan_overlaps(
+        cards, items, repo_root=tmp_project_dir
+    )
+    updated = m.apply_overlap_relations(tmp_project_dir, cards, edges)
+    assert len(updated) == 2
+    alpha_text = (plans / "alpha.plan.md").read_text(encoding="utf-8")
+    beta_text = (plans / "beta.plan.md").read_text(encoding="utf-8")
+    assert "relates_to:" in alpha_text
+    assert "beta.plan.md" in alpha_text
+    assert "relates_to:" in beta_text
+    assert "alpha.plan.md" in beta_text
+
+
+def test_load_goal_context_and_alignment_scores(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    cursor_dir = tmp_project_dir / ".cursor"
+    plans = cursor_dir / "plans"
+    plans.mkdir(parents=True)
+    (cursor_dir / "PRD.md").write_text(
+        "# PRD\n\n## Goals\n\n- Ship memory layers tunable via hub_config\n",
+        encoding="utf-8",
+    )
+    (plans / "aligned.plan.md").write_text(
+        "---\ndisposition: active\n---\n"
+        "# Memory config wiring\n"
+        "- [ ] tune memory layers via hub_config without behavior change\n",
+        encoding="utf-8",
+    )
+    (plans / "unrelated.plan.md").write_text(
+        "---\ndisposition: active\n---\n"
+        "# LivingDash theme polish\n"
+        "- [ ] adjust dashboard color tokens only\n",
+        encoding="utf-8",
+    )
+    items: list[m.PlanItem] = []
+    cards: dict[str, m.PlanCard] = {}
+    for slug in ("aligned.plan.md", "unrelated.plan.md"):
+        path = plans / slug
+        plan_items = m.collect_plan_items(path, tmp_project_dir)
+        items.extend(plan_items)
+        card = m.build_plan_card(path, tmp_project_dir, plan_items, default_owner="@test")
+        cards[card.source] = card
+    goal_context = m.load_goal_context(tmp_project_dir, master_doc=None)
+    assert ".cursor/PRD.md" in goal_context["sources"]
+    alignments = m.compute_goal_alignments(cards, goal_context)
+    by_source = {row.source: row for row in alignments}
+    aligned = by_source[".cursor/plans/aligned.plan.md"]
+    unrelated = by_source[".cursor/plans/unrelated.plan.md"]
+    assert aligned.alignment_score > unrelated.alignment_score
+    assert aligned.alignment_score >= 40
+    mirror = m.render_master_mirror(
+        list(cards.values()),
+        None,
+        repo_root=tmp_project_dir,
+        goal_alignments=alignments,
+        goal_context=goal_context,
+    )
+    assert "## Goal alignment" in mirror
+    mem = m.memory_context(tmp_project_dir)
+    assert mem.get("goal_count", 0) >= 1
+    assert ".cursor/PRD.md" in mem["sources"]
