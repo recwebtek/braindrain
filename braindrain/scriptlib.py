@@ -414,7 +414,7 @@ def _parse_revision(value: Any, *, default: int = 1) -> int:
 def _normalize_channel(value: str | None, *, default: str) -> str:
     if not value:
         return default
-    return value.strip().lower() or default
+    return _sanitize_slug(value) or default
 
 
 def _approval_actions(scope: str, promotion_state: str) -> list[str]:
@@ -1154,6 +1154,15 @@ def run(
         }
 
 
+def _sanitize_slug(value: str) -> str:
+    """Sanitize a string for use as a path component (no separators, no traversal)."""
+    # Replace anything that isn't a-z, 0-9, dot, dash, or underscore.
+    # Specifically blocks / \ and ..
+    slug = str(value).lower()
+    slug = re.sub(r"[^a-z0-9._-]+", "-", slug)
+    return slug.strip("-.")
+
+
 def fork(
     script_id: str,
     *,
@@ -1165,7 +1174,7 @@ def fork(
         return {"ok": False, "error": f"Script not found: {script_id}"}
 
     variant = entry.get("variant", "copy")
-    version = new_variant_or_version
+    version = _sanitize_slug(new_variant_or_version) or "fork"
     src_dir = Path(entry["_entry_dir"])
     dst_dir = _entry_dir(root, entry["canonical_id"], variant, version)
     if dst_dir.exists():
