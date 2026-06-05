@@ -4570,8 +4570,10 @@ def main() -> int:
     auditor_runtime = resolve_planning_auditor_runtime(args, repo_root)
     overlap_jaccard_threshold = float(auditor_runtime["overlap_jaccard_threshold"])
     goal_alignment_min_score = int(auditor_runtime["goal_alignment_min_score"])
-    apply_overlap_relations = bool(auditor_runtime["apply_overlap_relations"])
-    apply_goal_tags = bool(auditor_runtime["apply_goal_tags"])
+    should_apply_overlap_relations = bool(
+        auditor_runtime["apply_overlap_relations"]
+    )
+    should_apply_goal_tags = bool(auditor_runtime["apply_goal_tags"])
     trace_path = Path(args.trace_path)
     if not trace_path.is_absolute():
         trace_path = repo_root / trace_path
@@ -4678,7 +4680,7 @@ def main() -> int:
         jaccard_threshold=overlap_jaccard_threshold,
     )
     overlap_relations_applied: list[str] = []
-    if apply_overlap_relations:
+    if should_apply_overlap_relations:
         overlap_relations_applied = apply_overlap_relations(
             repo_root,
             cards_by_source,
@@ -4688,7 +4690,7 @@ def main() -> int:
     goal_context = load_goal_context(repo_root, master_doc)
     goal_alignments = compute_goal_alignments(cards_by_source, goal_context)
     goal_tags_applied: list[str] = []
-    if apply_goal_tags:
+    if should_apply_goal_tags:
         goal_tags_applied = apply_goal_tags(
             repo_root,
             cards_by_source,
