@@ -26,16 +26,10 @@ def estimate_claude_tokens(text: str) -> int:
 
 # Regex patterns for redaction (pre-compiled for performance)
 # Paths: /Users/..., /Volumes/..., /home/..., /root/...
-_PATH_RE = re.compile(
-    r"(/Users/[^'\",\n\t;]+|/Volumes/[^'\",\n\t;]+|/home/[^'\",\n\t;]+|/root/[^'\",\n\t;]+)"
-)
-# API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_), Google AI (AIza), AWS (AKIA)
+_PATH_RE = re.compile(r"(/Users/[^\s'\"]+|/Volumes/[^\s'\"]+|/home/[^\s'\"]+|/root/[^\s'\"]+)")
+# API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_), Google AI (AIza)
 _KEY_RE = re.compile(
-    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,}|AKIA[A-Z0-9]{16})"
-)
-# Generic Secrets: password, secret, apikey, token (including quoted values)
-_GENERIC_SECRET_RE = re.compile(
-    r"(?i)(password|secret|apikey|token)([:=]\s*['\"]?)([a-zA-Z0-9\-_]{4,})(['\"]?)",
+    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,})"
 )
 
 
@@ -70,15 +64,10 @@ class TelemetrySession:
             "context_database": 0,
         }
     )
-    _parent_ensured: bool = field(init=False, repr=False, default=False)
-    _logs_ensured: bool = field(init=False, repr=False, default=False)
 
     def _ensure_parent(self) -> None:
-        if self._parent_ensured:
-            return
         try:
             self.log_file.parent.mkdir(parents=True, exist_ok=True)
-            self._parent_ensured = True
         except PermissionError:
             # Fallback to current working directory if home dir is restricted
             fallback = Path(".logs") / self.log_file.name
@@ -91,7 +80,7 @@ class TelemetrySession:
         return self._sanitize_data(data)
 
     def _sanitize_data(self, data: Any) -> Any:
-        """Recursive redaction of sensitive paths, API keys, and generic secrets."""
+        """Recursive redaction of sensitive paths and API keys."""
 
         def _do_sanitize(val: Any) -> Any:
             if isinstance(val, str):
@@ -103,22 +92,16 @@ class TelemetrySession:
                     and "gsk_" not in val
                     and "hf_" not in val
                     and "AIza" not in val
-                    and "AKIA" not in val
-                    # Check for generic secret keywords in a case-insensitive way
-                    and not any(kw in val.lower() for kw in ("password", "secret", "apikey", "token"))
                 ):
                     return val
 
                 val = _PATH_RE.sub("[REDACTED_PATH]", val)
                 val = _KEY_RE.sub("[REDACTED_KEY]", val)
-                val = _GENERIC_SECRET_RE.sub(r"\1\2[REDACTED_SECRET]\4", val)
                 return val
             if isinstance(val, dict):
-                return {_do_sanitize(k): _do_sanitize(v) for k, v in val.items()}
+                return {k: _do_sanitize(v) for k, v in val.items()}
             if isinstance(val, list):
                 return [_do_sanitize(i) for i in val]
-            if isinstance(val, tuple):
-                return tuple(_do_sanitize(i) for i in val)
             return val
 
         return _do_sanitize(data)
@@ -164,9 +147,7 @@ class TelemetrySession:
         debug_log_path = Path(".logs") / f"braindrain_debug_report_{date_str}.md"
 
         # Ensure .logs exists
-        if not self._logs_ensured:
-            debug_log_path.parent.mkdir(parents=True, exist_ok=True)
-            self._logs_ensured = True
+        debug_log_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Append to markdown report
         header_exists = debug_log_path.exists()

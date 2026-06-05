@@ -175,16 +175,16 @@ _LLM_PORTS: dict[int, str] = {
     1337: "LM Studio (alt)",
 }
 
-_PROBE_COMMANDS: list[tuple[str, Union[str, Callable[[], Optional[str]]]]] = [
+_PROBE_COMMANDS: list[tuple[str, Union[str, list[str], Callable[[], Optional[str]]]]] = [
     # Identity
-    ("hostname", "hostname"),
+    ("hostname", ["hostname"]),
     ("computer_name", "scutil --get ComputerName 2>/dev/null || hostname"),
-    ("username", "whoami"),
-    ("uid_info", "id"),
+    ("username", ["whoami"]),
+    ("uid_info", ["id"]),
     # OS
-    ("uname", "uname -a"),
+    ("uname", ["uname", "-a"]),
     ("os_release", "cat /etc/os-release 2>/dev/null || sw_vers 2>/dev/null"),
-    ("kernel", "uname -r"),
+    ("kernel", ["uname", "-r"]),
     # Window system / Desktop Environment
     (
         "wm_de_info",
@@ -195,7 +195,7 @@ _PROBE_COMMANDS: list[tuple[str, Union[str, Callable[[], Optional[str]]]]] = [
                     os.environ.get("XDG_CURRENT_DESKTOP"),
                     os.environ.get("DESKTOP_SESSION"),
                     os.environ.get("XDG_SESSION_TYPE"),
-                    _run("sw_vers -productVersion") if os.path.exists("/usr/bin/sw_vers") else None,
+                    _run(["sw_vers", "-productVersion"]) if os.path.exists("/usr/bin/sw_vers") else None,
                 ],
             )
         )
@@ -228,30 +228,30 @@ _PROBE_COMMANDS: list[tuple[str, Union[str, Callable[[], Optional[str]]]]] = [
     ),
     ("brew_version", "brew --version 2>/dev/null | head -1"),
     # Core runtimes
-    ("python_version", "python3 --version 2>/dev/null"),
-    ("node_version", "node -v 2>/dev/null"),
-    ("npm_version", "npm -v 2>/dev/null"),
-    ("go_version", "go version 2>/dev/null"),
-    ("rust_version", "rustc --version 2>/dev/null"),
-    ("ruby_version", "ruby --version 2>/dev/null"),
+    ("python_version", ["python3", "--version"]),
+    ("node_version", ["node", "-v"]),
+    ("npm_version", ["npm", "-v"]),
+    ("go_version", ["go", "version"]),
+    ("rust_version", ["rustc", "--version"]),
+    ("ruby_version", ["ruby", "--version"]),
     ("java_version", "java -version 2>&1 | head -1"),
     # Python interpreter discovery — ALL python3 binaries in PATH, not just the first
     ("python_all", "which -a python3 2>/dev/null || type -a python3 2>/dev/null"),
-    ("python_sys", "/usr/bin/python3 --version 2>/dev/null"),
-    ("pyenv_active", "pyenv version 2>/dev/null"),
+    ("python_sys", ["/usr/bin/python3", "--version"]),
+    ("pyenv_active", ["pyenv", "version"]),
     ("pyenv_versions", "pyenv versions --bare 2>/dev/null | head -10"),
-    ("pyenv_root", "pyenv root 2>/dev/null"),
+    ("pyenv_root", ["pyenv", "root"]),
     # Version managers
     (
         "nvm_version",
         "nvm --version 2>/dev/null || cat ~/.nvm/alias/default 2>/dev/null",
     ),
-    ("pyenv_version", "pyenv --version 2>/dev/null"),
-    ("rbenv_version", "rbenv --version 2>/dev/null"),
+    ("pyenv_version", ["pyenv", "--version"]),
+    ("rbenv_version", ["rbenv", "--version"]),
     # Containers / VMs
     ("docker_version", "docker version --format '{{.Server.Version}}' 2>/dev/null"),
     ("docker_compose", "docker compose version 2>/dev/null | head -1"),
-    ("podman_version", "podman --version 2>/dev/null"),
+    ("podman_version", ["podman", "--version"]),
     # Editors & IDEs (presence check)
     (
         "editors",
@@ -266,7 +266,7 @@ _PROBE_COMMANDS: list[tuple[str, Union[str, Callable[[], Optional[str]]]]] = [
         "modern_cli_tools",
         "for t in fd fzf bat rg jq gh lazygit tmux zoxide atuin delta; do which $t 2>/dev/null && echo $t; done",
     ),
-    ("git_version", "git --version"),
+    ("git_version", ["git", "--version"]),
     (
         "git_config",
         "git config --global --list 2>/dev/null | grep -E 'user\\.(name|email)'",
@@ -299,14 +299,14 @@ _PROBE_COMMANDS: list[tuple[str, Union[str, Callable[[], Optional[str]]]]] = [
         "systemctl --type=service --state=running 2>/dev/null | grep '●' | head -15 || launchctl list 2>/dev/null | head -15",
     ),
     # Arch
-    ("arch", "uname -m"),
-    ("os_type", "uname -s"),
+    ("arch", ["uname", "-m"]),
+    ("os_type", ["uname", "-s"]),
     # ── Bulk installed app discovery (one command, everything) ─────────────
     # macOS: /Applications/ covers GUI apps; ~/Applications/ for user installs
-    ("apps_system", "ls /Applications/ 2>/dev/null"),
-    ("apps_user", "ls ~/Applications/ 2>/dev/null"),
+    ("apps_system", ["ls", "/Applications/"]),
+    ("apps_user", lambda: _run(["ls", str(Path.home() / "Applications")])),
     # brew casks = GUI apps installed via homebrew
-    ("brew_casks", "brew list --cask 2>/dev/null"),
+    ("brew_casks", ["brew", "list", "--cask"]),
     # Linux bulk: pacman, yay (AUR), apt, dpkg, flatpak, snap
     (
         "linux_pkgs",
@@ -407,14 +407,21 @@ _APP_CONFIG_PROBES: list[tuple[str, str, str, str]] = [
 ]
 
 
-def _run(cmd: str) -> str | None:
-    """Run a shell command, return stdout or None on failure.
-    NOTE: cmd must be properly quoted if it contains external input.
+def _run(cmd: str | list[str]) -> str | None:
+    """Run a command, return stdout or None on failure.
+
+    Args:
+        cmd: String for shell-native commands (pipes, loops), or list
+             for secure direct execution (shell=False).
+
+    NOTE: Strings are executed with shell=True. Use lists where possible
+    to avoid shell injection risks when commands include external input.
     """
     try:
+        is_shell = isinstance(cmd, str)
         result = subprocess.run(
             cmd,
-            shell=True,
+            shell=is_shell,
             capture_output=True,
             text=True,
             timeout=5,
@@ -690,7 +697,7 @@ def _parse_python_interpreters(raw: dict[str, Any]) -> list[dict[str, str]]:
             continue
         seen_paths.add(real)
         # Get version for this specific interpreter
-        ver = _run(f"{shlex.quote(line)} --version 2>/dev/null") or "unknown"
+        ver = _run([line, "--version"]) or "unknown"
         interpreters.append({"path": line, "real_path": real, "version": ver})
 
     # Always include the venv Python if we can find it (common project patterns)
@@ -700,7 +707,7 @@ def _parse_python_interpreters(raw: dict[str, Any]) -> list[dict[str, str]]:
             real = str(venv_path.resolve())
             if real not in seen_paths:
                 seen_paths.add(real)
-                ver = _run(f"{shlex.quote(str(venv_path))} --version 2>/dev/null") or "unknown"
+                ver = _run([str(venv_path), "--version"]) or "unknown"
                 interpreters.append(
                     {"path": str(venv_path), "real_path": real, "version": ver}
                 )
