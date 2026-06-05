@@ -62,9 +62,10 @@ def estimate_claude_tokens(text: str) -> int:
 # Regex patterns for redaction (pre-compiled for performance)
 # Paths: /Users/..., /Volumes/..., /home/..., /root/...
 _PATH_RE = re.compile(r"(/Users/[^\s'\"]+|/Volumes/[^\s'\"]+|/home/[^\s'\"]+|/root/[^\s'\"]+)")
-# API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_), Google AI (AIza)
+# API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_), Google AI (AIza), AWS (AKIA), Slack (xox)
 _KEY_RE = re.compile(
-    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,})"
+    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,}|A[KS]IA[A-Z0-9]{16}|xox[bparc]-[a-zA-Z0-9-]{12,})",
+    re.IGNORECASE
 )
 
 # Machine-local debug reports (under .braindrain/, never committed).
@@ -127,12 +128,16 @@ class TelemetrySession:
             if isinstance(val, str):
                 # Optimization: skip regex overhead if the string has no characters indicating
                 # a potential sensitive path or API key. ~3.5x speedup for clean strings.
+                val_lower = val.lower()
                 if (
                     "/" not in val
-                    and "sk-" not in val
-                    and "gsk_" not in val
-                    and "hf_" not in val
-                    and "AIza" not in val
+                    and "sk-" not in val_lower
+                    and "gsk_" not in val_lower
+                    and "hf_" not in val_lower
+                    and "aiza" not in val_lower
+                    and "akia" not in val_lower
+                    and "asia" not in val_lower
+                    and "xox" not in val_lower
                 ):
                     return val
 
@@ -143,6 +148,8 @@ class TelemetrySession:
                 return {k: _do_sanitize(v) for k, v in val.items()}
             if isinstance(val, list):
                 return [_do_sanitize(i) for i in val]
+            if isinstance(val, tuple):
+                return tuple(_do_sanitize(i) for i in val)
             return val
 
         return _do_sanitize(data)
