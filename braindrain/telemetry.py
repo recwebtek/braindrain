@@ -61,12 +61,50 @@ def estimate_claude_tokens(text: str) -> int:
 
 # Regex patterns for redaction (pre-compiled for performance)
 # Paths: /Users/..., /Volumes/..., /home/..., /root/...
-_PATH_RE = re.compile(r"(/Users/[^\s'\"]+|/Volumes/[^\s'\"]+|/home/[^\s'\"]+|/root/[^\s'\"]+)")
-# API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_), Google AI (AIza), AWS (AKIA), Slack (xox)
+_PATH_RE = re.compile(r"(/Users/|/Volumes/|/home/|/root/)([^\s'\",;]+)")
+# API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_), Google AI (AIza),
+# AWS (AKIA/ASIA), Slack (xoxb/xoxp/...)
 _KEY_RE = re.compile(
-    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,}|A[KS]IA[A-Z0-9]{16}|xox[bparc]-[a-zA-Z0-9-]{12,})",
-    re.IGNORECASE
+    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,}|A[KS]IA[A-Z0-9]{16,}|xox[bparc]-[a-zA-Z0-9-]{12,})",
+    re.IGNORECASE,
 )
+# Generic secrets: password=value, "secret": "value", api_key: token
+_GENERIC_SECRET_RE = re.compile(
+    r"(['\"]?)([a-zA-Z0-9_-]*(?:password|secret|token|apikey|api_key|pass))\b\1(\s*[:=]\s*)(['\"]?)([^\s'\",;]+)\4",
+    re.IGNORECASE,
+)
+
+_SENSITIVE_KEY_EXACT = frozenset(
+    {
+        "password",
+        "secret",
+        "token",
+        "api_key",
+        "apikey",
+        "pass",
+        "credentials",
+        "access_token",
+        "refresh_token",
+        "auth_token",
+        "private_key",
+        "passwd",
+    }
+)
+_SENSITIVE_KEY_SUFFIXES = (
+    "_password",
+    "_secret",
+    "_api_key",
+    "_token",
+    "_pass",
+    "_credentials",
+)
+
+
+def _is_sensitive_dict_key(key: str) -> bool:
+    normalized = key.lower().replace("-", "_")
+    if normalized in _SENSITIVE_KEY_EXACT:
+        return True
+    return any(normalized.endswith(suffix) for suffix in _SENSITIVE_KEY_SUFFIXES)
 
 # Machine-local debug reports (under .braindrain/, never committed).
 _DEBUG_LOG_DIR = Path(".braindrain") / "logs"
@@ -118,16 +156,15 @@ class TelemetrySession:
                 self.log_file.parent.mkdir(parents=True, exist_ok=True)
 
     def sanitize(self, data: Any) -> Any:
-        """Public entry point for recursive redaction of sensitive paths and API keys."""
+        """Public entry point for recursive redaction of sensitive telemetry data."""
         return self._sanitize_data(data)
 
     def _sanitize_data(self, data: Any) -> Any:
-        """Recursive redaction of sensitive paths and API keys."""
+        """Recursive redaction of sensitive paths, API keys, and generic secrets."""
 
         def _do_sanitize(val: Any) -> Any:
             if isinstance(val, str):
-                # Optimization: skip regex overhead if the string has no characters indicating
-                # a potential sensitive path or API key. ~3.5x speedup for clean strings.
+                # Optimization: skip regex overhead when no redaction markers are present.
                 val_lower = val.lower()
                 if (
                     "/" not in val
@@ -138,18 +175,43 @@ class TelemetrySession:
                     and "akia" not in val_lower
                     and "asia" not in val_lower
                     and "xox" not in val_lower
+                    and "password" not in val_lower
+                    and "secret" not in val_lower
+                    and "token" not in val_lower
+                    and "apikey" not in val_lower
+                    and "api_key" not in val_lower
+                    and "pass" not in val_lower
                 ):
                     return val
 
-                val = _PATH_RE.sub("[REDACTED_PATH]", val)
+                val = _PATH_RE.sub(r"\1[REDACTED_PATH]", val)
                 val = _KEY_RE.sub("[REDACTED_KEY]", val)
+                val = _GENERIC_SECRET_RE.sub(r"\1\2\1\3\4[REDACTED_SECRET]\4", val)
                 return val
             if isinstance(val, dict):
-                return {k: _do_sanitize(v) for k, v in val.items()}
+                sanitized: dict[Any, Any] = {}
+                for key, value in val.items():
+                    sanitized_key = _do_sanitize(key)
+                    if isinstance(key, str) and _is_sensitive_dict_key(key) and isinstance(
+                        value, str
+                    ):
+                        sanitized[sanitized_key] = "[REDACTED_SECRET]"
+                        continue
+                    sanitized[sanitized_key] = _do_sanitize(value)
+                return sanitized
             if isinstance(val, list):
-                return [_do_sanitize(i) for i in val]
+                return [_do_sanitize(item) for item in val]
             if isinstance(val, tuple):
-                return tuple(_do_sanitize(i) for i in val)
+                if (
+                    len(val) >= 2
+                    and isinstance(val[0], str)
+                    and _is_sensitive_dict_key(val[0])
+                    and isinstance(val[1], str)
+                ):
+                    head = tuple(_do_sanitize(item) for item in val[:1])
+                    tail = tuple(_do_sanitize(item) for item in val[2:])
+                    return head + ("[REDACTED_SECRET]",) + tail
+                return tuple(_do_sanitize(item) for item in val)
             return val
 
         return _do_sanitize(data)
