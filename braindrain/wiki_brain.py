@@ -409,9 +409,13 @@ class WikiBrain:
             if exclude_record_id and row["record_id"] == exclude_record_id:
                 continue
             existing = self._row_to_record(row)
+            # Optimization: skip expensive content similarity if title doesn't match
             overlap = self._similarity(title, existing.title)
+            if overlap < 0.78:
+                continue
+
             content_overlap = self._similarity(content, existing.content)
-            if overlap >= 0.78 and content_overlap < 0.55:
+            if content_overlap < 0.55:
                 return {"record_id": existing.record_id, "title": existing.title}
         return None
 
