@@ -67,6 +67,7 @@ tests/*
 !tests/test_dream_weights.py
 !tests/test_macos_host_idle.py
 !tests/test_dream_trigger.py
+!tests/test_telemetry_sanitization.py
 
 # Ruler outputs at repo root (no leading dot)
 /AGENTS.md

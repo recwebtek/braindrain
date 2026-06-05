@@ -30,8 +30,30 @@ todos:
     content: Phase 0 tests done in test_plan_auditor_master.py; Phase 1 sequence tests done; Phase 2 overlap tests done
     status: completed
 isProject: false
----
-
+branches:
+  - master-plan-overseer-phase0
+  - master-plan-overseer-phase1
+  - master-plan-overseer-phase2-3
+  - master-plan-overseer-phase4
+branch: master-plan-overseer-phase0
+phase_branches:
+  - branch: master-plan-overseer-phase0
+    phase: "0"
+    pr: https://github.com/recwebtek/braindrain/pull/109
+    pr_state: merged
+    note: "no separate PR head; inherited from `master-plan-overseer-phase1` (#109)"
+  - branch: master-plan-overseer-phase1
+    phase: "1"
+    pr: https://github.com/recwebtek/braindrain/pull/109
+    pr_state: merged
+  - branch: master-plan-overseer-phase2-3
+    phase: "2-3"
+    pr: https://github.com/recwebtek/braindrain/pull/110
+    pr_state: merged
+  - branch: master-plan-overseer-phase4
+    phase: "4"
+    pr: https://github.com/recwebtek/braindrain/pull/111
+    pr_state: merged---
 # Master plan overseer — sequencing, overlap, goal alignment
 
 ## Current state (gaps)

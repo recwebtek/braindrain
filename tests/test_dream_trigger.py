@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
+import braindrain.server
 from braindrain.dream_trigger import evaluate_host_idle_trigger, workspace_hash
 
 
