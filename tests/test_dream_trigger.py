@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
-import braindrain.server
+import braindrain.server  # Required for patching server sub-attributes
 from braindrain.dream_trigger import evaluate_host_idle_trigger, workspace_hash
 
 
