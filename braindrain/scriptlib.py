@@ -122,6 +122,13 @@ def canonical_id_for_path(path: Path, base_dir: Path) -> str:
     return slug.replace("/", "--").strip("-") or "script"
 
 
+def _sanitize_slug(value: str) -> str:
+    """Ensure a string is safe for use in path construction."""
+    if not value or not isinstance(value, str):
+        return ""
+    return re.sub(r"[^a-z0-9_-]+", "-", value.strip().lower()).strip("-")
+
+
 def _default_settings(*, scope: str) -> dict[str, Any]:
     return {
         "enabled": False,
@@ -414,7 +421,7 @@ def _parse_revision(value: Any, *, default: int = 1) -> int:
 def _normalize_channel(value: str | None, *, default: str) -> str:
     if not value:
         return default
-    return value.strip().lower() or default
+    return _sanitize_slug(value) or default
 
 
 def _approval_actions(scope: str, promotion_state: str) -> list[str]:
@@ -1165,7 +1172,10 @@ def fork(
         return {"ok": False, "error": f"Script not found: {script_id}"}
 
     variant = entry.get("variant", "copy")
-    version = new_variant_or_version
+    version = _sanitize_slug(new_variant_or_version)
+    if not version:
+        return {"ok": False, "error": f"Invalid version string: {new_variant_or_version}"}
+
     src_dir = Path(entry["_entry_dir"])
     dst_dir = _entry_dir(root, entry["canonical_id"], variant, version)
     if dst_dir.exists():
