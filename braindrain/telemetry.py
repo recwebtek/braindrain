@@ -165,24 +165,30 @@ class TelemetrySession:
         def _do_sanitize(val: Any) -> Any:
             if isinstance(val, str):
                 # Optimization: skip regex overhead when no redaction markers are present.
-                val_lower = val.lower()
+                # Broad checks first (faster than lower()), then specific sensitive markers.
                 if (
-                    "/" not in val
-                    and "sk-" not in val_lower
-                    and "gsk_" not in val_lower
-                    and "hf_" not in val_lower
-                    and "aiza" not in val_lower
-                    and "akia" not in val_lower
-                    and "asia" not in val_lower
-                    and "xox" not in val_lower
-                    and "password" not in val_lower
-                    and "secret" not in val_lower
-                    and "token" not in val_lower
-                    and "apikey" not in val_lower
-                    and "api_key" not in val_lower
-                    and "pass" not in val_lower
+                    "/Users/" not in val
+                    and "/Volumes/" not in val
+                    and "/home/" not in val
+                    and "/root/" not in val
                 ):
-                    return val
+                    val_lower = val.lower()
+                    if (
+                        "sk-" not in val_lower
+                        and "gsk_" not in val_lower
+                        and "hf_" not in val_lower
+                        and "aiza" not in val_lower
+                        and "akia" not in val_lower
+                        and "asia" not in val_lower
+                        and "xox" not in val_lower
+                        and "password" not in val_lower
+                        and "secret" not in val_lower
+                        and "token" not in val_lower
+                        and "apikey" not in val_lower
+                        and "api_key" not in val_lower
+                        and "pass" not in val_lower
+                    ):
+                        return val
 
                 val = _PATH_RE.sub(r"\1[REDACTED_PATH]", val)
                 val = _KEY_RE.sub("[REDACTED_KEY]", val)
