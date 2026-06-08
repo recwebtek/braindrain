@@ -138,7 +138,8 @@ def _summarize_in_sandbox(*, payload: dict[str, Any], max_chars: int = 8000) -> 
 
     raw = _safe_json_dumps(payload)
     # Keep runtime configs tight; no user-provided overrides here.
-    runtime_configs = {"network_mode": "bridge"}
+    # network_mode: none ensures the sandbox has no internet access.
+    runtime_configs = {"network_mode": "none"}
 
     # If Docker isn't available, don't hang: fallback quickly.
     try:
@@ -447,7 +448,7 @@ class WorkflowEngine:
 - `token_budget`: **{wf.token_budget}** (used as a size cap for the final summary payload)
 
 ## Safety
-- Docker sandbox is used for intermediate processing/summarization (network: bridge).
+- Docker sandbox is used for intermediate processing/summarization (network: none).
 """
         return {
             "workflow": name,
