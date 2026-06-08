@@ -64,6 +64,8 @@ tests/*
 !tests/test_scriptlib.py
 !tests/test_env_probe_codex.py
 !tests/test_plan_auditor_master.py
+!tests/test_plan_build_guard.py
+!tests/test_plan_meta_closeout.py
 !tests/test_telemetry_observer_bridge.py
 !tests/test_route_output_records_savings.py
 !tests/test_token_checkpoints.py

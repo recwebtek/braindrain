@@ -175,6 +175,16 @@ When you **create or finish editing** a tracked plan file under an IDE `plans/` 
    - Re-run the auditor (`/masterplan` or `scripts/daily_plan_audit.py`) so implementation sequence and overlap reports refresh.
 4. Mark abandoned plans `disposition: archived` (or `archived: true` / `status: archived`), or list them under `archived_plans:` / `archive:` in `_master.plan.md` frontmatter; the next auditor run moves them to `.plan.archives/` under the same `plans/` directory.
 
+#### Meta-plan (multi-feature umbrella)
+
+When a prompt spans **multiple independent features**:
+
+- Author **one** meta plan with `disposition: meta` under `.cursor/plans/` (not `QA-Logs/`).
+- Include `children_spec:` — each entry: `id`, `file`, `name`, `branch`, `section` (H2 anchor in the meta body).
+- Meta todos use `split-<id>`; mark `completed` only when the child file exists on disk.
+- **Do not Plan Build on the meta plan** — `plan_build_guard.py` returns `meta_plan_no_build`.
+- Run `/metaplan-closeout` to create child plan files and wire `_master.plan.md`, then `/masterplan`, then Build on **one child** plan per session.
+
 ### Model provenance and footer policy
 
 Use `provenance` settings from `config/hub_config.yaml` as the source of truth:

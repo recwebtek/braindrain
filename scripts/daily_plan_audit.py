@@ -26,6 +26,21 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
+from plan_branch_utils import (  # noqa: E402
+    FRONTMATTER_BLOCK_RE,
+    FRONTMATTER_KV_RE,
+    _strip_quotes,
+    parse_frontmatter_body as _parse_frontmatter_body,
+    parse_frontmatter_children_spec,
+    parse_frontmatter_todos,
+    parse_plan_frontmatter,
+    remove_frontmatter_block as _remove_frontmatter_block,
+    remove_frontmatter_scalar as _remove_frontmatter_scalar,
+    set_frontmatter_key as _set_frontmatter_key,
+    set_frontmatter_yaml_block as _set_frontmatter_yaml_block,
+    _inject_frontmatter_key,
+)
+
 SCHEMA_VERSION = "1.2"
 STOP_WORDS = {
     "a",
@@ -96,6 +111,7 @@ KNOWN_IDE_DOTFOLDERS = (
 # Plan-level disposition vocabulary. Validated when reading frontmatter.
 VALID_DISPOSITIONS = (
     "active",
+    "meta",
     "research-needed",
     "replan-needed",
     "merge-ready",
@@ -113,17 +129,13 @@ ARCHIVED_BATCH_LIMIT = 10
 # otherwise it stays off the triage queue. `scratched` and `implemented`
 # never appear in the queue.
 DISPOSITION_VERB = {
+    "meta": "SPLIT",
     "research-needed": "RESEARCH",
     "replan-needed": "REPLAN",
     "merge-ready": "MERGE",
     "needs-fix": "FIX",
     "backlogged": "BACKLOG",
 }
-
-# Frontmatter parser regexes (no PyYAML dependency — keeps script standalone).
-FRONTMATTER_BLOCK_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|$)", re.DOTALL)
-FRONTMATTER_KV_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.*?)\s*$")
-
 
 def resolve_model_name(model_name: str | None = None) -> str:
     if model_name and model_name.strip():
@@ -171,78 +183,6 @@ def load_trace_models(trace_path: Path, limit: int = 1000) -> list[str]:
         if model_name:
             models.append(model_name)
     return sorted(set(models))
-
-
-def _strip_quotes(value: str) -> str:
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
-        return value[1:-1]
-    return value
-
-
-def _parse_frontmatter_body(body: str) -> dict[str, object]:
-    """Parse one YAML frontmatter body (between ``---`` fences)."""
-    out: dict[str, object] = {}
-    current_list: list[str] | None = None
-
-    for raw in body.splitlines():
-        if not raw.strip():
-            continue
-        # Indented bullet for an active list key.
-        if current_list is not None and re.match(r"^\s+-\s+", raw):
-            value = re.sub(r"^\s+-\s+", "", raw).strip()
-            current_list.append(_strip_quotes(value))
-            continue
-        # New top-level key resets list capture.
-        kv = FRONTMATTER_KV_RE.match(raw)
-        if not kv:
-            current_list = None
-            continue
-        key = kv.group(1)
-        value = kv.group(2)
-        current_list = None
-        if not value:
-            current_list = []
-            out[key] = current_list
-            continue
-        # Inline list like `[a, b, c]`.
-        if value.startswith("[") and value.endswith("]"):
-            inner = value[1:-1].strip()
-            parts = [_strip_quotes(p.strip()) for p in inner.split(",") if p.strip()]
-            out[key] = parts
-            continue
-        out[key] = _strip_quotes(value)
-    return out
-
-
-def parse_plan_frontmatter(path_or_text) -> dict[str, object]:
-    """Parse leading YAML frontmatter (merges consecutive ``---`` blocks).
-
-    Supports the small subset we actually use: scalars, quoted scalars,
-    inline lists like `delegated_to: [a, b]`, and indented bullet lists.
-
-    When branch bootstrap left a tiny first block before the real plan
-    frontmatter, later blocks are merged (later keys win).
-    """
-    if isinstance(path_or_text, Path):
-        text = path_or_text.read_text(encoding="utf-8", errors="ignore")
-    else:
-        text = str(path_or_text or "")
-
-    merged: dict[str, object] = {}
-    pos = 0
-    while pos < len(text):
-        slice_text = text[pos:]
-        match = FRONTMATTER_BLOCK_RE.match(slice_text)
-        if not match:
-            break
-        merged.update(_parse_frontmatter_body(match.group(1)))
-        pos += match.end()
-        remainder = text[pos:].lstrip("\n")
-        if remainder.startswith("---"):
-            pos = len(text) - len(remainder)
-            continue
-        break
-    return merged
 
 
 _DEFAULT_OWNER_CACHE: str | None = None
@@ -1340,67 +1280,6 @@ TODO_ITEM_STATUS_MAP = {
 }
 
 
-def parse_frontmatter_todos(text: str) -> list[dict[str, str]]:
-    """Parse structured ``todos:`` entries from plan frontmatter."""
-    fm_lines: list[str] = []
-    pos = 0
-    while pos < len(text):
-        match = FRONTMATTER_BLOCK_RE.match(text[pos:])
-        if not match:
-            break
-        fm_lines.extend(match.group(1).splitlines())
-        pos += match.end()
-        remainder = text[pos:].lstrip("\n")
-        if remainder.startswith("---"):
-            pos = len(text) - len(remainder)
-            continue
-        break
-    if not fm_lines:
-        return []
-    todos: list[dict[str, str]] = []
-    current: dict[str, str] | None = None
-    in_todos = False
-    for raw in fm_lines:
-        stripped = raw.strip()
-        if not stripped:
-            continue
-        if re.match(r"^todos:\s*$", stripped):
-            in_todos = True
-            continue
-        if not in_todos:
-            continue
-        item_start = re.match(r"^\s*-\s+id:\s*(.+)$", raw)
-        if item_start:
-            if current:
-                todos.append(current)
-            current = {
-                "id": _strip_quotes(item_start.group(1).strip()),
-                "content": "",
-                "status": "pending",
-            }
-            continue
-        if current is None:
-            if FRONTMATTER_KV_RE.match(raw):
-                in_todos = False
-            continue
-        content_match = re.match(r"^\s+content:\s*(.+)$", raw)
-        if content_match:
-            current["content"] = _strip_quotes(content_match.group(1).strip())
-            continue
-        status_match = re.match(r"^\s+status:\s*(.+)$", raw)
-        if status_match:
-            current["status"] = _strip_quotes(status_match.group(1).strip()).lower()
-            continue
-        if FRONTMATTER_KV_RE.match(raw):
-            in_todos = False
-            if current:
-                todos.append(current)
-                current = None
-    if current:
-        todos.append(current)
-    return todos
-
-
 def compute_todo_summary(todos: list[dict[str, str]]) -> dict[str, int]:
     summary = {
         "total": len(todos),
@@ -1614,44 +1493,6 @@ def _render_phase_branches_frontmatter(records: list[dict[str, str]]) -> list[st
             escaped = note.replace('"', '\\"')
             lines.append(f'    note: "{escaped}"')
     return lines
-
-
-def _remove_frontmatter_block(fm_body: str, key: str) -> str:
-    lines = fm_body.splitlines()
-    kept: list[str] = []
-    skipping = False
-    for line in lines:
-        if re.match(rf"^{re.escape(key)}\s*:\s*$", line.strip()):
-            skipping = True
-            continue
-        if skipping:
-            if line and not line.startswith((" ", "-")) and FRONTMATTER_KV_RE.match(line):
-                skipping = False
-            else:
-                continue
-        kept.append(line)
-    return "\n".join(kept).strip("\n")
-
-
-def _remove_frontmatter_scalar(fm_body: str, key: str) -> str:
-    return re.sub(rf"(?m)^{re.escape(key)}\s*:\s*.*\n?", "", fm_body)
-
-
-def _set_frontmatter_yaml_block(text: str, key: str, block_lines: list[str]) -> str:
-    match = FRONTMATTER_BLOCK_RE.match(text)
-    if not match:
-        body = "\n".join(block_lines) + "\n"
-        return f"---\n{body}---\n\n{text}"
-    fm_body = match.group(1)
-    fm_body = _remove_frontmatter_block(fm_body, key)
-    fm_body = fm_body.rstrip()
-    block_text = "\n".join(block_lines).rstrip() + "\n"
-    if fm_body:
-        fm_body += "\n" + block_text
-    else:
-        fm_body = block_text
-    new_block = f"---\n{fm_body}---\n"
-    return new_block + text[len(match.group(0)) :]
 
 
 def format_plan_pr_summary(card: PlanCard) -> str:
@@ -2570,6 +2411,7 @@ _VERB_ORDER = (
     "FIX",  # broken regressions
     "REPLAN",  # needs rewrite before more work
     "RESEARCH",  # unblock with investigation
+    "SPLIT",  # meta plan → child plan files
     "IMPLEMENT",  # active work missing tests/evidence
     "BACKLOG",  # surfaced only for high-priority deferred plans
 )
@@ -2585,14 +2427,34 @@ def _first_active_item_excerpt(card: PlanCard) -> str:
     return ""
 
 
+def meta_plan_missing_child_files(card: "PlanCard", repo_root: Path) -> list[str]:
+    """Return child plan filenames from ``children_spec`` that are not on disk."""
+    plan_path = repo_root / card.source
+    if not plan_path.is_file():
+        return []
+    text = plan_path.read_text(encoding="utf-8", errors="ignore")
+    specs = parse_frontmatter_children_spec(text)
+    if not specs:
+        return ["<children_spec missing>"]
+    plans_dir = plan_path.parent
+    missing: list[str] = []
+    for spec in specs:
+        child_file = str(spec.get("file") or "").strip()
+        if child_file and not (plans_dir / child_file).is_file():
+            missing.append(child_file)
+    return missing
+
+
 def detect_actions(
     cards: list[PlanCard],
     *,
+    repo_root: Path | None = None,
     backlog_priority_threshold: str = "P1",
 ) -> list[Action]:
     """Translate plan dispositions + item signals into concrete next-action verbs.
 
     Rules:
+    - ``meta`` + missing child files -> SPLIT
     - ``research-needed`` -> RESEARCH
     - ``replan-needed``   -> REPLAN
     - ``merge-ready``     -> MERGE
@@ -2609,6 +2471,44 @@ def detect_actions(
             continue
         verb = DISPOSITION_VERB.get(card.disposition)
         excerpt = _first_active_item_excerpt(card)
+
+        if card.disposition == "meta" and repo_root is not None:
+            missing = meta_plan_missing_child_files(card, repo_root)
+            plan_path = repo_root / card.source
+            todos = (
+                parse_frontmatter_todos(
+                    plan_path.read_text(encoding="utf-8", errors="ignore")
+                )
+                if plan_path.is_file()
+                else []
+            )
+            pending_split = any(
+                todo.get("id", "").startswith("split-")
+                and todo.get("status", "pending") != "completed"
+                for todo in todos
+            )
+            if missing or pending_split:
+                hint_files = ", ".join(missing[:5])
+                if len(missing) > 5:
+                    hint_files += f" (+{len(missing) - 5} more)"
+                actions.append(
+                    Action(
+                        verb="SPLIT",
+                        plan_slug=card.slug,
+                        plan_source=card.source,
+                        ide=card.ide or "—",
+                        title=card.title,
+                        reason="meta plan missing child plan files",
+                        hint=(
+                            f"run /metaplan-closeout; missing: {hint_files}"
+                            if missing
+                            else "run /metaplan-closeout to finish child plan bodies"
+                        ),
+                        priority=card.priority,
+                        item_excerpt=excerpt,
+                    )
+                )
+            continue
 
         if card.disposition == "active":
             if plan_all_todos_completed(card):
@@ -2655,6 +2555,7 @@ def detect_actions(
             "MERGE": "implemented; ready to ship",
             "FIX": "implemented but broken/regressed",
             "BACKLOG": "deferred but priority-elevated",
+            "SPLIT": "meta plan needs child plan files",
         }[verb]
         hint = {
             "RESEARCH": "answer the open question(s); update plan with findings",
@@ -2662,6 +2563,7 @@ def detect_actions(
             "MERGE": "open PR; pass CI; merge",
             "FIX": "reproduce regression; ship fix; add regression test",
             "BACKLOG": "decide: promote to active or scratch",
+            "SPLIT": "run /metaplan-closeout; then Build on one child plan",
         }[verb]
 
         actions.append(
@@ -2995,6 +2897,7 @@ _DISPOSITION_ORDER = (
     "merge-ready",
     "needs-fix",
     "active",
+    "meta",
     "research-needed",
     "replan-needed",
     "backlogged",
@@ -3003,7 +2906,9 @@ _DISPOSITION_ORDER = (
 )
 
 # Plans excluded from the overseer "build queue" / implementation sequence.
-_BUILD_QUEUE_EXCLUDED_DISPOSITIONS = frozenset({"implemented", "archived", "merge-ready"})
+_BUILD_QUEUE_EXCLUDED_DISPOSITIONS = frozenset(
+    {"implemented", "archived", "merge-ready", "meta"}
+)
 
 
 def render_plan_cards(
@@ -3567,35 +3472,6 @@ def bootstrap_plan_branches_from_git_local(
             path.write_text(new_text, encoding="utf-8")
             updated.append(source)
     return updated
-
-
-def _inject_frontmatter_key(text: str, key: str, value: str) -> str:
-    match = FRONTMATTER_BLOCK_RE.match(text)
-    if match:
-        fm_block = match.group(0)
-        fm_body = match.group(1)
-        if re.search(rf"(?m)^{re.escape(key)}\s*:", fm_body):
-            return text
-        updated_body = fm_body.rstrip() + f"\n{key}: {value}\n"
-        new_block = f"---\n{updated_body}---\n"
-        return new_block + text[len(fm_block) :]
-    return f"---\n{key}: {value}\n---\n\n{text}"
-
-
-def _set_frontmatter_key(text: str, key: str, value: str) -> str:
-    """Insert or replace a frontmatter key."""
-    match = FRONTMATTER_BLOCK_RE.match(text)
-    if not match:
-        return _inject_frontmatter_key(text, key, value)
-    fm_block = match.group(0)
-    fm_body = match.group(1)
-    key_re = re.compile(rf"(?m)^{re.escape(key)}\s*:\s*.*$")
-    if key_re.search(fm_body):
-        updated_body = key_re.sub(f"{key}: {value}", fm_body, count=1)
-    else:
-        updated_body = fm_body.rstrip() + f"\n{key}: {value}\n"
-    new_block = f"---\n{updated_body}---\n"
-    return new_block + text[len(fm_block) :]
 
 
 def persist_resolved_plan_branches(
@@ -4374,7 +4250,7 @@ def build_report(
     body.append("")
 
     # Plan-centric cards (new in schema 1.1) — grouped by IDE then disposition.
-    actions = detect_actions(list(cards_by_source.values()))
+    actions = detect_actions(list(cards_by_source.values()), repo_root=repo_root)
     body.extend(render_plan_cards(list(cards_by_source.values()), actions))
 
     grouped = defaultdict(list)
@@ -4677,7 +4553,7 @@ def main() -> int:
         repo_root=repo_root,
         master_path=master_path,
     )
-    actions = detect_actions(list(cards_by_source.values()))
+    actions = detect_actions(list(cards_by_source.values()), repo_root=repo_root)
 
     board = render_task_board_markdown(
         args.report_date,
