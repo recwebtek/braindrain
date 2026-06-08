@@ -42,6 +42,8 @@ class CatalogToolRow:
     roles: list[str] = field(default_factory=list)
     bundles: list[str] = field(default_factory=list)
     source: str = "hub_config"  # hub_config | native
+    parameters: dict[str, Any] | None = None
+    input_examples: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _slug(name: str) -> str:
@@ -70,6 +72,7 @@ def _row_from_hub_tool(tool: MCPToolConfig) -> CatalogToolRow:
         roles=list(tool.roles or []),
         bundles=list(tool.bundles or []),
         source="hub_config",
+        input_examples=list(tool.input_examples or []),
     )
 
 
@@ -77,6 +80,9 @@ def _row_from_native_tool(tool: Any) -> CatalogToolRow:
     name = str(getattr(tool, "name", "") or "unknown")
     description = _one_line(str(getattr(tool, "description", "") or ""))
     tags = list(getattr(tool, "tags", None) or [])
+    parameters = getattr(tool, "parameters", None)
+    if not isinstance(parameters, dict):
+        parameters = None
     return CatalogToolRow(
         name=name,
         server=BRAINDRAIN_SERVER,
@@ -86,7 +92,64 @@ def _row_from_native_tool(tool: Any) -> CatalogToolRow:
         hot=True,
         tags=tags,
         source="native",
+        parameters=parameters,
     )
+
+
+def _format_default(value: Any) -> str:
+    if value is None:
+        return "—"
+    if isinstance(value, str):
+        return value or "—"
+    return str(value)
+
+
+def _render_parameters_table_from_schema(parameters: dict[str, Any]) -> list[str]:
+    properties = parameters.get("properties") or {}
+    if not properties:
+        return []
+
+    lines = [
+        "## Parameters",
+        "",
+        "| Name | Type | Default | Description |",
+        "|------|------|---------|-------------|",
+    ]
+    for name, spec in properties.items():
+        if not isinstance(spec, dict):
+            continue
+        param_type = str(spec.get("type") or "—")
+        default = _format_default(spec.get("default"))
+        description = _one_line(str(spec.get("description") or "—"), max_len=160)
+        lines.append(f"| {name} | {param_type} | {default} | {description} |")
+    lines.append("")
+    return lines
+
+
+def _render_parameters_table_from_examples(input_examples: list[dict[str, Any]]) -> list[str]:
+    if not input_examples:
+        return []
+    example = input_examples[0]
+    if not isinstance(example, dict) or not example:
+        return []
+
+    lines = [
+        "## Parameters",
+        "",
+        "_Example keys from hub_config; full schema from external MCP server when connected._",
+        "",
+        "| Name | Type | Default | Description |",
+        "|------|------|---------|-------------|",
+    ]
+    for name, value in example.items():
+        inferred_type = type(value).__name__
+        if isinstance(value, (dict, list)):
+            inferred_type = "object" if isinstance(value, dict) else "array"
+        lines.append(
+            f"| {name} | {inferred_type} | — | See external MCP server schema when connected. |"
+        )
+    lines.append("")
+    return lines
 
 
 def render_tool_markdown(row: CatalogToolRow) -> str:
@@ -114,6 +177,10 @@ def render_tool_markdown(row: CatalogToolRow) -> str:
         if row.command:
             lines.append(f"- **command**: `{_one_line(row.command, max_len=120)}`")
     lines.extend(["", "## Description", "", row.description or "_No description._", ""])
+    if row.parameters:
+        lines.extend(_render_parameters_table_from_schema(row.parameters))
+    elif row.input_examples:
+        lines.extend(_render_parameters_table_from_examples(row.input_examples))
     return "\n".join(lines)
 
 

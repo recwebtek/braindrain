@@ -369,7 +369,9 @@ async def search_tools(query: str = "", top_k: int = 5) -> dict:
     Search available tools by capability. Call this FIRST before any task.
     Returns lightweight references (~300 tokens total), not full definitions.
 
-    Examples: "codebase symbols", "git operations", "compress context"
+    Args:
+        query: Natural-language capability query (e.g. "codebase symbols", "git operations").
+        top_k: Maximum number of matching tools to return. Default: 5.
     """
     # Some clients/agents may accidentally call this tool with `{}`.
     # Make the parameter optional to avoid hard validation failures.
@@ -397,7 +399,9 @@ async def run_workflow(name: str, args: dict = None) -> dict:
     Execute a workflow in an isolated sandbox. Returns only final summary.
     Intermediate data NEVER enters your context window.
 
-    Available workflows: See list_workflows()
+    Args:
+        name: Workflow id from list_workflows() (e.g. ingest_codebase, refactor_prep).
+        args: Workflow-specific argument dict (see hub_config workflows input_examples).
     """
     if args is None:
         args = {}
@@ -449,6 +453,10 @@ async def plan_workflow(name: str, args: dict = None) -> dict:
     Use before: refactor_prep, ingest_codebase (large projects)
 
     Note: This feature requires crit (Phase 3). Currently returns stub.
+
+    Args:
+        name: Workflow id from list_workflows().
+        args: Workflow-specific argument dict to include in the plan preview.
     """
     if args is None:
         args = {}
@@ -577,11 +585,13 @@ async def route_output(
     Route large text outputs through context-mode's FTS5 index to avoid dumping
     raw bytes into the model context window.
 
-    - If content is small, returns it directly.
-    - If large (or force_index), indexes into context-mode via ctx_index and returns a handle
-      plus suggested ctx_search queries.
-    - When cost_tracking.auto_route_output is true, uses route_threshold_chars from config.
-    - Set force_inline=true to skip auto-routing and return inline text when allowed.
+    Args:
+        text: Content to route or return inline when below threshold.
+        source: Source label stored with the index entry. Default: braindrain.
+        intent: Optional intent tag for context-mode indexing.
+        min_chars: Character threshold before routing (when auto-route is off). Default: 5000.
+        force_index: When True, always index regardless of size.
+        force_inline: When True, skip auto-routing and return inline text when allowed.
     """
     if not force_index and not _should_route_output(text, min_chars=min_chars, force_inline=force_inline):
         return {
@@ -648,8 +658,10 @@ async def search_index(query: str, limit: int = 5, rerank: bool | None = None) -
 
     Primary retrieval is context-mode FTS5 — no embedding API required.
 
-    Optional rerank when `modules.tool_gate.rerank_on_search` is true (or `rerank=True`):
-    `rerank_provider` none (default) | lexical (offline) | mixedbread | auto.
+    Args:
+        query: Search query or handle (e.g. handle:abc123).
+        limit: Maximum number of chunks to return. Default: 5.
+        rerank: Override rerank_on_search from config. None uses hub_config default.
     """
     client = _get_context_mode_client()
     if client is None:
@@ -696,11 +708,13 @@ def record_token_checkpoint(
     """
     Append a schema 1.0 token checkpoint to `.braindrain/token-metrics.jsonl`.
 
-    Phases: start | pre_high_cost | post_high_cost | milestone_close | end
-
-    ``path`` is the project/workspace root (same as ``export_mcp_catalog(path=...)``),
-    not the JSONL file path. Checkpoints are written to
-    ``<path>/.braindrain/token-metrics.jsonl``.
+    Args:
+        phase: Checkpoint phase — start | pre_high_cost | post_high_cost | milestone_close | end.
+        task: Short task identifier for this checkpoint row.
+        note: Optional human-readable summary of what triggered the checkpoint.
+        context_tags: Optional tags (e.g. ["search", "subagent"]) for attribution.
+        path: Project root directory (not the JSONL path). Default: current working directory.
+              Checkpoints write to <path>/.braindrain/token-metrics.jsonl.
     """
     cost_cfg = config.get("cost_tracking", {}) or {}
     if not bool(cost_cfg.get("enabled", True)):
@@ -724,6 +738,10 @@ async def export_mcp_catalog(path: str = ".", dry_run: bool = False) -> dict:
     Writes `.braindrain/mcp-catalog/<server>/tools/*.md` from hub_config external
     servers plus native braindrain MCP tools. Use `rg` on the catalog before loading
     heavy deferred servers.
+
+    Args:
+        path: Project root for `.braindrain/mcp-catalog/` output. Default: current directory.
+        dry_run: When True, return planned paths without writing files.
     """
     return await export_mcp_catalog_async(
         config=config,
@@ -752,7 +770,16 @@ def record_model_trace_event(
     source: str = "manual",
     metadata: dict | None = None,
 ) -> dict:
-    """Append a machine-local model provenance event for audits and plan reports."""
+    """
+    Append a machine-local model provenance event for audits and plan reports.
+
+    Args:
+        actor: Agent or subagent name (e.g. coordinator, architect).
+        model_name: Model id override; empty uses effective model from host/config.
+        event: Event type (e.g. run, plan, audit). Default: run.
+        source: Provenance source label (e.g. manual, subagent). Default: manual.
+        metadata: Optional extra fields attached to the trace row.
+    """
     settings = _provenance_settings()
     trace_cfg = settings.get("subagent_trace", {}) if isinstance(settings, dict) else {}
     enabled = bool(trace_cfg.get("enabled", True)) and bool(settings.get("enabled", True))
@@ -788,7 +815,12 @@ def record_model_trace_event(
 
 @mcp.tool()
 def evaluate_memory_candidate(candidate: str) -> dict:
-    """Evaluate whether a memory candidate can be promoted safely."""
+    """
+    Evaluate whether a memory candidate can be promoted safely.
+
+    Args:
+        candidate: Proposed memory text to score against promotion policy.
+    """
     policy = (config.get("memory_learning", {}) or {}).get("promotion", {}) or {}
     return can_promote_memory(candidate, policy)
 
@@ -802,7 +834,17 @@ def evaluate_lesson_candidate_tool(
     global_reflection: str = "",
     evidence_refs: list[str] | None = None,
 ) -> dict:
-    """Evaluate grounded episode content for lesson/playbook promotion."""
+    """
+    Evaluate grounded episode content for lesson/playbook promotion.
+
+    Args:
+        problem: Problem or situation the episode addressed.
+        action: Action taken to address the problem.
+        outcome: Result of the action (success, failure, partial).
+        local_critique: Optional critique of the specific action taken.
+        global_reflection: Optional broader lesson learned.
+        evidence_refs: Optional file paths, URLs, or handles supporting the episode.
+    """
     lessons_cfg = (config.get("lessons", {}) or {}).get("promotion", {}) or {}
     return evaluate_lesson_candidate(
         problem=problem,
@@ -826,7 +868,19 @@ def record_observer_event(
     metadata: dict | None = None,
     timestamp: float | None = None,
 ) -> dict:
-    """Record an observer event into the episodic ring buffer."""
+    """
+    Record an observer event into the episodic ring buffer.
+
+    Args:
+        session_id: Session identifier linking events to a work session.
+        event_type: Event category (e.g. tool_call, file_edit, error).
+        tool_name: Optional MCP tool name when event_type is tool-related.
+        files_touched: Optional list of file paths modified in this event.
+        token_cost: Estimated tokens consumed. Default: 0.
+        duration_ms: Event duration in milliseconds. Default: 0.
+        metadata: Optional extra structured fields for the event.
+        timestamp: Unix timestamp; default is current time.
+    """
     event = BrainEvent(
         timestamp=float(timestamp or datetime.now().timestamp()),
         session_id=session_id,
@@ -842,7 +896,12 @@ def record_observer_event(
 
 @mcp.tool()
 def get_event_stats(session_id: str | None = None) -> dict:
-    """Get observer event counts and latest activity."""
+    """
+    Get observer event counts and latest activity.
+
+    Args:
+        session_id: Filter stats to one session; None returns global stats.
+    """
     return _get_observer_store().get_event_stats(session_id=session_id)
 
 
@@ -862,9 +921,19 @@ async def touch_session(
     """
     Update session summary telemetry.
 
-    Set end_session=true to finalize and emit a ≤2 KB compact package
-    (decisions, files_touched, failures, open_todos). When context-mode is
-    configured and index_in_context_mode=true, indexes the package for search_index.
+    Set end_session=true to finalize and emit a ≤2 KB compact package.
+
+    Args:
+        session_id: Unique session identifier for this work session.
+        tool_name: Optional last tool invoked in this touch.
+        files_modified: Optional list of file paths changed this touch.
+        key_decision: Optional short decision note to append.
+        error: Optional error message if a failure occurred.
+        open_todos: Optional list of remaining todo strings.
+        token_delta: Token count delta to add to session total. Default: 0.
+        timestamp: Unix timestamp override; default is current time.
+        end_session: When True, finalize session and emit compact package.
+        index_in_context_mode: When True and end_session, index package via context-mode.
     """
     store = _get_session_store()
     summary = store.touch_session(
@@ -929,7 +998,12 @@ async def touch_session(
 
 @mcp.tool()
 def get_session_summary(session_id: str | None = None) -> dict:
-    """Return latest session summary or a specific session."""
+    """
+    Return latest session summary or a specific session.
+
+    Args:
+        session_id: Session to retrieve; None returns the most recent session.
+    """
     summary = _get_session_store().get_session_summary(session_id=session_id)
     if not summary:
         return {"status": "not_found", "session_id": session_id}
@@ -958,7 +1032,22 @@ def record_episode(
     tags: list[str] | None = None,
     episode_id: str = "",
 ) -> dict:
-    """Store a grounded episode candidate for future dream consolidation."""
+    """
+    Store a grounded episode candidate for future dream consolidation.
+
+    Args:
+        session_id: Session this episode belongs to.
+        problem: Problem or situation encountered.
+        context: Background context relevant to the problem.
+        action: Action taken to address the problem.
+        outcome: Result of the action.
+        evidence_refs: Optional supporting file paths, URLs, or index handles.
+        local_critique: Optional critique of the specific action.
+        global_reflection: Optional broader lesson or pattern observed.
+        confidence: Confidence score 0.0–1.0. Default: 0.5.
+        tags: Optional categorization tags.
+        episode_id: Optional explicit id; auto-generated when empty.
+    """
     episode = EpisodeRecord(
         episode_id=episode_id,
         session_id=session_id,
@@ -977,7 +1066,13 @@ def record_episode(
 
 @mcp.tool()
 def list_episodes(session_id: str | None = None, limit: int = 20) -> dict:
-    """List recent episodes (optionally by session)."""
+    """
+    List recent episodes (optionally by session).
+
+    Args:
+        session_id: Filter to one session; None returns episodes across sessions.
+        limit: Maximum episodes to return. Default: 20.
+    """
     episodes = _get_session_store().list_episodes(session_id=session_id, limit=limit)
     return {"episodes": [episode.__dict__ for episode in episodes], "count": len(episodes)}
 
@@ -995,7 +1090,21 @@ def store_fact(
     evidence_refs: list[str] | None = None,
     metadata: dict | None = None,
 ) -> dict:
-    """Store a durable semantic/procedural/lesson record."""
+    """
+    Store a durable semantic/procedural/lesson record.
+
+    Args:
+        content: Durable fact or lesson body text to store.
+        record_class: Record type — semantic | procedural | lesson. Default: semantic.
+        title: Optional short title for the record.
+        source: Provenance label (e.g. manual, dream, session). Default: manual.
+        category: Grouping category. Default: general.
+        importance: Importance score 0.0–1.0. Default: 0.5.
+        confidence: Confidence score 0.0–1.0. Default: 0.5.
+        tags: Optional list of categorization tags.
+        evidence_refs: Optional file paths, URLs, or index handles supporting the record.
+        metadata: Optional extra structured fields stored with the record.
+    """
     return _get_wiki_brain().store_fact(
         content=content,
         record_class=record_class,
@@ -1017,7 +1126,15 @@ def query_facts(
     limit: int = 10,
     include_superseded: bool = False,
 ) -> dict:
-    """Query durable records from Wiki-Brain."""
+    """
+    Query durable records from Wiki-Brain.
+
+    Args:
+        query: Text search query; empty returns recent records.
+        record_class: Filter by semantic | procedural | lesson; None returns all classes.
+        limit: Maximum records to return. Default: 10.
+        include_superseded: When True, include records marked superseded. Default: False.
+    """
     records = _get_wiki_brain().query_records(
         query=query,
         record_class=record_class,
@@ -1029,7 +1146,14 @@ def query_facts(
 
 @mcp.tool()
 def cognitive_recall(query: str, record_class: str | None = None, limit: int = 5) -> dict:
-    """Score and rank durable recall candidates."""
+    """
+    Score and rank durable recall candidates.
+
+    Args:
+        query: Natural-language recall query.
+        record_class: Filter by semantic | procedural | lesson; None searches all.
+        limit: Maximum ranked results. Default: 5.
+    """
     return {
         "results": _get_wiki_brain().cognitive_recall(
             query=query,
@@ -1041,7 +1165,13 @@ def cognitive_recall(query: str, record_class: str | None = None, limit: int = 5
 
 @mcp.tool()
 def review_playbook(query: str = "", limit: int = 10) -> dict:
-    """Review active lesson/playbook records."""
+    """
+    Review active lesson/playbook records.
+
+    Args:
+        query: Optional text filter for lesson content.
+        limit: Maximum records to return. Default: 10.
+    """
     return {"records": _get_wiki_brain().review_playbook(query=query, limit=limit)}
 
 
@@ -1052,7 +1182,15 @@ def record_memory_metric(
     source: str = "manual",
     metadata: dict | None = None,
 ) -> dict:
-    """Record durable memory-system metric events."""
+    """
+    Record durable memory-system metric events.
+
+    Args:
+        metric_type: Metric name (e.g. recall_hit, promotion, dream_cycle).
+        value: Numeric metric value. Default: 1.0.
+        source: Provenance label. Default: manual.
+        metadata: Optional extra fields attached to the metric event.
+    """
     return _get_wiki_brain().record_metric(
         metric_type,
         value=value,
@@ -1075,7 +1213,13 @@ def get_provider_context_policy() -> dict:
 
 @mcp.tool()
 def run_dream(mode: str = "full", force: bool = False) -> dict:
-    """Run Light/REM/Deep memory consolidation."""
+    """
+    Run Light/REM/Deep memory consolidation.
+
+    Args:
+        mode: Dream cycle mode — light | rem | deep | full. Default: full.
+        force: When True, run even if interval guard would skip. Default: False.
+    """
     return _get_dream_engine().run(mode=mode, force=force, trigger="mcp")
 
 
@@ -1150,7 +1294,15 @@ def scriptlib_enable(
     harvest: bool = True,
     dry_run: bool = False,
 ) -> dict:
-    """Enable scriptlib for the project or global scope. Project enable harvests scripts by default."""
+    """
+    Enable scriptlib for the project or global scope. Project enable harvests scripts by default.
+
+    Args:
+        path: Project root directory. Default: current working directory.
+        scope: Enable target — project | global. Default: project.
+        harvest: When True, harvest workspace scripts on project enable. Default: True.
+        dry_run: When True, preview without writing config. Default: False.
+    """
     return _scriptlib_enable(path, scope=scope, harvest=harvest, dry_run=dry_run)
 
 
@@ -1160,7 +1312,14 @@ def scriptlib_disable(
     scope: str = "project",
     dry_run: bool = False,
 ) -> dict:
-    """Disable scriptlib for the project or global scope without removing harvested files."""
+    """
+    Disable scriptlib for the project or global scope without removing harvested files.
+
+    Args:
+        path: Project root directory. Default: current working directory.
+        scope: Disable target — project | global. Default: project.
+        dry_run: When True, preview without writing config. Default: False.
+    """
     return _scriptlib_disable(path, scope=scope, dry_run=dry_run)
 
 
@@ -1169,7 +1328,13 @@ def scriptlib_harvest_workspace(
     path: str = ".",
     dry_run: bool = False,
 ) -> dict:
-    """Copy useful script-like files from the workspace into the local scriptlib catalog."""
+    """
+    Copy useful script-like files from the workspace into the local scriptlib catalog.
+
+    Args:
+        path: Project root to harvest from. Default: current working directory.
+        dry_run: When True, report candidates without copying. Default: False.
+    """
     return _scriptlib_harvest_workspace(project_path=path, dry_run=dry_run)
 
 
@@ -1183,7 +1348,18 @@ def scriptlib_search(
     effect_tier: str | None = None,
     limit: int = 5,
 ) -> dict:
-    """Search project and global scriptlib entries with lightweight lexical ranking."""
+    """
+    Search project and global scriptlib entries with lightweight lexical ranking.
+
+    Args:
+        query: Natural-language or keyword search query.
+        path: Project root for project-scoped catalog. Default: current directory.
+        capability: Optional filter by capability tag.
+        language: Optional filter by language (e.g. python, bash).
+        harness: Optional filter by test harness type.
+        effect_tier: Optional filter by side-effect tier.
+        limit: Maximum results. Default: 5.
+    """
     return _scriptlib_search(
         query,
         project_path=path,
@@ -1201,7 +1377,14 @@ def scriptlib_describe(
     path: str = ".",
     variant: str | None = None,
 ) -> dict:
-    """Return full metadata for a scriptlib entry."""
+    """
+    Return full metadata for a scriptlib entry.
+
+    Args:
+        script_id: Scriptlib entry id from search or catalog.
+        path: Project root for project-scoped lookup. Default: current directory.
+        variant: Optional variant/version id when multiple exist.
+    """
     return _scriptlib_describe(script_id, project_path=path, variant=variant)
 
 
@@ -1214,7 +1397,17 @@ def scriptlib_run(
     dry_run: bool = False,
     timeout_seconds: int = 60,
 ) -> dict:
-    """Run a scriptlib entry using native copy or restored source context."""
+    """
+    Run a scriptlib entry using native copy or restored source context.
+
+    Args:
+        script_id: Scriptlib entry id to execute.
+        path: Project root for project-scoped lookup. Default: current directory.
+        variant: Optional variant/version id to run.
+        args: Optional CLI arguments passed to the script.
+        dry_run: When True, return the command without executing. Default: False.
+        timeout_seconds: Max execution time in seconds. Default: 60.
+    """
     return _scriptlib_run(
         script_id,
         project_path=path,
@@ -1231,7 +1424,14 @@ def scriptlib_fork(
     new_variant_or_version: str,
     path: str = ".",
 ) -> dict:
-    """Fork an existing scriptlib entry into a new version for safe modification."""
+    """
+    Fork an existing scriptlib entry into a new version for safe modification.
+
+    Args:
+        script_id: Source scriptlib entry id to fork.
+        new_variant_or_version: New variant or version label for the fork.
+        path: Project root for project-scoped catalog. Default: current directory.
+    """
     return _scriptlib_fork(
         script_id,
         project_path=path,
@@ -1250,7 +1450,19 @@ def scriptlib_record_result(
     promote_status: str | None = None,
     validate_native_copy: bool = False,
 ) -> dict:
-    """Record a run result and update success score, mistakes, and validation state."""
+    """
+    Record a run result and update success score, mistakes, and validation state.
+
+    Args:
+        script_id: Scriptlib entry id that was run.
+        outcome: Run outcome — success | failure | partial.
+        path: Project root for project-scoped catalog. Default: current directory.
+        variant: Optional variant/version id that was run.
+        notes: Optional freeform notes about the run.
+        duration_ms: Optional run duration in milliseconds.
+        promote_status: Optional promotion status update.
+        validate_native_copy: When True, validate the native copy artifact. Default: False.
+    """
     return _scriptlib_record_result(
         script_id,
         project_path=path,
@@ -1272,7 +1484,17 @@ def scriptlib_promote(
     approved: bool = False,
     dry_run: bool = False,
 ) -> dict:
-    """Promote a validated project script into the shared personal scriptlib catalog."""
+    """
+    Promote a validated project script into the shared personal scriptlib catalog.
+
+    Args:
+        script_id: Project scriptlib entry id to promote.
+        path: Project root. Default: current working directory.
+        variant: Optional variant/version id to promote.
+        channel: Release channel (e.g. stable, beta). Default: stable.
+        approved: When True, confirm promotion approval gate. Default: False.
+        dry_run: When True, preview promotion without writing. Default: False.
+    """
     return _scriptlib_promote(
         script_id,
         project_path=path,
@@ -1287,7 +1509,12 @@ def scriptlib_promote(
 def scriptlib_list_updates(
     path: str = ".",
 ) -> dict:
-    """List pinned shared script artifacts with available updates for this workspace."""
+    """
+    List pinned shared script artifacts with available updates for this workspace.
+
+    Args:
+        path: Project root. Default: current working directory.
+    """
     return _scriptlib_list_updates(project_path=path)
 
 
@@ -1300,7 +1527,17 @@ def scriptlib_apply_update(
     approved: bool = False,
     dry_run: bool = False,
 ) -> dict:
-    """Pin or upgrade a shared script artifact in the current workspace."""
+    """
+    Pin or upgrade a shared script artifact in the current workspace.
+
+    Args:
+        script_id: Shared scriptlib entry id to pin or upgrade.
+        path: Project root. Default: current working directory.
+        channel: Optional release channel to pin (e.g. stable).
+        target_revision: Optional explicit revision number to pin.
+        approved: When True, confirm update approval gate. Default: False.
+        dry_run: When True, preview update without writing. Default: False.
+    """
     return _scriptlib_apply_update(
         script_id,
         project_path=path,
@@ -1318,7 +1555,15 @@ def scriptlib_run_maintenance(
     dry_run: bool = False,
     add_ignore_dirs: list[str] | None = None,
 ) -> dict:
-    """Refresh indexes, surface duplicates and promotion candidates, and optionally persist ignore dirs."""
+    """
+    Refresh indexes, surface duplicates and promotion candidates, and optionally persist ignore dirs.
+
+    Args:
+        path: Project root. Default: current working directory.
+        scope: Maintenance scope — project | global | all. Default: all.
+        dry_run: When True, report findings without writing. Default: False.
+        add_ignore_dirs: Optional directory names to add to harvest ignore list.
+    """
     return _scriptlib_run_maintenance(
         project_path=path,
         scope=scope,
@@ -1333,7 +1578,14 @@ def scriptlib_catalog_status(
     include_entries: bool = False,
     limit: int = 20,
 ) -> dict:
-    """Summarize local/shared scriptlib state, promotion candidates, pins, and updates."""
+    """
+    Summarize local/shared scriptlib state, promotion candidates, pins, and updates.
+
+    Args:
+        path: Project root. Default: current working directory.
+        include_entries: When True, include entry summaries in response. Default: False.
+        limit: Max entries when include_entries is True. Default: 20.
+    """
     return _scriptlib_catalog_status(project_path=path, include_entries=include_entries, limit=limit)
 
 
@@ -1343,7 +1595,14 @@ def scriptlib_refresh_index(
     scope: str = "project",
     dry_run: bool = False,
 ) -> dict:
-    """Rebuild project, global, or combined scriptlib indexes and catalogs."""
+    """
+    Rebuild project, global, or combined scriptlib indexes and catalogs.
+
+    Args:
+        path: Project root for project scope. Default: current working directory.
+        scope: Index scope — project | global | all. Default: project.
+        dry_run: When True, preview rebuild without writing. Default: False.
+    """
     if scope not in {"project", "global", "all"}:
         return {"ok": False, "error": f"Unsupported scope: {scope}"}
     roots = []
@@ -1467,6 +1726,10 @@ def init_project_memory(path: str = ".", dry_run: bool = False) -> dict:
     - .cursor/hooks/state/continual-learning-index.json
 
     Both paths are gitignored. This tool is idempotent and safe to re-run.
+
+    Args:
+        path: Project root directory. Default: current working directory.
+        dry_run: When True, preview artifacts without creating files.
     """
     try:
         target = Path(path).expanduser().resolve()
