@@ -223,13 +223,17 @@ class ObserverStore:
         }
 
     def _row_to_event(self, row: sqlite3.Row) -> BrainEvent:
+        # Fast-path for common empty JSON defaults to avoid expensive json.loads() calls.
+        files_raw = row["files_touched"]
+        meta_raw = row["metadata"]
+
         return BrainEvent(
             timestamp=float(row["timestamp"]),
             session_id=row["session_id"],
             event_type=row["event_type"],
             tool_name=row["tool_name"],
-            files_touched=json.loads(row["files_touched"] or "[]"),
+            files_touched=[] if files_raw in (None, "[]") else json.loads(files_raw),
             token_cost=int(row["token_cost"] or 0),
             duration_ms=int(row["duration_ms"] or 0),
-            metadata=json.loads(row["metadata"] or "{}"),
+            metadata={} if meta_raw in (None, "{}") else json.loads(meta_raw),
         )

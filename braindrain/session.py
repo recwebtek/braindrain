@@ -397,16 +397,23 @@ class SessionStore:
 
     def _row_to_session(self, row: sqlite3.Row) -> SessionSummary:
         keys = set(row.keys())
+        # Fast-path for common empty JSON defaults to avoid expensive json.loads() calls.
+        tools_raw = row["tools_used"]
+        files_raw = row["files_modified"]
+        decisions_raw = row["key_decisions"]
+        errors_raw = row["errors"]
+        todos_raw = row["open_todos"] if "open_todos" in keys else "[]"
+
         return SessionSummary(
             session_id=row["session_id"],
             start_time=float(row["start_time"]),
             end_time=float(row["end_time"]) if row["end_time"] is not None else None,
             events_count=int(row["events_count"] or 0),
-            tools_used=json.loads(row["tools_used"] or "{}"),
-            files_modified=json.loads(row["files_modified"] or "[]"),
-            key_decisions=json.loads(row["key_decisions"] or "[]"),
-            errors=json.loads(row["errors"] or "[]"),
-            open_todos=json.loads(row["open_todos"] or "[]") if "open_todos" in keys else [],
+            tools_used={} if tools_raw in (None, "{}") else json.loads(tools_raw),
+            files_modified=[] if files_raw in (None, "[]") else json.loads(files_raw),
+            key_decisions=[] if decisions_raw in (None, "[]") else json.loads(decisions_raw),
+            errors=[] if errors_raw in (None, "[]") else json.loads(errors_raw),
+            open_todos=[] if todos_raw in (None, "[]") else json.loads(todos_raw),
             token_total=int(row["token_total"] or 0),
             updated_at=float(row["updated_at"]),
             context_index_handle=row["context_index_handle"] if "context_index_handle" in keys else None,
@@ -414,6 +421,10 @@ class SessionStore:
         )
 
     def _row_to_episode(self, row: sqlite3.Row) -> EpisodeRecord:
+        # Fast-path for common empty JSON defaults to avoid expensive json.loads() calls.
+        evidence_raw = row["evidence_refs"]
+        tags_raw = row["tags"]
+
         return EpisodeRecord(
             episode_id=row["episode_id"],
             session_id=row["session_id"],
@@ -421,11 +432,11 @@ class SessionStore:
             context=row["context"],
             action=row["action"],
             outcome=row["outcome"],
-            evidence_refs=json.loads(row["evidence_refs"] or "[]"),
+            evidence_refs=[] if evidence_raw in (None, "[]") else json.loads(evidence_raw),
             local_critique=row["local_critique"] or "",
             global_reflection=row["global_reflection"] or "",
             confidence=float(row["confidence"] or 0.5),
-            tags=json.loads(row["tags"] or "[]"),
+            tags=[] if tags_raw in (None, "[]") else json.loads(tags_raw),
             created_at=float(row["created_at"]),
             promoted_lesson_id=row["promoted_lesson_id"],
         )
