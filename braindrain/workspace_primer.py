@@ -29,6 +29,11 @@ HUB_SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 OPERATIONAL_SCRIPT_FILES: dict[str, list[str]] = {
     "daily_plan_audit": ["daily_plan_audit.py", "plan_branch_utils.py"],
     "plan_build_guard": ["plan_build_guard.py", "plan_branch_utils.py"],
+    "plan_meta_closeout": [
+        "plan_meta_closeout.py",
+        "plan_branch_utils.py",
+        "daily_plan_audit.py",
+    ],
 }
 
 # Canonical project-local docs directory (gitignored; never committed).

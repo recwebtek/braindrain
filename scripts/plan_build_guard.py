@@ -13,12 +13,14 @@ if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
 from plan_branch_utils import (
-    branch_name_for_plan,
     branch_ref_exists,
     checkout_plan_branch,
     create_branch_ref,
     current_branch,
+    is_meta_plan,
+    parse_plan_disposition,
     resolve_base_branch,
+    resolve_plan_branch,
     slug_from_plan_path,
 )
 
@@ -50,13 +52,31 @@ def main() -> int:
         return 2
 
     rel_plan = plan_path.relative_to(repo_root).as_posix()
-    branch = branch_name_for_plan(plan_path)
+    disposition = parse_plan_disposition(plan_path)
+
+    if is_meta_plan(plan_path):
+        out = {
+            "ok": False,
+            "error": "meta_plan_no_build",
+            "guardReason": "meta_plan_no_build",
+            "disposition": disposition,
+            "planSource": rel_plan,
+            "message": (
+                "Meta plans are not buildable. Run /metaplan-closeout to create child "
+                "plans, then Build on a child plan file."
+            ),
+        }
+        print(json.dumps(out, indent=2))
+        return 1
+
+    branch = resolve_plan_branch(plan_path)
     base = resolve_base_branch(repo_root)
     slug = slug_from_plan_path(plan_path)
 
     out: dict[str, object] = {
         "ok": True,
         "planSource": rel_plan,
+        "disposition": disposition,
         "branch": branch,
         "baseBranch": base,
         "branchCreated": False,

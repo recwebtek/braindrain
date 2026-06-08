@@ -1246,3 +1246,63 @@ def test_resolve_planning_auditor_cli_overrides_yaml(tmp_project_dir: Path) -> N
     runtime = m.resolve_planning_auditor_runtime(args, tmp_project_dir)
     assert runtime["overlap_jaccard_threshold"] == 0.33
     assert runtime["goal_alignment_min_score"] == 55
+
+
+def test_meta_plan_excluded_from_build_queue(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    (plans / "meta.plan.md").write_text(
+        "---\n"
+        "disposition: meta\n"
+        "children_spec:\n"
+        "  - id: child-a\n"
+        "    file: child-a.plan.md\n"
+        "    branch: feature/child-a\n"
+        "---\n\n"
+        "# Meta umbrella\n",
+        encoding="utf-8",
+    )
+    (plans / "child-a.plan.md").write_text(
+        "---\ndisposition: active\nbranch: feature/child-a\n---\n# Child\n- [ ] work\n",
+        encoding="utf-8",
+    )
+    items: list[m.PlanItem] = []
+    cards: dict[str, m.PlanCard] = {}
+    for slug in ("meta.plan.md", "child-a.plan.md"):
+        path = plans / slug
+        plan_items = m.collect_plan_items(path, tmp_project_dir)
+        items.extend(plan_items)
+        card = m.build_plan_card(path, tmp_project_dir, plan_items, default_owner="@test")
+        cards[card.source] = card
+    ranks, _rank_source = m.compute_plan_ranks(None, cards, repo_root=tmp_project_dir)
+    assert ".cursor/plans/meta.plan.md" not in ranks
+    assert ".cursor/plans/child-a.plan.md" in ranks
+
+
+def test_meta_plan_split_verb_when_children_missing(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    (plans / "meta.plan.md").write_text(
+        "---\n"
+        "disposition: meta\n"
+        "children_spec:\n"
+        "  - id: child-a\n"
+        "    file: missing-child.plan.md\n"
+        "    branch: feature/child-a\n"
+        "todos:\n"
+        "  - id: split-child-a\n"
+        '    content: "Child plan missing-child.plan.md exists"\n'
+        "    status: pending\n"
+        "---\n\n"
+        "# Meta umbrella\n",
+        encoding="utf-8",
+    )
+    path = plans / "meta.plan.md"
+    items = m.collect_plan_items(path, tmp_project_dir)
+    card = m.build_plan_card(path, tmp_project_dir, items, default_owner="@test")
+    actions = m.detect_actions([card], repo_root=tmp_project_dir)
+    assert actions
+    assert actions[0].verb == "SPLIT"
+    assert "metaplan-closeout" in actions[0].hint.lower()

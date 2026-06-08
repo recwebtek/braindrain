@@ -133,9 +133,10 @@ Set `embeddings.default_provider` (default: `lmstudio_local`). Programmatic help
 | ------- | ----------- |
 | `/prime-braindrain` | Onboard or refresh Cursor orchestration (rules, hooks, skills, auditor scripts). |
 | `/brainlog` | **End of chat** — finalize L1 session compaction, token checkpoint, optional L2 wiki-brain promotion, L3 dream guidance, and reminders to update `.braindrain/AGENT_MEMORY.md` / `OPS.md` / `SESSION_PROGRESS.md`. |
-| `/masterplan` | Manual planning close-out (`daily_plan_audit.py`); use after editing `*.plan.md`, not as a substitute for `/brainlog`. |
+| `/masterplan` | Manual planning close-out (`daily_plan_audit.py`); use after editing `*.plan.md`, not as a substitute for `/brainlog`. See cadence table in `config/templates/cursor/commands/masterplan.md`. |
+| `/metaplan-closeout` | Split a `disposition: meta` umbrella plan into child `*.plan.md` files + `_master` links (`plan_meta_closeout.py`). |
 
-Plan Build: run `python3 scripts/plan_build_guard.py --plan <path>` before edits (see Ruler `RULES.md`).
+Plan Build: run `python3 scripts/plan_build_guard.py --plan <path>` before edits (see Ruler `RULES.md`). Meta plans are blocked (`meta_plan_no_build`) — close out with `/metaplan-closeout` first.
 
 ### Telemetry
 
