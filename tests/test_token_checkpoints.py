@@ -36,3 +36,35 @@ def test_append_checkpoint_writes_under_project_root(tmp_path: Path) -> None:
     row = out_path.read_text(encoding="utf-8").strip().splitlines()[-1]
     assert '"schema_version": "1.0"' in row or '"schema_version":"1.0"' in row
     assert '"phase": "start"' in row or '"phase":"start"' in row
+
+
+def test_append_checkpoint_sanitizes_notes(tmp_path: Path) -> None:
+    workspace = tmp_path / "sanitization-test"
+    workspace.mkdir()
+    telemetry = TelemetrySession(log_file=tmp_path / "session.jsonl")
+
+    # Use a real-looking Anthropic key pattern
+    secret = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789"
+    note = f"Secret: {secret}"
+
+    result = append_checkpoint(
+        phase="end",
+        task="security-test",
+        note=note,
+        context_tags=[f"/Users/test-user/secret-path"],
+        telemetry=telemetry,
+        project_root=workspace,
+    )
+
+    checkpoint = result["checkpoint"]
+    assert secret not in checkpoint["note"]
+    # It might match _KEY_RE or _GENERIC_SECRET_RE (due to "Secret:" prefix)
+    assert "[REDACTED_" in checkpoint["note"]
+    assert "/Users/test-user" not in checkpoint["context_tags"][0]
+    assert "[REDACTED_PATH]" in checkpoint["context_tags"][0]
+
+    # Verify JSONL content
+    out_path = Path(result["path"])
+    content = out_path.read_text(encoding="utf-8")
+    assert secret not in content
+    assert "[REDACTED_" in content
