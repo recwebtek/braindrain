@@ -1306,3 +1306,32 @@ def test_meta_plan_split_verb_when_children_missing(tmp_project_dir: Path) -> No
     assert actions
     assert actions[0].verb == "SPLIT"
     assert "metaplan-closeout" in actions[0].hint.lower()
+
+
+def test_roadmap_version_alignment_warns_on_drift(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    (tmp_project_dir / "pyproject.toml").write_text(
+        'version = "9.9.9"\n',
+        encoding="utf-8",
+    )
+    (tmp_project_dir / "ROADMAP.md").write_text(
+        "# Roadmap\n\nLast aligned with **v1.0.3** (2026-01-01).\n",
+        encoding="utf-8",
+    )
+    warnings = m.check_roadmap_version_alignment(tmp_project_dir)
+    assert warnings
+    assert "Version drift" in warnings[0]
+    assert "9.9.9" in warnings[0]
+
+
+def test_roadmap_version_alignment_passes_when_matched(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    (tmp_project_dir / "pyproject.toml").write_text(
+        '[project]\nversion = "1.0.3"\n',
+        encoding="utf-8",
+    )
+    (tmp_project_dir / "ROADMAP.md").write_text(
+        "# Roadmap\n\nLast aligned with **v1.0.3** (2026-04-10).\n",
+        encoding="utf-8",
+    )
+    assert m.check_roadmap_version_alignment(tmp_project_dir) == []
