@@ -38,6 +38,7 @@ class SessionSummary:
             "files_modified": self.files_modified,
             "key_decisions": self.key_decisions,
             "errors": self.errors,
+            "open_todos": self.open_todos,
             "token_total": self.token_total,
             "updated_at": self.updated_at,
         }
