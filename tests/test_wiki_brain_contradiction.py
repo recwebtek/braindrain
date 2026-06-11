@@ -5,8 +5,6 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-import pytest
-
 from braindrain.wiki_brain import BrainRecord, WikiBrain
 
 

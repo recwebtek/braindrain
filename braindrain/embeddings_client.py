@@ -6,7 +6,7 @@ import json
 import os
 import urllib.error
 import urllib.request
-from typing import Any, Optional
+from typing import Any
 
 from braindrain.embeddings_router import EmbeddingsRouter, ProviderConfig
 
@@ -47,7 +47,7 @@ def pick_provider(
     embeddings_cfg: dict,
     *,
     preferred: str | None = None,
-) -> Optional[ProviderConfig]:
+) -> ProviderConfig | None:
     providers = providers_from_config(embeddings_cfg)
     if preferred:
         for p in providers:
@@ -113,7 +113,11 @@ def embed_texts(
                 elif isinstance(row, list) and row and isinstance(row[0], (int, float)):
                     vectors.append(row)  # type: ignore[arg-type]
                 else:
-                    return {"ok": False, "error": "ollama_embed_unexpected_shape", "provider": provider.name}
+                    return {
+                        "ok": False,
+                        "error": "ollama_embed_unexpected_shape",
+                        "provider": provider.name,
+                    }
             return {
                 "ok": True,
                 "provider": provider.name,
@@ -134,7 +138,11 @@ def embed_texts(
         )
         data = raw.get("data") if isinstance(raw, dict) else None
         if not isinstance(data, list):
-            return {"ok": False, "error": "embeddings_unexpected_response", "provider": provider.name}
+            return {
+                "ok": False,
+                "error": "embeddings_unexpected_response",
+                "provider": provider.name,
+            }
         vectors = []
         for row in sorted(data, key=lambda r: r.get("index", 0) if isinstance(r, dict) else 0):
             if isinstance(row, dict) and isinstance(row.get("embedding"), list):

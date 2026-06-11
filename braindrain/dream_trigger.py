@@ -27,8 +27,12 @@ def launchd_label(repo_root: Path) -> str:
 
 
 def _trigger_config(dreaming_cfg: dict[str, Any]) -> dict[str, Any]:
-    triggers = dreaming_cfg.get("triggers") if isinstance(dreaming_cfg.get("triggers"), dict) else {}
-    cfg = triggers.get("macos_host_idle") if isinstance(triggers.get("macos_host_idle"), dict) else {}
+    triggers = (
+        dreaming_cfg.get("triggers") if isinstance(dreaming_cfg.get("triggers"), dict) else {}
+    )
+    cfg = (
+        triggers.get("macos_host_idle") if isinstance(triggers.get("macos_host_idle"), dict) else {}
+    )
     return cfg
 
 

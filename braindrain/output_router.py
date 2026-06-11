@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -55,7 +54,7 @@ def build_routed_output(
     *,
     source: str,
     content: str,
-    intent: Optional[str] = None,
+    intent: str | None = None,
 ) -> tuple[RoutedOutput, str]:
     """
     Returns (routed_output, markdown_to_index).
@@ -76,4 +75,3 @@ def build_routed_output(
         bytes_raw=len(content.encode("utf-8", errors="ignore")),
     )
     return ro, md
-

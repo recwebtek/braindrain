@@ -99,9 +99,7 @@ class DreamEngine:
         self.wiki_brain = wiki_brain
         self.config = config
         self.provider_context = provider_context or {}
-        storage_dir = (
-            Path(config.get("storage_dir", "~/.braindrain/dreaming")).expanduser()
-        )
+        storage_dir = Path(config.get("storage_dir", "~/.braindrain/dreaming")).expanduser()
         self.storage_dir = storage_dir
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self.plan_dir = self.storage_dir / "plans"
@@ -150,20 +148,28 @@ class DreamEngine:
                 "trigger": trigger,
             }
 
-        episodes = self.session_store.list_episodes(limit=int(self.config.get("max_episode_scan", 50) or 50))
+        episodes = self.session_store.list_episodes(
+            limit=int(self.config.get("max_episode_scan", 50) or 50)
+        )
         recent_events = self.observer_store.query_events(
             since=time.time() - int(self.config.get("lookback_hours", 72) or 72) * 3600,
             limit=int(self.config.get("max_event_scan", 250) or 250),
         )
-        sessions = self.session_store.list_recent_sessions(limit=int(self.config.get("max_session_scan", 20) or 20))
+        sessions = self.session_store.list_recent_sessions(
+            limit=int(self.config.get("max_session_scan", 20) or 20)
+        )
 
-        plan = self._build_consolidation_plan(mode=mode, episodes=episodes, recent_events=recent_events)
+        plan = self._build_consolidation_plan(
+            mode=mode, episodes=episodes, recent_events=recent_events
+        )
 
         result: dict[str, Any] = {"plan": plan.to_dict()}
         candidates: list[DreamCandidate] = []
 
         if mode in {"full", "light"}:
-            candidates = self._light_phase(episodes=episodes, sessions=sessions, recent_events=recent_events)
+            candidates = self._light_phase(
+                episodes=episodes, sessions=sessions, recent_events=recent_events
+            )
             result["light"] = {
                 "candidate_count": len(candidates),
                 "candidates": [candidate.to_dict() for candidate in candidates[:10]],
@@ -173,12 +179,12 @@ class DreamEngine:
             rem = self._rem_phase(candidates)
             result["rem"] = rem
 
-        promoted: list[dict[str, Any]] = []
         if mode in {"full", "deep"}:
             if not candidates:
-                candidates = self._light_phase(episodes=episodes, sessions=sessions, recent_events=recent_events)
+                candidates = self._light_phase(
+                    episodes=episodes, sessions=sessions, recent_events=recent_events
+                )
             deep = self._deep_phase(candidates)
-            promoted = deep["promoted"]
             result["deep"] = deep
 
         self._write_plan(plan)
@@ -235,7 +241,9 @@ class DreamEngine:
     ) -> list[DreamCandidate]:
         candidates: list[DreamCandidate] = []
         for episode in episodes:
-            record_class = "lesson" if episode.local_critique or episode.global_reflection else "procedural"
+            record_class = (
+                "lesson" if episode.local_critique or episode.global_reflection else "procedural"
+            )
             title = episode.problem[:90]
             content = "\n".join(
                 part
@@ -244,7 +252,9 @@ class DreamEngine:
                     f"Action: {episode.action}",
                     f"Outcome: {episode.outcome}",
                     f"Local critique: {episode.local_critique}" if episode.local_critique else "",
-                    f"Global reflection: {episode.global_reflection}" if episode.global_reflection else "",
+                    f"Global reflection: {episode.global_reflection}"
+                    if episode.global_reflection
+                    else "",
                 ]
                 if part
             )
@@ -274,7 +284,9 @@ class DreamEngine:
                     continue
                 content_parts = [
                     f"Session {session.session_id} summary.",
-                    f"Key decisions: {'; '.join(session.key_decisions)}" if session.key_decisions else "",
+                    f"Key decisions: {'; '.join(session.key_decisions)}"
+                    if session.key_decisions
+                    else "",
                     f"Errors: {'; '.join(session.errors)}" if session.errors else "",
                 ]
                 candidates.append(
@@ -297,7 +309,9 @@ class DreamEngine:
         if recent_events:
             event_types = {event.event_type for event in recent_events}
             for candidate in candidates:
-                candidate.frequency += sum(1 for event in recent_events if event.session_id in candidate.source)
+                candidate.frequency += sum(
+                    1 for event in recent_events if event.session_id in candidate.source
+                )
                 candidate.consolidation += 0.1 * len(event_types.intersection(set(candidate.tags)))
 
         return candidates

@@ -6,7 +6,7 @@ import asyncio
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from braindrain.config import Config
 from braindrain.tool_registry import ToolRegistry
@@ -221,7 +221,7 @@ def render_index_markdown(rows: list[CatalogToolRow], *, output_dir: Path) -> st
 
 def collect_catalog_rows(
     config: ConfigData,
-    native_tools: Optional[list[Any]] = None,
+    native_tools: list[Any] | None = None,
 ) -> list[CatalogToolRow]:
     rows = [_row_from_hub_tool(tool) for tool in config.mcp_tools]
     if native_tools:
@@ -237,7 +237,7 @@ def export_mcp_catalog(
     *,
     config: ConfigData,
     output_dir: Path,
-    native_tools: Optional[list[Any]] = None,
+    native_tools: list[Any] | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Write per-server markdown under `.braindrain/mcp-catalog/<server>/tools/*.md`."""
@@ -294,9 +294,8 @@ async def export_mcp_catalog_async(
 
 def export_mcp_catalog_cli(argv: list[str] | None = None) -> int:
     import argparse
-    import sys
 
-    from braindrain.server import CONFIG_PATH, config, mcp
+    from braindrain.server import config, mcp
 
     parser = argparse.ArgumentParser(description="Export BRAINDRAIN MCP tool catalog")
     parser.add_argument("--dry-run", action="store_true")
@@ -319,4 +318,6 @@ def export_for_registry(config: ConfigData, registry: ToolRegistry) -> dict[str,
     """Export hub_config tools only (no native FastMCP introspection)."""
     _ = registry  # reserved for future registry-only metadata
     output_dir = Path.cwd() / ".braindrain" / "mcp-catalog"
-    return export_mcp_catalog(config=config, output_dir=output_dir, native_tools=None, dry_run=False)
+    return export_mcp_catalog(
+        config=config, output_dir=output_dir, native_tools=None, dry_run=False
+    )

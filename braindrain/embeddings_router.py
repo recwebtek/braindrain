@@ -12,7 +12,6 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -20,19 +19,19 @@ class ProviderConfig:
     name: str
     kind: str  # local_ollama | local_lmstudio | openai_compat | hf_inference | groq_compat
     model: str
-    base_url: Optional[str] = None
-    api_key_env: Optional[str] = None
+    base_url: str | None = None
+    api_key_env: str | None = None
     priority: int = 100  # lower wins
     enabled: bool = True
 
     # Optional quota knobs (best-effort, enforced by caller increments)
-    daily_quota_requests: Optional[int] = None
+    daily_quota_requests: int | None = None
 
 
 @dataclass
 class ProviderState:
     consecutive_failures: int = 0
-    last_failure_ts: Optional[float] = None
+    last_failure_ts: float | None = None
     requests_today: int = 0
     day_epoch: int = field(default_factory=lambda: int(time.time() // 86400))
 
@@ -67,13 +66,18 @@ class EmbeddingsRouter:
         self.cooldown_seconds = cooldown_seconds
         self._state: dict[str, ProviderState] = {p.name: ProviderState() for p in self.providers}
 
-    def pick(self) -> Optional[ProviderConfig]:
+    def pick(self) -> ProviderConfig | None:
         now = time.time()
         for p in self.providers:
             st = self._state[p.name]
 
             # Require key for cloud providers; local LM Studio / Ollama often need none.
-            if p.api_key_env and p.kind not in ("ollama", "openai_compat", "local_lmstudio", "local_ollama"):
+            if p.api_key_env and p.kind not in (
+                "ollama",
+                "openai_compat",
+                "local_lmstudio",
+                "local_ollama",
+            ):
                 if not os.environ.get(p.api_key_env):
                     continue
 
@@ -120,4 +124,3 @@ class EmbeddingsRouter:
                 for p in self.providers
             ]
         }
-

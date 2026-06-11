@@ -19,8 +19,8 @@ import shutil
 import subprocess
 import sys
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
@@ -121,12 +121,8 @@ DISPOSITION_VERB = {
 }
 
 # Frontmatter parser regexes (no PyYAML dependency — keeps script standalone).
-FRONTMATTER_BLOCK_RE = re.compile(
-    r"\A---\s*\n(.*?)\n---\s*(?:\n|$)", re.DOTALL
-)
-FRONTMATTER_KV_RE = re.compile(
-    r"^([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.*?)\s*$"
-)
+FRONTMATTER_BLOCK_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|$)", re.DOTALL)
+FRONTMATTER_KV_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.*?)\s*$")
 
 
 def resolve_model_name(model_name: str | None = None) -> str:
@@ -146,10 +142,14 @@ def resolve_model_name(model_name: str | None = None) -> str:
 
 def resolve_cursor_mode(cursor_mode: str | None = None) -> str:
     mode = (
-        cursor_mode
-        or os.environ.get("CURSOR_MODEL_SELECTION", "")
-        or os.environ.get("BRAINDRAIN_CURSOR_MODE", "")
-    ).strip().lower()
+        (
+            cursor_mode
+            or os.environ.get("CURSOR_MODEL_SELECTION", "")
+            or os.environ.get("BRAINDRAIN_CURSOR_MODE", "")
+        )
+        .strip()
+        .lower()
+    )
     if mode in {"auto", "manual"}:
         return mode
     return "auto"
@@ -182,7 +182,6 @@ def _strip_quotes(value: str) -> str:
 def _parse_frontmatter_body(body: str) -> dict[str, object]:
     """Parse one YAML frontmatter body (between ``---`` fences)."""
     out: dict[str, object] = {}
-    current_key: str | None = None
     current_list: list[str] | None = None
 
     for raw in body.splitlines():
@@ -204,21 +203,14 @@ def _parse_frontmatter_body(body: str) -> dict[str, object]:
         if not value:
             current_list = []
             out[key] = current_list
-            current_key = key
             continue
         # Inline list like `[a, b, c]`.
         if value.startswith("[") and value.endswith("]"):
             inner = value[1:-1].strip()
-            parts = [
-                _strip_quotes(p.strip())
-                for p in inner.split(",")
-                if p.strip()
-            ]
+            parts = [_strip_quotes(p.strip()) for p in inner.split(",") if p.strip()]
             out[key] = parts
-            current_key = key
             continue
         out[key] = _strip_quotes(value)
-        current_key = key
     return out
 
 
@@ -300,11 +292,7 @@ def resolve_default_owner(
             from braindrain.env_probe import get_env_context  # type: ignore
 
             ctx = get_env_context()
-            handle = (
-                ctx.get("summary", {})
-                .get("identity", {})
-                .get("username", "")
-            ) or ""
+            handle = (ctx.get("summary", {}).get("identity", {}).get("username", "")) or ""
         except Exception:
             handle = ""
 
@@ -313,9 +301,7 @@ def resolve_default_owner(
         try:
             handle = getpass.getuser()
         except Exception:
-            handle = os.environ.get("USER", "") or os.environ.get(
-                "LOGNAME", ""
-            )
+            handle = os.environ.get("USER", "") or os.environ.get("LOGNAME", "")
 
     # 4) Last resort.
     if not handle:
@@ -366,15 +352,15 @@ class Action:
     in the daily report and the next-actions triage queue.
     """
 
-    verb: str                 # RESEARCH | REPLAN | MERGE | IMPLEMENT | BACKLOG | FIX
+    verb: str  # RESEARCH | REPLAN | MERGE | IMPLEMENT | BACKLOG | FIX
     plan_slug: str
     plan_source: str
     ide: str
-    title: str                # plan title for human display
-    reason: str               # short human reason
-    hint: str                 # actionable hint
-    priority: str             # P0..P3
-    item_excerpt: str = ""    # optional — first item snippet that drove this
+    title: str  # plan title for human display
+    reason: str  # short human reason
+    hint: str  # actionable hint
+    priority: str  # P0..P3
+    item_excerpt: str = ""  # optional — first item snippet that drove this
 
 
 @dataclasses.dataclass
@@ -455,10 +441,7 @@ def build_plan_card(
     rel = path.relative_to(repo_root).as_posix()
     fm = parse_plan_frontmatter(path)
     owner_raw = (
-        fm.get("owner")
-        or fm.get("dri")
-        or default_owner
-        or resolve_default_owner(repo_root)
+        fm.get("owner") or fm.get("dri") or default_owner or resolve_default_owner(repo_root)
     )
     owner = str(owner_raw).strip() if owner_raw else "@user"
     if owner and not owner.startswith("@") and ":" not in owner:
@@ -496,8 +479,7 @@ def build_plan_card(
         if todo_summary.get("completed", 0) == todo_summary["total"]:
             body_items = collect_items(path, repo_root)
             stale_narrative = any(
-                it.status in {"Blocked", "In Progress", "Outstanding"}
-                for it in body_items
+                it.status in {"Blocked", "In Progress", "Outstanding"} for it in body_items
             )
 
     branch_list = fm.get("branches") or []
@@ -847,7 +829,7 @@ def prune_stale_master_body_links(
 def _move_master_plan_between_sections(
     master_path: Path,
     repo_root: Path,
-    card: "PlanCard",
+    card: PlanCard,
     old_rel: str,
     new_rel: str,
 ) -> None:
@@ -968,12 +950,7 @@ def _replace_master_section(
         body_lines.extend(section_lines)
     else:
         start, end = bounds
-        body_lines = (
-            body_lines[: start + 1]
-            + [""]
-            + section_lines
-            + body_lines[end:]
-        )
+        body_lines = body_lines[: start + 1] + [""] + section_lines + body_lines[end:]
     master_path.write_text(fm_block + "\n".join(body_lines).rstrip() + "\n", encoding="utf-8")
 
 
@@ -1056,15 +1033,13 @@ def _truncate_summary(text: str, limit: int = 220) -> str:
 
 
 def _format_archived_master_lines(
-    card: "PlanCard",
+    card: PlanCard,
     rel_link: str,
     fm: dict[str, object],
     pr_details: dict[str, str] | None,
 ) -> list[str]:
     """Multi-line archived entry for ``_master.plan.md``."""
-    summary = _truncate_summary(
-        str(fm.get("overview") or fm.get("name") or card.title)
-    )
+    summary = _truncate_summary(str(fm.get("overview") or fm.get("name") or card.title))
     lines = [
         f"- [{card.title}]({rel_link}) — DRI: {card.dri}",
         f"  - Branch: `{card.branch}`",
@@ -1074,9 +1049,7 @@ def _format_archived_master_lines(
         num = pr_details.get("number") or "?"
         title = pr_details.get("title") or "PR"
         url = pr_details["url"]
-        lines.append(
-            f"  - PR: [#{num} {state}]({url}) — {title}"
-        )
+        lines.append(f"  - PR: [#{num} {state}]({url}) — {title}")
         pr_body = _truncate_summary(pr_details.get("body") or "", limit=180)
         if pr_body:
             lines.append(f"  - PR description: {pr_body}")
@@ -1109,7 +1082,7 @@ def sync_master_archived_batch(
     if not archived_paths:
         section_lines.append("- _No archived plans on disk._")
     else:
-        archived_cards: dict[str, "PlanCard"] = {}
+        archived_cards: dict[str, PlanCard] = {}
         for path in archived_paths:
             rel = path.relative_to(repo_root).as_posix()
             basenames.append(path.name)
@@ -1133,9 +1106,7 @@ def sync_master_archived_batch(
                 start=master_dir.resolve(),
             ).replace("\\", "/")
             pr_details = _fetch_pr_details(repo_root, card.branch)
-            section_lines.extend(
-                _format_archived_master_lines(card, rel_link, fm, pr_details)
-            )
+            section_lines.extend(_format_archived_master_lines(card, rel_link, fm, pr_details))
             section_lines.append("")
 
     _replace_master_section(master_path, "archived", section_lines)
@@ -1146,7 +1117,7 @@ def sync_master_archived_batch(
 def apply_archive_plans(
     repo_root: Path,
     ready: list[ReadyToArchive],
-    cards_by_source: dict[str, "PlanCard"],
+    cards_by_source: dict[str, PlanCard],
     *,
     master_path: Path | None,
     report_paths: list[Path],
@@ -1216,7 +1187,9 @@ def is_secondary_doc(path: Path) -> bool:
     if path.suffix.lower() != ".md":
         return False
     filename = path.name.lower()
-    return any(k in filename for k in ("plan", "roadmap", "todo", "task", "backlog", "milestone", "prd"))
+    return any(
+        k in filename for k in ("plan", "roadmap", "todo", "task", "backlog", "milestone", "prd")
+    )
 
 
 def discover_sources(
@@ -1449,7 +1422,7 @@ def compute_todo_summary(todos: list[dict[str, str]]) -> dict[str, int]:
     return summary
 
 
-def plan_all_todos_completed(card: "PlanCard") -> bool:
+def plan_all_todos_completed(card: PlanCard) -> bool:
     summary = card.todo_summary
     if not summary or summary.get("total", 0) == 0:
         return False
@@ -1525,7 +1498,7 @@ def _infer_phase_label(branch_name: str) -> str:
     return ""
 
 
-def _plan_branch_family_prefix(card: "PlanCard") -> str:
+def _plan_branch_family_prefix(card: PlanCard) -> str:
     for branch_name in card.branches or []:
         match = re.match(r"^(.*)-phase", branch_name)
         if match and match.group(1):
@@ -1538,7 +1511,7 @@ def _plan_branch_family_prefix(card: "PlanCard") -> str:
 
 
 def discover_plan_branch_registry(
-    card: "PlanCard",
+    card: PlanCard,
     local_branches: list[str],
 ) -> list[str]:
     """Return ordered phase branch names for a multi-phase plan."""
@@ -1582,8 +1555,7 @@ def _phase_branch_pr_fallback(
             return {
                 **details,
                 "note": (
-                    f"no separate PR head; inherited from `{later}` "
-                    f"(#{details.get('number', '?')})"
+                    f"no separate PR head; inherited from `{later}` (#{details.get('number', '?')})"
                 ),
             }
     return None
@@ -1682,7 +1654,7 @@ def _set_frontmatter_yaml_block(text: str, key: str, block_lines: list[str]) -> 
     return new_block + text[len(match.group(0)) :]
 
 
-def format_plan_pr_summary(card: "PlanCard") -> str:
+def format_plan_pr_summary(card: PlanCard) -> str:
     """Aggregate PR numbers from phase branch registry when present."""
     if not card.phase_branches:
         return card.pr
@@ -1700,7 +1672,7 @@ def format_plan_pr_summary(card: "PlanCard") -> str:
 
 def sync_plan_phase_branches(
     repo_root: Path,
-    cards: dict[str, "PlanCard"],
+    cards: dict[str, PlanCard],
 ) -> list[str]:
     """Sync ``phase_branches`` + ``branches`` frontmatter for multi-phase plans."""
     local_branches = _list_repo_branches(repo_root)
@@ -2028,7 +2000,7 @@ def _resolve_plan_relation_target(
     return found
 
 
-def _is_overlap_eligible(card: "PlanCard") -> bool:
+def _is_overlap_eligible(card: PlanCard) -> bool:
     return not card.is_master and card.is_active_for_triage
 
 
@@ -2053,7 +2025,7 @@ def _aggregate_plan_tokens(items: list[PlanItem], source: str) -> set[str]:
     return tokens
 
 
-def _titles_align(card_a: "PlanCard", card_b: "PlanCard") -> bool:
+def _titles_align(card_a: PlanCard, card_b: PlanCard) -> bool:
     left = tokenize(card_a.title)
     right = tokenize(card_b.title)
     if not left or not right:
@@ -2062,7 +2034,7 @@ def _titles_align(card_a: "PlanCard", card_b: "PlanCard") -> bool:
 
 
 def detect_plan_overlaps(
-    cards_by_source: dict[str, "PlanCard"],
+    cards_by_source: dict[str, PlanCard],
     items: list[PlanItem],
     *,
     repo_root: Path,
@@ -2070,9 +2042,7 @@ def detect_plan_overlaps(
 ) -> tuple[list[PlanOverlapEdge], list[list[str]]]:
     """Detect plan-level overlap via paths, tokens, branches, and relations."""
     eligible = {
-        source: card
-        for source, card in cards_by_source.items()
-        if _is_overlap_eligible(card)
+        source: card for source, card in cards_by_source.items() if _is_overlap_eligible(card)
     }
     sources = sorted(eligible.keys())
     seen: set[tuple[str, str, str]] = set()
@@ -2105,9 +2075,7 @@ def detect_plan_overlaps(
             )
         )
 
-    paths_by_source = {
-        source: _collect_plan_path_refs(items, source) for source in sources
-    }
+    paths_by_source = {source: _collect_plan_path_refs(items, source) for source in sources}
     for idx, source_a in enumerate(sources):
         for source_b in sources[idx + 1 :]:
             shared = paths_by_source[source_a] & paths_by_source[source_b]
@@ -2121,9 +2089,7 @@ def detect_plan_overlaps(
                     f"shared paths: {sample}",
                 )
 
-    tokens_by_source = {
-        source: _aggregate_plan_tokens(items, source) for source in sources
-    }
+    tokens_by_source = {source: _aggregate_plan_tokens(items, source) for source in sources}
     for idx, source_a in enumerate(sources):
         for source_b in sources[idx + 1 :]:
             score = jaccard(tokens_by_source[source_a], tokens_by_source[source_b])
@@ -2230,7 +2196,7 @@ def _append_frontmatter_list_value(text: str, key: str, value: str) -> str:
 
 def apply_overlap_relations(
     repo_root: Path,
-    cards_by_source: dict[str, "PlanCard"],
+    cards_by_source: dict[str, PlanCard],
     edges: list[PlanOverlapEdge],
     *,
     duplicate_similarity: float = 0.75,
@@ -2250,7 +2216,10 @@ def apply_overlap_relations(
             and _titles_align(card_a, card_b)
         )
         relation_key = "duplicates" if use_duplicates else "relates_to"
-        for source, other_source in ((edge.source_a, edge.source_b), (edge.source_b, edge.source_a)):
+        for source, other_source in (
+            (edge.source_a, edge.source_b),
+            (edge.source_b, edge.source_a),
+        ):
             if edge.signal == "path" or edge.signal == "branch" or edge.signal == "token":
                 pass
             else:
@@ -2284,7 +2253,7 @@ def apply_overlap_relations(
 
 def apply_goal_tags(
     repo_root: Path,
-    cards_by_source: dict[str, "PlanCard"],
+    cards_by_source: dict[str, PlanCard],
     alignments: list[PlanGoalAlignment],
 ) -> list[str]:
     """Opt-in write-back for goal_tags on active plans with alignment matches."""
@@ -2316,7 +2285,7 @@ def apply_goal_tags(
 def render_overlap_clusters_section(
     edges: list[PlanOverlapEdge],
     clusters: list[list[str]],
-    cards_by_source: dict[str, "PlanCard"],
+    cards_by_source: dict[str, PlanCard],
 ) -> list[str]:
     lines = ["## Overlap clusters", ""]
     if not edges and not clusters:
@@ -2350,7 +2319,7 @@ def render_overlap_relations_markdown(
     report_date: str,
     edges: list[PlanOverlapEdge],
     clusters: list[list[str]],
-    cards_by_source: dict[str, "PlanCard"],
+    cards_by_source: dict[str, PlanCard],
 ) -> str:
     lines = [
         "# Overlap relations",
@@ -2440,7 +2409,7 @@ def load_goal_context(
     return {"goals": unique_goals, "sources": sources}
 
 
-def score_plan_goal_alignment(card: "PlanCard", goal_lines: list[str]) -> PlanGoalAlignment:
+def score_plan_goal_alignment(card: PlanCard, goal_lines: list[str]) -> PlanGoalAlignment:
     if not goal_lines:
         return PlanGoalAlignment(
             source=card.source,
@@ -2480,7 +2449,7 @@ def score_plan_goal_alignment(card: "PlanCard", goal_lines: list[str]) -> PlanGo
 
 
 def compute_goal_alignments(
-    cards_by_source: dict[str, "PlanCard"],
+    cards_by_source: dict[str, PlanCard],
     goal_context: dict[str, object],
 ) -> list[PlanGoalAlignment]:
     goal_lines = list(goal_context.get("goals") or [])
@@ -2502,9 +2471,7 @@ def render_goal_alignment_section(
     lines = ["## Goal alignment", ""]
     sources = list(goal_context.get("sources") or [])
     if sources:
-        lines.append(
-            "_Goal sources: " + ", ".join(f"`{source}`" for source in sources) + "_"
-        )
+        lines.append("_Goal sources: " + ", ".join(f"`{source}`" for source in sources) + "_")
         lines.append("")
     if not alignments:
         lines.append("- _No active plans to score._")
@@ -2551,7 +2518,7 @@ def has_unresolved_delegation(text: str) -> bool:
 def detect_gaps(
     items: list[PlanItem],
     *,
-    cards_by_source: dict[str, "PlanCard"] | None = None,
+    cards_by_source: dict[str, PlanCard] | None = None,
 ) -> list[dict[str, str]]:
     """Detect missing-signal gaps for active items.
 
@@ -2569,9 +2536,7 @@ def detect_gaps(
         lowered = item.item.lower()
         has_owner = has_explicit_owner(item.item)
         plan_card = cards_by_source.get(item.source)
-        plan_has_owner = bool(
-            plan_card and plan_card.owner and plan_card.owner != "@user"
-        )
+        plan_has_owner = bool(plan_card and plan_card.owner and plan_card.owner != "@user")
         has_test_hint = "test" in lowered
         has_path_evidence = any("/" in ev for ev in item.evidence)
         missing: list[str] = []
@@ -2601,16 +2566,16 @@ def detect_gaps(
 _PRIORITY_RANK = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 # Verbs in the order they appear in the triage queue.
 _VERB_ORDER = (
-    "MERGE",      # ship now
-    "FIX",        # broken regressions
-    "REPLAN",     # needs rewrite before more work
-    "RESEARCH",   # unblock with investigation
+    "MERGE",  # ship now
+    "FIX",  # broken regressions
+    "REPLAN",  # needs rewrite before more work
+    "RESEARCH",  # unblock with investigation
     "IMPLEMENT",  # active work missing tests/evidence
-    "BACKLOG",    # surfaced only for high-priority deferred plans
+    "BACKLOG",  # surfaced only for high-priority deferred plans
 )
 
 
-def _first_active_item_excerpt(card: "PlanCard") -> str:
+def _first_active_item_excerpt(card: PlanCard) -> str:
     for it in card.items:
         if it.status in {"Blocked", "In Progress", "Outstanding"}:
             text = it.item.replace("\n", " ").strip()
@@ -2621,7 +2586,7 @@ def _first_active_item_excerpt(card: "PlanCard") -> str:
 
 
 def detect_actions(
-    cards: list["PlanCard"],
+    cards: list[PlanCard],
     *,
     backlog_priority_threshold: str = "P1",
 ) -> list[Action]:
@@ -2649,8 +2614,7 @@ def detect_actions(
             if plan_all_todos_completed(card):
                 continue
             has_active_item = any(
-                it.status in {"Blocked", "In Progress", "Outstanding"}
-                for it in card.items
+                it.status in {"Blocked", "In Progress", "Outstanding"} for it in card.items
             )
             if has_active_item:
                 missing_test = any(
@@ -2726,7 +2690,7 @@ def detect_actions(
 
 
 def detect_ready_to_archive(
-    cards: list["PlanCard"],
+    cards: list[PlanCard],
     *,
     include_implemented: bool = False,
 ) -> list[ReadyToArchive]:
@@ -2769,7 +2733,7 @@ def detect_ready_to_archive(
 
 def apply_disposition_sync(
     repo_root: Path,
-    cards: dict[str, "PlanCard"],
+    cards: dict[str, PlanCard],
 ) -> list[str]:
     """Set ``disposition: implemented`` when all todos are completed."""
     updated: list[str] = []
@@ -2810,16 +2774,14 @@ def render_ready_to_archive_section(
         return lines
     for entry in entries:
         tag = f"[{entry.ide}:{entry.plan_slug}]"
-        lines.append(
-            f"- {tag} `({entry.priority})` {entry.reason} — confirm archive?"
-        )
+        lines.append(f"- {tag} `({entry.priority})` {entry.reason} — confirm archive?")
         lines.append(f"  - Source: [`{entry.plan_source}`]({entry.plan_source})")
     lines.append("")
     return lines
 
 
 def render_implementation_sequence_section(
-    cards_by_source: dict[str, "PlanCard"],
+    cards_by_source: dict[str, PlanCard],
     plan_ranks: dict[str, int],
     *,
     rank_source: str = "heuristic",
@@ -2861,10 +2823,7 @@ def render_implementation_sequence_section(
         if card.disposition == "active" and next_verb == "—":
             if plan_all_todos_completed(card):
                 next_verb = "—"
-            elif any(
-                it.status in {"Blocked", "In Progress", "Outstanding"}
-                for it in card.items
-            ):
+            elif any(it.status in {"Blocked", "In Progress", "Outstanding"} for it in card.items):
                 next_verb = "IMPLEMENT"
         title_cell = card.title.replace("|", "\\|")
         if len(title_cell) > 60:
@@ -2886,7 +2845,7 @@ def render_task_board_markdown(
     report_date: str,
     items: list[PlanItem],
     *,
-    cards_by_source: dict[str, "PlanCard"] | None = None,
+    cards_by_source: dict[str, PlanCard] | None = None,
     plan_ranks: dict[str, int] | None = None,
     provenance: dict[str, object] | None = None,
 ) -> str:
@@ -2899,9 +2858,7 @@ def render_task_board_markdown(
     cards_by_source = cards_by_source or {}
     plan_ranks = plan_ranks or {}
     rows: list[PlanItem] = [
-        i
-        for i in items
-        if i.status in {"Blocked", "In Progress", "Outstanding"}
+        i for i in items if i.status in {"Blocked", "In Progress", "Outstanding"}
     ]
     rows.sort(
         key=lambda i: (
@@ -2930,15 +2887,13 @@ def render_task_board_markdown(
     )
     lines.extend(
         [
-        "| Seq | Plan | IDE | Status | Owner | Item | Source | Gaps |",
-        "|-----|------|-----|--------|-------|------|--------|------|",
+            "| Seq | Plan | IDE | Status | Owner | Item | Source | Gaps |",
+            "|-----|------|-----|--------|-------|------|--------|------|",
         ]
     )
     for item in rows:
         plan_card = cards_by_source.get(item.source)
-        plan_has_owner = bool(
-            plan_card and plan_card.owner and plan_card.owner != "@user"
-        )
+        plan_has_owner = bool(plan_card and plan_card.owner and plan_card.owner != "@user")
         gap_parts: list[str] = []
         if not has_explicit_owner(item.item) and not plan_has_owner:
             gap_parts.append("explicit_owner")
@@ -2958,7 +2913,7 @@ def render_task_board_markdown(
         if len(item_cell) > 120:
             item_cell = item_cell[:117] + "..."
         src_cell = f"`{item.source}`"
-        ide_cell = (plan_card.ide if plan_card and plan_card.ide else "—")
+        ide_cell = plan_card.ide if plan_card and plan_card.ide else "—"
         seq_cell = str(plan_ranks.get(item.source, "—"))
         plan_cell = "—"
         if plan_card:
@@ -3000,7 +2955,9 @@ def memory_context(
     }
 
 
-def score_report(items: list[PlanItem], overlaps: list[dict[str, str]], gaps: list[dict[str, str]]) -> dict[str, int]:
+def score_report(
+    items: list[PlanItem], overlaps: list[dict[str, str]], gaps: list[dict[str, str]]
+) -> dict[str, int]:
     counts = Counter(i.status for i in items)
     known = max(1, sum(counts[s] for s in STATUS_ORDER[:-1]))
     coverage = int((counts["Implemented"] / known) * 100)
@@ -3046,13 +3003,11 @@ _DISPOSITION_ORDER = (
 )
 
 # Plans excluded from the overseer "build queue" / implementation sequence.
-_BUILD_QUEUE_EXCLUDED_DISPOSITIONS = frozenset(
-    {"implemented", "archived", "merge-ready"}
-)
+_BUILD_QUEUE_EXCLUDED_DISPOSITIONS = frozenset({"implemented", "archived", "merge-ready"})
 
 
 def render_plan_cards(
-    cards: list["PlanCard"],
+    cards: list[PlanCard],
     actions: list[Action],
 ) -> list[str]:
     """Render per-plan cards grouped by IDE then disposition.
@@ -3101,22 +3056,12 @@ def render_plan_cards(
                 f"Unknown={counts.get('Unknown', 0)}",
             ]
             top_actions = actions_by_source.get(card.source, [])
-            top_verb = (
-                f"`{top_actions[0].verb}` -> {top_actions[0].hint}"
-                if top_actions
-                else "—"
-            )
-            delegated = (
-                ", ".join(card.delegated_to) if card.delegated_to else "none"
-            )
+            top_verb = f"`{top_actions[0].verb}` -> {top_actions[0].hint}" if top_actions else "—"
+            delegated = ", ".join(card.delegated_to) if card.delegated_to else "none"
             lines.append(f"- **{card.title}** (`{card.slug}`)")
             lines.append(f"  - Source: [`{card.source}`]({card.source})")
-            lines.append(
-                f"  - Owner: {card.owner} (DRI: {card.dri}) — Priority: `{card.priority}`"
-            )
-            lines.append(
-                f"  - Branch: `{card.branch}` (source: `{card.branch_source}`)"
-            )
+            lines.append(f"  - Owner: {card.owner} (DRI: {card.dri}) — Priority: `{card.priority}`")
+            lines.append(f"  - Branch: `{card.branch}` (source: `{card.branch_source}`)")
             lines.append(f"  - PR: {format_plan_pr_summary(card)} (source: `{card.pr_source}`)")
             if len(card.phase_branches) > 1:
                 lines.append("  - Phase branches:")
@@ -3134,9 +3079,7 @@ def render_plan_cards(
             lines.append(f"  - Items: {' / '.join(rollup_parts)}")
             lines.append(f"  - Next action: {top_verb}")
             if top_actions and top_actions[0].item_excerpt:
-                lines.append(
-                    f"  - Excerpt: _{top_actions[0].item_excerpt}_"
-                )
+                lines.append(f"  - Excerpt: _{top_actions[0].item_excerpt}_")
         lines.append("")
     return lines
 
@@ -3147,7 +3090,7 @@ def build_cards_index(
     items: list[PlanItem],
     *,
     default_owner: str | None = None,
-) -> dict[str, "PlanCard"]:
+) -> dict[str, PlanCard]:
     """Build a map of plan source path -> PlanCard with item rollup attached."""
     items_by_source: dict[str, list[PlanItem]] = defaultdict(list)
     for item in items:
@@ -3218,16 +3161,25 @@ def _read_gitops_memory(repo_root: Path, limit: int = 200) -> list[dict[str, obj
     return out
 
 
-def _plan_match_tokens(card: "PlanCard") -> list[str]:
+def _plan_match_tokens(card: PlanCard) -> list[str]:
     slug = card.slug or ""
     # Common pattern: <name>_<8hex>.plan.md -> strip the suffix for matching.
     slug_base = re.sub(r"_[0-9a-f]{8,}$", "", slug)
     title_norm = _normalize_branch_text(card.title)
     rel_norm = _normalize_branch_text(card.source)
-    return [t for t in {_normalize_branch_text(slug), _normalize_branch_text(slug_base), title_norm, rel_norm} if t]
+    return [
+        t
+        for t in {
+            _normalize_branch_text(slug),
+            _normalize_branch_text(slug_base),
+            title_norm,
+            rel_norm,
+        }
+        if t
+    ]
 
 
-def _best_matching_branch(card: "PlanCard", branch_names: list[str]) -> str:
+def _best_matching_branch(card: PlanCard, branch_names: list[str]) -> str:
     tokens = _plan_match_tokens(card)
     if not tokens:
         return ""
@@ -3252,9 +3204,7 @@ def _normalize_plan_source_path(path: str) -> str:
     return path.strip().lstrip("./").replace("\\", "/")
 
 
-def _queue_branch_for_card(
-    card: "PlanCard", queue_entries: list[dict[str, object]]
-) -> str:
+def _queue_branch_for_card(card: PlanCard, queue_entries: list[dict[str, object]]) -> str:
     """Match gitops queue entry by explicit planSource when present."""
     card_source = _normalize_plan_source_path(card.source)
     for entry in queue_entries:
@@ -3333,8 +3283,8 @@ def pick_best_branch_candidate(
 ) -> tuple[str, str]:
     """Choose branch using git refs + gh PR state, not frontmatter alone.
 
-  Prefers branches that exist locally/remotely and/or have an open PR over stale
-  synthetic frontmatter names (e.g. truncated ``branch_name_for_plan`` slugs).
+    Prefers branches that exist locally/remotely and/or have an open PR over stale
+    synthetic frontmatter names (e.g. truncated ``branch_name_for_plan`` slugs).
     """
     runner = gh_runner or _run_gh_pr_lookup
     local_set = set(local_branches)
@@ -3377,7 +3327,7 @@ def pick_best_branch_candidate(
     return best_branch, best_source
 
 
-def apply_branch_resolution(cards: dict[str, "PlanCard"], repo_root: Path) -> None:
+def apply_branch_resolution(cards: dict[str, PlanCard], repo_root: Path) -> None:
     """Resolve plan branch using hybrid precedence reconciled with git + gh.
 
     Collect candidates from frontmatter, gitops queue/memory, and git_local fuzzy
@@ -3419,9 +3369,7 @@ def apply_branch_resolution(cards: dict[str, "PlanCard"], repo_root: Path) -> No
         git_match = _best_matching_branch(card, local_branches)
         if git_match:
             candidates.append((git_match, "git_local"))
-        branch, source = pick_best_branch_candidate(
-            repo_root, candidates, local_branches
-        )
+        branch, source = pick_best_branch_candidate(repo_root, candidates, local_branches)
         card.branch = branch
         card.branch_source = source
         explicit_branch = str(fm.get("branch") or "").strip()
@@ -3498,22 +3446,18 @@ def resolve_pr_for_branch(
 
 
 def apply_pr_resolution(
-    cards: dict[str, "PlanCard"],
+    cards: dict[str, PlanCard],
     repo_root: Path,
     *,
     gh_runner: Callable[[Path, str], list[dict[str, object]] | None] | None = None,
 ) -> None:
     local_branches = _list_repo_branches(repo_root)
     for card in cards.values():
-        pr_cell, pr_source = resolve_pr_for_branch(
-            repo_root, card.branch, gh_runner=gh_runner
-        )
+        pr_cell, pr_source = resolve_pr_for_branch(repo_root, card.branch, gh_runner=gh_runner)
         if pr_cell in {"none", "—"} and card.branch and card.branch != "—":
             alt = _best_matching_branch(card, local_branches)
             if alt and alt != card.branch:
-                alt_cell, alt_source = resolve_pr_for_branch(
-                    repo_root, alt, gh_runner=gh_runner
-                )
+                alt_cell, alt_source = resolve_pr_for_branch(repo_root, alt, gh_runner=gh_runner)
                 if alt_cell not in {"none", "—"}:
                     card.branch = alt
                     card.branch_source = "git_local"
@@ -3539,7 +3483,7 @@ def _upsert_gitops_queue_entry(repo_root: Path, entry: dict[str, object]) -> Non
 
 def ensure_plan_branches(
     repo_root: Path,
-    cards: dict[str, "PlanCard"],
+    cards: dict[str, PlanCard],
 ) -> list[str]:
     """Create missing branches for active plans and persist branch: frontmatter."""
     from plan_branch_utils import (
@@ -3592,7 +3536,7 @@ def ensure_plan_branches(
 
 def bootstrap_plan_branches_from_git_local(
     repo_root: Path,
-    cards: dict[str, "PlanCard"],
+    cards: dict[str, PlanCard],
 ) -> list[str]:
     """Persist reconciled branch into frontmatter for active/merge-ready plans."""
     from plan_branch_utils import branch_ref_exists
@@ -3634,7 +3578,7 @@ def _inject_frontmatter_key(text: str, key: str, value: str) -> str:
             return text
         updated_body = fm_body.rstrip() + f"\n{key}: {value}\n"
         new_block = f"---\n{updated_body}---\n"
-        return new_block + text[len(fm_block):]
+        return new_block + text[len(fm_block) :]
     return f"---\n{key}: {value}\n---\n\n{text}"
 
 
@@ -3656,7 +3600,7 @@ def _set_frontmatter_key(text: str, key: str, value: str) -> str:
 
 def persist_resolved_plan_branches(
     repo_root: Path,
-    cards: dict[str, "PlanCard"],
+    cards: dict[str, PlanCard],
 ) -> list[str]:
     """Persist resolved branches into plan frontmatter when missing.
 
@@ -3742,9 +3686,7 @@ def _collect_master_section_children(
         if line.startswith("## "):
             break
         for _label, target in _MD_LINK_RE.findall(line):
-            rel = _resolve_master_plan_link(
-                target, master_dir, repo_root, seen=seen
-            )
+            rel = _resolve_master_plan_link(target, master_dir, repo_root, seen=seen)
             if rel:
                 children.append(rel)
     return children
@@ -3767,7 +3709,7 @@ def _resolve_execution_order_entries(
     return ordered
 
 
-def _card_in_build_queue(card: "PlanCard") -> bool:
+def _card_in_build_queue(card: PlanCard) -> bool:
     if card.is_master:
         return False
     if card.disposition in _BUILD_QUEUE_EXCLUDED_DISPOSITIONS:
@@ -3777,7 +3719,7 @@ def _card_in_build_queue(card: "PlanCard") -> bool:
     return True
 
 
-def _heuristic_plan_sort_key(card: "PlanCard") -> tuple[object, ...]:
+def _heuristic_plan_sort_key(card: PlanCard) -> tuple[object, ...]:
     return (
         _DISPOSITION_ORDER.index(card.disposition)
         if card.disposition in _DISPOSITION_ORDER
@@ -3789,7 +3731,7 @@ def _heuristic_plan_sort_key(card: "PlanCard") -> tuple[object, ...]:
 
 def compute_plan_ranks(
     master_doc: dict[str, object] | None,
-    cards_by_source: dict[str, "PlanCard"],
+    cards_by_source: dict[str, PlanCard],
     *,
     repo_root: Path,
     master_path: Path | None = None,
@@ -3816,9 +3758,7 @@ def compute_plan_ranks(
         fm = master_doc.get("frontmatter") or {}
         exec_raw = fm.get("execution_order")
         if isinstance(exec_raw, list) and exec_raw:
-            ordered_sources = _resolve_execution_order_entries(
-                exec_raw, master_dir, repo_root
-            )
+            ordered_sources = _resolve_execution_order_entries(exec_raw, master_dir, repo_root)
             rank_source = "master_frontmatter"
         else:
             active_children: list[str] = list(
@@ -3846,9 +3786,7 @@ def compute_plan_ranks(
         ranks[src] = rank_counter
 
     unranked = [
-        c
-        for c in cards_by_source.values()
-        if _card_in_build_queue(c) and c.source not in ranks
+        c for c in cards_by_source.values() if _card_in_build_queue(c) and c.source not in ranks
     ]
     if unranked:
         unranked.sort(key=_heuristic_plan_sort_key)
@@ -3861,9 +3799,7 @@ def compute_plan_ranks(
             rank_source = f"{rank_source}+heuristic_tail"
 
     if not master_doc and not ranks:
-        all_queue = [
-            c for c in cards_by_source.values() if _card_in_build_queue(c)
-        ]
+        all_queue = [c for c in cards_by_source.values() if _card_in_build_queue(c)]
         all_queue.sort(key=_heuristic_plan_sort_key)
         for idx, card in enumerate(all_queue, start=1):
             ranks[card.source] = idx
@@ -3894,9 +3830,7 @@ def parse_master_plan(master_path: Path, repo_root: Path) -> dict[str, object]:
         rel = _resolve_master_plan_link(target, master_dir, repo_root, seen=seen)
         if rel:
             children.append(rel)
-    active_children = _collect_master_section_children(
-        body, "active", master_dir, repo_root
-    )
+    active_children = _collect_master_section_children(body, "active", master_dir, repo_root)
     return {
         "frontmatter": fm,
         "children": children,
@@ -3907,7 +3841,7 @@ def parse_master_plan(master_path: Path, repo_root: Path) -> dict[str, object]:
 def sync_master_plan(
     master_path: Path | None,
     repo_root: Path,
-    cards: list["PlanCard"],
+    cards: list[PlanCard],
 ) -> list[str]:
     """Auto-add missing discovered plans into curated `_master.plan.md`.
 
@@ -3927,7 +3861,7 @@ def sync_master_plan(
     text = master_path.read_text(encoding="utf-8", errors="ignore")
     fm_match = FRONTMATTER_BLOCK_RE.match(text)
     fm_block = fm_match.group(0) if fm_match else ""
-    body = text[len(fm_block):]
+    body = text[len(fm_block) :]
     body_lines = body.splitlines()
 
     def section_bounds(section_name: str) -> tuple[int, int] | None:
@@ -3960,7 +3894,9 @@ def sync_master_plan(
     for src in ordered_missing:
         card = by_source[src]
         target_abs = (repo_root / src).resolve()
-        rel_link = os.path.relpath(target_abs, start=master_path.parent.resolve()).replace("\\", "/")
+        rel_link = os.path.relpath(target_abs, start=master_path.parent.resolve()).replace(
+            "\\", "/"
+        )
         bullet = f"- [{card.title}]({rel_link}) — DRI: {card.dri}"
 
         bounds = section_bounds(card.disposition)
@@ -4045,9 +3981,7 @@ def render_next_actions(
             )
             for action in bucket:
                 tag = f"[{action.ide or '—'}:{action.plan_slug}]"
-                lines.append(
-                    f"- {tag} `({action.priority})` {action.reason} — {action.hint}"
-                )
+                lines.append(f"- {tag} `({action.priority})` {action.reason} — {action.hint}")
                 link = f"  - Source: [`{action.plan_source}`]({action.plan_source})"
                 lines.append(link)
                 if action.item_excerpt:
@@ -4059,7 +3993,7 @@ def render_next_actions(
 
 
 def render_master_mirror(
-    cards: list["PlanCard"],
+    cards: list[PlanCard],
     master_doc: dict[str, object] | None = None,
     *,
     repo_root: Path | None = None,
@@ -4093,11 +4027,7 @@ def render_master_mirror(
     children: list[str] = list(master_doc.get("children", []))  # type: ignore[arg-type]
 
     lines: list[str] = ["# Master plan (mirror)", ""]
-    src_note = (
-        ".cursor/plans/_master.plan.md"
-        if children
-        else "auto (no curated master found)"
-    )
+    src_note = ".cursor/plans/_master.plan.md" if children else "auto (no curated master found)"
     if report_date:
         lines.append(
             f"_Generated {report_date} by `scripts/daily_plan_audit.py`. "
@@ -4218,9 +4148,7 @@ def render_master_mirror(
         if src in metadata or base in metadata:
             continue
         only_master.append(src)
-    only_disk = sorted(
-        p for p in (on_disk_active - in_master) if not _is_archived_storage_path(p)
-    )
+    only_disk = sorted(p for p in (on_disk_active - in_master) if not _is_archived_storage_path(p))
     unranked_build = sorted(
         src
         for src, card in cards_by_source.items()
@@ -4270,7 +4198,7 @@ def build_report(
     secondary: list[Path],
     items: list[PlanItem],
     *,
-    cards_by_source: dict[str, "PlanCard"] | None = None,
+    cards_by_source: dict[str, PlanCard] | None = None,
     ready_to_archive: list[ReadyToArchive] | None = None,
     provenance: dict[str, object] | None = None,
     master_doc: dict[str, object] | None = None,
@@ -4299,8 +4227,7 @@ def build_report(
 
     top_risks: list[str] = []
     blocked_no_owner = [
-        i for i in items
-        if i.status == "Blocked" and not _item_has_inherited_owner(i)
+        i for i in items if i.status == "Blocked" and not _item_has_inherited_owner(i)
     ]
     if blocked_no_owner:
         top_risks.append(
@@ -4315,14 +4242,8 @@ def build_report(
             "Some active items lack explicit owner markers (@, owner:, assignee:, or dri:)."
         )
     if any("delegation_unresolved" in g["missing"] for g in gaps):
-        top_risks.append(
-            "Some items declare `delegate:` without naming a target sub-agent."
-        )
-    gap_test_or_path = [
-        g
-        for g in gaps
-        if "test" in g["missing"] or "evidence" in g["missing"]
-    ]
+        top_risks.append("Some items declare `delegate:` without naming a target sub-agent.")
+    gap_test_or_path = [g for g in gaps if "test" in g["missing"] or "evidence" in g["missing"]]
     if gap_test_or_path:
         top_risks.append("Active items are missing test hints and/or path evidence in plan text.")
     if overlaps:
@@ -4368,13 +4289,13 @@ def build_report(
 
     body: list[str] = []
     body.append("---")
-    body.append(f"schema_version: \"{frontmatter['schema_version']}\"")
-    body.append(f"report_date: \"{frontmatter['report_date']}\"")
-    body.append(f"trigger: \"{frontmatter['trigger']}\"")
+    body.append(f'schema_version: "{frontmatter["schema_version"]}"')
+    body.append(f'report_date: "{frontmatter["report_date"]}"')
+    body.append(f'trigger: "{frontmatter["trigger"]}"')
     body.append("sources:")
     body.append("  primary_plan_files:")
     for plan_file in frontmatter["sources"]["primary_plan_files"]:
-        body.append(f"    - \"{plan_file}\"")
+        body.append(f'    - "{plan_file}"')
     body.append(f"  secondary_docs_count: {frontmatter['sources']['secondary_docs_count']}")
     body.append("summary_counts:")
     for k, v in frontmatter["summary_counts"].items():
@@ -4384,41 +4305,31 @@ def build_report(
         body.append(f"  {k}: {v}")
     body.append("top_risks:")
     for risk in frontmatter["top_risks"]:
-        body.append(f"  - \"{risk}\"")
+        body.append(f'  - "{risk}"')
     body.append("memory_context:")
     body.append(f"  used: {str(frontmatter['memory_context']['used']).lower()}")
     body.append("  sources:")
     for source in frontmatter["memory_context"]["sources"]:
-        body.append(f"    - \"{source}\"")
+        body.append(f'    - "{source}"')
     if not frontmatter["memory_context"]["sources"]:
-        body.append("    - \"none\"")
+        body.append('    - "none"')
     body.append("  goal_sources:")
     for source in frontmatter["memory_context"].get("goal_sources", []):
-        body.append(f"    - \"{source}\"")
+        body.append(f'    - "{source}"')
     if not frontmatter["memory_context"].get("goal_sources"):
-        body.append("    - \"none\"")
-    body.append(
-        f"  goal_count: {frontmatter['memory_context'].get('goal_count', 0)}"
-    )
+        body.append('    - "none"')
+    body.append(f"  goal_count: {frontmatter['memory_context'].get('goal_count', 0)}")
     body.append("provenance:")
+    body.append(f'  created_by_model: "{str(provenance.get("created_by_model", "auto"))}"')
+    body.append(f'  created_at: "{str(provenance.get("created_at", report_date))}"')
     body.append(
-        f"  created_by_model: \"{str(provenance.get('created_by_model', 'auto'))}\""
+        f'  last_modified_by_model: "{str(provenance.get("last_modified_by_model", "auto"))}"'
     )
-    body.append(
-        f"  created_at: \"{str(provenance.get('created_at', report_date))}\""
-    )
-    body.append(
-        f"  last_modified_by_model: \"{str(provenance.get('last_modified_by_model', 'auto'))}\""
-    )
-    body.append(
-        f"  last_modified_at: \"{str(provenance.get('last_modified_at', report_date))}\""
-    )
-    body.append(
-        f"  cursor_mode: \"{str(provenance.get('cursor_mode', 'auto'))}\""
-    )
+    body.append(f'  last_modified_at: "{str(provenance.get("last_modified_at", report_date))}"')
+    body.append(f'  cursor_mode: "{str(provenance.get("cursor_mode", "auto"))}"')
     body.append("  subagent_models_used:")
     for model in provenance.get("subagent_models_used", []) or ["auto"]:
-        body.append(f"    - \"{model}\"")
+        body.append(f'    - "{model}"')
     body.append("---")
     body.append("")
     body.append("# Daily Plan Audit Report")
@@ -4435,9 +4346,7 @@ def build_report(
     )
     ready_to_archive = ready_to_archive or []
     legacy_todo_plans = sum(
-        1
-        for c in cards_by_source.values()
-        if not c.is_master and c.count_source == "body"
+        1 for c in cards_by_source.values() if not c.is_master and c.count_source == "body"
     )
     if legacy_todo_plans:
         body.append(
@@ -4551,9 +4460,7 @@ def build_report(
         for item in prioritized[:7]:
             wants: list[str] = []
             if not has_explicit_owner(item.item):
-                wants.append(
-                    "add explicit owner (@name or owner:/assignee:/dri:)"
-                )
+                wants.append("add explicit owner (@name or owner:/assignee:/dri:)")
             if "test" not in item.item.lower():
                 wants.append("add test hint")
             if not any("/" in ev for ev in item.evidence):
@@ -4570,9 +4477,7 @@ def main() -> int:
     auditor_runtime = resolve_planning_auditor_runtime(args, repo_root)
     overlap_jaccard_threshold = float(auditor_runtime["overlap_jaccard_threshold"])
     goal_alignment_min_score = int(auditor_runtime["goal_alignment_min_score"])
-    should_apply_overlap_relations = bool(
-        auditor_runtime["apply_overlap_relations"]
-    )
+    should_apply_overlap_relations = bool(auditor_runtime["apply_overlap_relations"])
     should_apply_goal_tags = bool(auditor_runtime["apply_goal_tags"])
     trace_path = Path(args.trace_path)
     if not trace_path.is_absolute():
@@ -4605,17 +4510,13 @@ def main() -> int:
     for path in secondary:
         items.extend(collect_plan_items(path, repo_root))
 
-    cards_by_source = build_cards_index(
-        repo_root, primary, items, default_owner=default_owner
-    )
+    cards_by_source = build_cards_index(repo_root, primary, items, default_owner=default_owner)
     branches_created: list[str] = []
     if getattr(args, "ensure_branches", True):
         branches_created = ensure_plan_branches(repo_root, cards_by_source)
         apply_branch_resolution(cards_by_source, repo_root)
         apply_pr_resolution(cards_by_source, repo_root)
-    branch_frontmatter_updated = bootstrap_plan_branches_from_git_local(
-        repo_root, cards_by_source
-    )
+    branch_frontmatter_updated = bootstrap_plan_branches_from_git_local(repo_root, cards_by_source)
     if branch_frontmatter_updated:
         apply_branch_resolution(cards_by_source, repo_root)
         apply_pr_resolution(cards_by_source, repo_root)
@@ -4628,9 +4529,7 @@ def main() -> int:
     card_list = list(cards_by_source.values())
     archive_targets: list[ReadyToArchive] = []
     if getattr(args, "apply_archive", False):
-        archive_targets = detect_ready_to_archive(
-            card_list, include_implemented=True
-        )
+        archive_targets = detect_ready_to_archive(card_list, include_implemented=True)
     ready_to_archive = detect_ready_to_archive(card_list)
 
     if args.master_plan:
@@ -4644,9 +4543,7 @@ def main() -> int:
     master_doc = parse_master_plan(master_path, repo_root) if master_path else None
     pruned_stale_links: list[str] = []
     if master_path and master_doc:
-        pruned_stale_links = prune_stale_master_body_links(
-            master_path, repo_root, master_doc
-        )
+        pruned_stale_links = prune_stale_master_body_links(master_path, repo_root, master_doc)
         if pruned_stale_links:
             master_doc = parse_master_plan(master_path, repo_root)
 
@@ -4665,9 +4562,7 @@ def main() -> int:
             items.extend(collect_plan_items(path, repo_root))
         for path in secondary:
             items.extend(collect_plan_items(path, repo_root))
-        cards_by_source = build_cards_index(
-            repo_root, primary, items, default_owner=default_owner
-        )
+        cards_by_source = build_cards_index(repo_root, primary, items, default_owner=default_owner)
         if getattr(args, "ensure_branches", True):
             apply_branch_resolution(cards_by_source, repo_root)
             apply_pr_resolution(cards_by_source, repo_root)
@@ -4793,9 +4688,8 @@ def main() -> int:
     )
     (out_dir / "plan-task-board.md").write_text(board, encoding="utf-8")
 
-    archived_batch_synced: list[str] = []
     if master_path and master_path.is_file():
-        archived_batch_synced = sync_master_archived_batch(
+        sync_master_archived_batch(
             repo_root,
             master_path,
             default_owner=default_owner,

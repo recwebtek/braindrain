@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
-import braindrain.server
 from braindrain.dream_trigger import evaluate_host_idle_trigger, workspace_hash
 
 
@@ -57,7 +56,7 @@ def test_evaluate_runs_dream_when_idle(workspace: Path, tmp_path: Path):
     with patch("braindrain.dream_trigger.is_macos", return_value=True):
         with patch("braindrain.dream_trigger.get_hid_idle_seconds", return_value=120.0):
             with patch("braindrain.dream_trigger.workspace_state_dir", _state_dir):
-                with patch("braindrain.dream_trigger._get_dream_engine", create=True) as get_engine:
+                with patch("braindrain.dream_trigger._get_dream_engine", create=True):
                     with patch("braindrain.server._get_dream_engine", return_value=engine):
                         result = evaluate_host_idle_trigger(
                             repo_root=workspace,
@@ -73,9 +72,10 @@ def test_workspace_hash_stable(workspace: Path):
 
 
 def test_host_idle_bypasses_session_quiet_gate():
-    from braindrain.dream import DreamEngine
-    from unittest.mock import MagicMock
     from pathlib import Path
+    from unittest.mock import MagicMock
+
+    from braindrain.dream import DreamEngine
 
     session_store = MagicMock()
     session_store.should_dream.return_value = False

@@ -17,10 +17,10 @@ from unittest.mock import patch
 import pytest
 
 from braindrain.workspace_primer import (
-    MAX_ROLLBACK_SNAPSHOTS,
     CURSOR_COMMANDS_TEMPLATES_DIR,
     CURSOR_HOOK_TEMPLATES_DIR,
     CURSOR_SKILL_TEMPLATES_DIR,
+    MAX_ROLLBACK_SNAPSHOTS,
     _resolve_bundle_manifest,
     compact_prime_result_for_mcp,
     create_prime_snapshot,
@@ -104,10 +104,6 @@ def test_deploy_cursor_commands_skips_existing_without_sync(tmp_project_dir: Pat
     deploy_cursor_commands(tmp_project_dir, sync_templates=False, dry_run=False)
     out2 = deploy_cursor_commands(tmp_project_dir, sync_templates=False, dry_run=False)
     assert out2["commands/brainlog.md"]["action"] == "skipped_existing"
-
-
-
-
 
 
 def test_deploy_cursor_hook_templates_writes_expected_paths(tmp_project_dir: Path) -> None:
@@ -229,15 +225,23 @@ def test_create_prime_snapshot_prunes_to_max(tmp_project_dir: Path) -> None:
 
 def test_prime_result_exposes_rollback_manifest(tmp_project_dir: Path) -> None:
     (tmp_project_dir / ".cursor").mkdir(parents=True, exist_ok=True)
-    with patch("braindrain.workspace_primer.run_ruler_apply", return_value={"ok": True, "stdout": "", "stderr": "", "command": "x", "returncode": 0}), patch(
-        "braindrain.workspace_primer.initialize_project_memory",
-        return_value={"ok": True, "dry_run": False, "artifacts": {}, "migration": {}},
-    ), patch(
-        "braindrain.workspace_primer.seed_if_enabled",
-        return_value={"ok": True, "enabled": False},
-    ), patch(
-        "braindrain.workspace_primer.verify_prime_install",
-        return_value={"ok": True, "checks": {"dry_run": False}},
+    with (
+        patch(
+            "braindrain.workspace_primer.run_ruler_apply",
+            return_value={"ok": True, "stdout": "", "stderr": "", "command": "x", "returncode": 0},
+        ),
+        patch(
+            "braindrain.workspace_primer.initialize_project_memory",
+            return_value={"ok": True, "dry_run": False, "artifacts": {}, "migration": {}},
+        ),
+        patch(
+            "braindrain.workspace_primer.seed_if_enabled",
+            return_value={"ok": True, "enabled": False},
+        ),
+        patch(
+            "braindrain.workspace_primer.verify_prime_install",
+            return_value={"ok": True, "checks": {"dry_run": False}},
+        ),
     ):
         result = prime(path=str(tmp_project_dir), agents=["cursor"], local_only=True)
     assert result["rollback_manifest_path"]
@@ -254,15 +258,20 @@ def test_prime_restores_cursor_agents_if_ruler_removes_directory(tmp_project_dir
         shutil.rmtree(agents_dir, ignore_errors=True)
         return {"ok": True, "stdout": "", "stderr": "", "command": "x", "returncode": 0}
 
-    with patch("braindrain.workspace_primer.run_ruler_apply", side_effect=_ruler_side_effect), patch(
-        "braindrain.workspace_primer.initialize_project_memory",
-        return_value={"ok": True, "dry_run": False, "artifacts": {}, "migration": {}},
-    ), patch(
-        "braindrain.workspace_primer.seed_if_enabled",
-        return_value={"ok": True, "enabled": False},
-    ), patch(
-        "braindrain.workspace_primer.verify_prime_install",
-        return_value={"ok": True, "checks": {"dry_run": False}},
+    with (
+        patch("braindrain.workspace_primer.run_ruler_apply", side_effect=_ruler_side_effect),
+        patch(
+            "braindrain.workspace_primer.initialize_project_memory",
+            return_value={"ok": True, "dry_run": False, "artifacts": {}, "migration": {}},
+        ),
+        patch(
+            "braindrain.workspace_primer.seed_if_enabled",
+            return_value={"ok": True, "enabled": False},
+        ),
+        patch(
+            "braindrain.workspace_primer.verify_prime_install",
+            return_value={"ok": True, "checks": {"dry_run": False}},
+        ),
     ):
         result = prime(path=str(tmp_project_dir), agents=["cursor"], local_only=True)
 
@@ -312,7 +321,9 @@ def test_daily_plan_hook_contains_once_per_day_gate() -> None:
 
 def test_deploy_operational_scripts_and_skills(tmp_project_dir: Path) -> None:
     bundle = _resolve_bundle_manifest("cursor-orchestration")
-    scripts = deploy_operational_scripts(tmp_project_dir, bundle, sync_templates=False, dry_run=False)
+    scripts = deploy_operational_scripts(
+        tmp_project_dir, bundle, sync_templates=False, dry_run=False
+    )
     assert (tmp_project_dir / "scripts" / "daily_plan_audit.py").is_file()
     assert (tmp_project_dir / "scripts" / "plan_branch_utils.py").is_file()
     assert (tmp_project_dir / "scripts" / "plan_build_guard.py").is_file()
@@ -337,7 +348,9 @@ def test_deploy_operational_scripts_upgrades_hub_revision(tmp_project_dir: Path)
     stamped_stale = _stamp_script_marker(stale_body, rel)
     dst.write_text(stamped_stale, encoding="utf-8")
 
-    result = deploy_operational_scripts(tmp_project_dir, bundle, sync_templates=False, dry_run=False)
+    result = deploy_operational_scripts(
+        tmp_project_dir, bundle, sync_templates=False, dry_run=False
+    )
     key = f"scripts/{rel}"
     assert result[key]["action"] == "updated"
     assert result[key].get("classification") == "hub_revision"
@@ -358,7 +371,7 @@ def test_observe_hook_template_suppresses_known_stdout_sources() -> None:
     content = hook_path.read_text(encoding="utf-8")
     assert "PRAGMA journal_mode=WAL;" in content
     assert 'sqlite3 "${DB_PATH}" >/dev/null 2>/dev/null <<SQL' in content
-    assert '[observe-hook] Recorded stop event' not in content
+    assert "[observe-hook] Recorded stop event" not in content
 
 
 def test_observe_hook_runtime_stdout_is_empty(tmp_project_dir: Path) -> None:
@@ -431,9 +444,7 @@ def test_daily_plan_audit_writes_task_board(tmp_project_dir: Path) -> None:
     m = _load_audit_module()
     (tmp_project_dir / ".cursor" / "plans").mkdir(parents=True, exist_ok=True)
     (tmp_project_dir / ".cursor" / "plans" / "board.plan.md").write_text(
-        "# Plan\n"
-        "- [ ] owner: alice first task\n"
-        "- [ ] blocked by policy with no marker\n",
+        "# Plan\n- [ ] owner: alice first task\n- [ ] blocked by policy with no marker\n",
         encoding="utf-8",
     )
     argv = [

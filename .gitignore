@@ -1,5 +1,6 @@
 .DS_Store
 __pycache__/
+*.egg-info/
 *.pyc
 *.pyo
 *.pyd
@@ -55,6 +56,7 @@ CRUSH.md
 
 # Tests are dev-only (not needed on consumer installs)
 tests/*
+!tests/conftest.py
 !tests/test_workspace_primer_hooks.py
 !tests/test_scriptlib.py
 !tests/test_env_probe_codex.py
@@ -85,6 +87,7 @@ tests/*
 !/.gitattributes
 !/.gitmodules
 !/.env.example
+!/.pre-commit-config.yaml
 # `.cursor/` stays fully ignored; ship subagents from config/templates/agents/ and skills from config/templates/cursor-skills/ (deploy: prime_workspace).
 # If your team commits other root dotdirs (e.g. .husky), add: !/.husky/
 # `.devdocs/` is covered by `/.*` above — local-only; never add ! exceptions for it.

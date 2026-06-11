@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-
 _SECRET_PATTERNS = [
     re.compile(r"(?i)\b(token|apikey|api_key|secret|password)\b\s*[:=]\s*[\w\-]{8,}"),
     re.compile(r"(?i)bearer\s+[a-z0-9\-_\.=]{8,}"),

@@ -26,9 +26,8 @@ def test_all_mcp_tool_parameters_have_descriptions() -> None:
     assert tools, "expected at least one native MCP tool"
 
     missing = _missing_param_descriptions(tools)
-    assert not missing, (
-        "MCP tool parameters missing Args: docstring descriptions: "
-        + ", ".join(sorted(missing))
+    assert not missing, "MCP tool parameters missing Args: docstring descriptions: " + ", ".join(
+        sorted(missing)
     )
 
 

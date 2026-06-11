@@ -7,11 +7,12 @@ the workflow engine can call any configured downstream MCP server by command.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
-from braindrain.exec_path import resolve_command_argv
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
+
+from braindrain.exec_path import resolve_command_argv
 
 
 class MCPProtocolError(RuntimeError):
@@ -55,7 +56,7 @@ class StdioMCPClient:
 
         return await self._with_session(_run)
 
-    async def call_tool(self, tool_name: str, args: Optional[dict[str, Any]] = None) -> Any:
+    async def call_tool(self, tool_name: str, args: dict[str, Any] | None = None) -> Any:
         if args is None:
             args = {}
 
@@ -74,4 +75,3 @@ class StdioMCPClient:
             return result.model_dump(by_alias=True, exclude_none=True)
 
         return await self._with_session(_run)
-

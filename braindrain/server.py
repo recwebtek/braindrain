@@ -6,7 +6,6 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 # Auto-add project root to path so braindrain can be imported without PYTHONPATH
 _project_root = Path(__file__).parent.parent
@@ -17,51 +16,83 @@ from dotenv import load_dotenv
 from fastmcp import FastMCP
 
 from braindrain.config import Config
-from braindrain.exec_path import ensure_node_path_in_environ
 from braindrain.context_mode_client import ContextModeClient, MCPProtocolError
 from braindrain.dream import DreamEngine
 from braindrain.env_probe import get_env_context as _probe_env_context
+from braindrain.exec_path import ensure_node_path_in_environ
+from braindrain.instrumentation import make_observe_mcp_tool
+from braindrain.mcp_catalog import export_mcp_catalog_async
 from braindrain.memory_learning import can_promote_memory, evaluate_lesson_candidate
 from braindrain.observer import BrainEvent, ObserverStore
 from braindrain.output_router import build_routed_output, should_route
+from braindrain.rerank import maybe_rerank_search_results
 from braindrain.scriptlib import (
     apply_update as _scriptlib_apply_update,
+)
+from braindrain.scriptlib import (
     catalog_status as _scriptlib_catalog_status,
+)
+from braindrain.scriptlib import (
     describe as _scriptlib_describe,
+)
+from braindrain.scriptlib import (
     disable as _scriptlib_disable,
+)
+from braindrain.scriptlib import (
     enable as _scriptlib_enable,
+)
+from braindrain.scriptlib import (
     fork as _scriptlib_fork,
+)
+from braindrain.scriptlib import (
     global_scriptlib_root as _global_scriptlib_root,
+)
+from braindrain.scriptlib import (
     harvest_workspace as _scriptlib_harvest_workspace,
+)
+from braindrain.scriptlib import (
     is_enabled as _scriptlib_is_enabled,
+)
+from braindrain.scriptlib import (
     list_updates as _scriptlib_list_updates,
+)
+from braindrain.scriptlib import (
     project_scriptlib_root as _project_scriptlib_root,
+)
+from braindrain.scriptlib import (
     promote as _scriptlib_promote,
+)
+from braindrain.scriptlib import (
     record_result as _scriptlib_record_result,
+)
+from braindrain.scriptlib import (
     refresh_index as _scriptlib_refresh_index,
+)
+from braindrain.scriptlib import (
     run as _scriptlib_run,
+)
+from braindrain.scriptlib import (
     run_maintenance as _scriptlib_run_maintenance,
+)
+from braindrain.scriptlib import (
     search as _scriptlib_search,
 )
-from braindrain.instrumentation import make_observe_mcp_tool
-from braindrain.telemetry import telemetry_from_config
-from braindrain.mcp_catalog import export_mcp_catalog_async
-from braindrain.rerank import maybe_rerank_search_results
+from braindrain.session import EpisodeRecord, SessionStore
 from braindrain.session_compaction import (
     build_compact_package,
     index_package_in_context_mode,
     retrieval_hint,
     session_index_handle,
 )
+from braindrain.telemetry import telemetry_from_config
 from braindrain.token_checkpoints import append_checkpoint as _append_token_checkpoint
 from braindrain.tool_registry import ToolRegistry
-from braindrain.workflow_engine import WorkflowEngine
-from braindrain.session import EpisodeRecord, SessionStore
 from braindrain.wiki_brain import WikiBrain
+from braindrain.workflow_engine import WorkflowEngine
+from braindrain.workspace_primer import compact_prime_result_for_mcp
 from braindrain.workspace_primer import (
     initialize_project_memory as _initialize_project_memory,
 )
-from braindrain.workspace_primer import compact_prime_result_for_mcp
 from braindrain.workspace_primer import prime as _prime_workspace
 
 mcp = FastMCP("braindrain")
@@ -91,12 +122,12 @@ config = Config(CONFIG_PATH)
 registry = ToolRegistry(config.data)
 telemetry = telemetry_from_config(config.get("cost_tracking", {}) or {})
 
-_context_mode_client: Optional[ContextModeClient] = None
-_workflow_engine: Optional[WorkflowEngine] = None
-_observer_store: Optional[ObserverStore] = None
-_session_store: Optional[SessionStore] = None
-_wiki_brain: Optional[WikiBrain] = None
-_dream_engine: Optional[DreamEngine] = None
+_context_mode_client: ContextModeClient | None = None
+_workflow_engine: WorkflowEngine | None = None
+_observer_store: ObserverStore | None = None
+_session_store: SessionStore | None = None
+_wiki_brain: WikiBrain | None = None
+_dream_engine: DreamEngine | None = None
 
 
 def _provenance_settings() -> dict:
@@ -145,15 +176,19 @@ def _effective_model_name(explicit_model: str | None = None) -> str:
 
 def _effective_cursor_mode() -> str:
     mode = (
-        os.environ.get("CURSOR_MODEL_SELECTION", "")
-        or os.environ.get("BRAINDRAIN_CURSOR_MODE", "")
-    ).strip().lower()
+        (
+            os.environ.get("CURSOR_MODEL_SELECTION", "")
+            or os.environ.get("BRAINDRAIN_CURSOR_MODE", "")
+        )
+        .strip()
+        .lower()
+    )
     if mode in {"manual", "auto"}:
         return mode
     return "auto"
 
 
-def _get_context_mode_client() -> Optional[ContextModeClient]:
+def _get_context_mode_client() -> ContextModeClient | None:
     global _context_mode_client
     if _context_mode_client is not None:
         return _context_mode_client
@@ -166,7 +201,7 @@ def _get_context_mode_client() -> Optional[ContextModeClient]:
     return _context_mode_client
 
 
-def _get_workflow_engine() -> Optional[WorkflowEngine]:
+def _get_workflow_engine() -> WorkflowEngine | None:
     global _workflow_engine
     if _workflow_engine is not None:
         return _workflow_engine
@@ -229,7 +264,9 @@ def _get_wiki_brain() -> WikiBrain:
         recency_half_life_days=float(recall_cfg.get("recency_half_life_days", 30.0) or 30.0),
         decay_half_life_days=float(forgetting_cfg.get("decay_half_life_days", 90.0) or 90.0),
         prune_threshold=float(forgetting_cfg.get("prune_threshold", 0.05) or 0.05),
-        consolidation_similarity=float(forgetting_cfg.get("consolidation_similarity", 0.92) or 0.92),
+        consolidation_similarity=float(
+            forgetting_cfg.get("consolidation_similarity", 0.92) or 0.92
+        ),
     )
     return _wiki_brain
 
@@ -240,11 +277,11 @@ def _get_dream_engine() -> DreamEngine:
         return _dream_engine
     dreaming_cfg = config.get("dreaming", {}) or {}
     storage_cfg = dreaming_cfg.get("storage", {}) or {}
-    triggers = dreaming_cfg.get("triggers") if isinstance(dreaming_cfg.get("triggers"), dict) else {}
+    triggers = (
+        dreaming_cfg.get("triggers") if isinstance(dreaming_cfg.get("triggers"), dict) else {}
+    )
     host_idle = (
-        triggers.get("macos_host_idle")
-        if isinstance(triggers.get("macos_host_idle"), dict)
-        else {}
+        triggers.get("macos_host_idle") if isinstance(triggers.get("macos_host_idle"), dict) else {}
     )
     engine_cfg = {
         "policy_version": dreaming_cfg.get("policy_version", "memory-lessons-v1"),
@@ -358,9 +395,7 @@ def _should_route_output(text: str, *, min_chars: int, force_inline: bool) -> bo
     return should_route(text, min_chars=threshold)
 
 
-session_stats = {
-    "note": "deprecated: use telemetry snapshot"
-}  # kept for backwards compatibility
+session_stats = {"note": "deprecated: use telemetry snapshot"}  # kept for backwards compatibility
 
 
 @mcp.tool()
@@ -593,7 +628,9 @@ async def route_output(
         force_index: When True, always index regardless of size.
         force_inline: When True, skip auto-routing and return inline text when allowed.
     """
-    if not force_index and not _should_route_output(text, min_chars=min_chars, force_inline=force_inline):
+    if not force_index and not _should_route_output(
+        text, min_chars=min_chars, force_inline=force_inline
+    ):
         return {
             "routed": False,
             "source": source,
@@ -613,9 +650,7 @@ async def route_output(
 
     routed, md = build_routed_output(source=source, content=text, intent=intent)
     try:
-        index_result = await client.index_markdown(
-            content_md=md, source=source, intent=intent
-        )
+        index_result = await client.index_markdown(content_md=md, source=source, intent=intent)
     except MCPProtocolError as e:
         return {
             "routed": False,
@@ -670,7 +705,9 @@ async def search_index(query: str, limit: int = 5, rerank: bool | None = None) -
         results = await client.search(query=query, limit=limit)
         modules = config.get("modules", {}) or {}
         tool_gate = modules.get("tool_gate", {}) if isinstance(modules, dict) else {}
-        embeddings_cfg = getattr(config.data, "embeddings", None) or config.get("embeddings", {}) or {}
+        embeddings_cfg = (
+            getattr(config.data, "embeddings", None) or config.get("embeddings", {}) or {}
+        )
         do_rerank = rerank if rerank is not None else bool(tool_gate.get("rerank_on_search", False))
         rerank_meta: dict = {"requested": bool(do_rerank)}
         if do_rerank:
@@ -1586,7 +1623,9 @@ def scriptlib_catalog_status(
         include_entries: When True, include entry summaries in response. Default: False.
         limit: Max entries when include_entries is True. Default: 20.
     """
-    return _scriptlib_catalog_status(project_path=path, include_entries=include_entries, limit=limit)
+    return _scriptlib_catalog_status(
+        project_path=path, include_entries=include_entries, limit=limit
+    )
 
 
 @mcp.tool()
@@ -1618,7 +1657,11 @@ def scriptlib_refresh_index(
             continue
         results.append(_scriptlib_refresh_index(root, dry_run=dry_run))
 
-    return {"ok": all(item.get("ok", False) for item in results), "scope": scope, "results": results}
+    return {
+        "ok": all(item.get("ok", False) for item in results),
+        "scope": scope,
+        "results": results,
+    }
 
 
 @mcp.tool()
@@ -1676,6 +1719,7 @@ async def prime_workspace(
     - Call get_env_context() to populate the live env block.
     """
     import asyncio
+
     try:
         result = await asyncio.to_thread(
             _prime_workspace,

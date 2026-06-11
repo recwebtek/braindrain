@@ -339,9 +339,7 @@ class WikiBrain:
                 ).fetchall()
             else:
                 base_clauses = [clause.replace("r.", "") for clause in clauses]
-                base_where = (
-                    f"WHERE {' AND '.join(base_clauses)}" if base_clauses else ""
-                )
+                base_where = f"WHERE {' AND '.join(base_clauses)}" if base_clauses else ""
                 rows = conn.execute(
                     f"""
                     SELECT *
@@ -392,14 +390,10 @@ class WikiBrain:
         ranked.sort(key=lambda item: item["score"], reverse=True)
         top = ranked[:limit]
         # Batch update access timestamps to avoid N+1 connection overhead
-        self._mark_accessed_batch(
-            [item["record"]["record_id"] for item in top], now=now
-        )
+        self._mark_accessed_batch([item["record"]["record_id"] for item in top], now=now)
         return top
 
-    def review_playbook(
-        self, *, query: str = "", limit: int = 10
-    ) -> list[dict[str, Any]]:
+    def review_playbook(self, *, query: str = "", limit: int = 10) -> list[dict[str, Any]]:
         records = self.query_records(query=query, record_class="lesson", limit=limit)
         return [record.to_dict() for record in records]
 
@@ -538,9 +532,7 @@ class WikiBrain:
         """Mark a single record as accessed (lightweight)."""
         self._mark_accessed_batch([record_id], now=now)
 
-    def _mark_accessed_batch(
-        self, record_ids: list[str], *, now: float | None = None
-    ) -> None:
+    def _mark_accessed_batch(self, record_ids: list[str], *, now: float | None = None) -> None:
         """Mark multiple records as accessed in a single transaction (~40x faster for batches)."""
         if not record_ids:
             return

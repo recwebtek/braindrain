@@ -56,11 +56,7 @@ def test_relocate_archived_via_master_list(tmp_project_dir: Path) -> None:
     plans.mkdir(parents=True)
     (plans / "gone.plan.md").write_text("# Gone\n- [ ] x\n", encoding="utf-8")
     (plans / "_master.plan.md").write_text(
-        "---\n"
-        "archived_plans:\n"
-        "  - gone.plan.md\n"
-        "---\n\n"
-        "# Master\n",
+        "---\narchived_plans:\n  - gone.plan.md\n---\n\n# Master\n",
         encoding="utf-8",
     )
     moved = m.relocate_archived_plans(tmp_project_dir)
@@ -125,14 +121,11 @@ def test_report_includes_model_provenance_frontmatter(tmp_project_dir: Path) -> 
         assert m.main() == 0
 
     report = (
-        tmp_project_dir
-        / ".braindrain"
-        / "plan-reports"
-        / "plan-audit-2026-06-02.md"
+        tmp_project_dir / ".braindrain" / "plan-reports" / "plan-audit-2026-06-02.md"
     ).read_text(encoding="utf-8")
     assert 'created_by_model: "Codex 5.3"' in report
     assert 'cursor_mode: "auto"' in report
-    assert 'subagent_models_used:' in report
+    assert "subagent_models_used:" in report
     assert '    - "composer-2"' in report
     assert '    - "gpt-5.4-medium"' in report
 
@@ -221,13 +214,21 @@ def _git_init_with_branch(tmp_project_dir: Path, branch: str) -> None:
     )
     readme = tmp_project_dir / "README.md"
     readme.write_text("test\n", encoding="utf-8")
-    subprocess.run(["git", "add", "README.md"], cwd=tmp_project_dir, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "add", "README.md"], cwd=tmp_project_dir, check=True, capture_output=True
+    )
     subprocess.run(
         ["git", "commit", "-m", "init"],
         cwd=tmp_project_dir,
         check=True,
         capture_output=True,
-        env={**os.environ, "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "t@t.com", "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "t@t.com"},
+        env={
+            **os.environ,
+            "GIT_AUTHOR_NAME": "test",
+            "GIT_AUTHOR_EMAIL": "t@t.com",
+            "GIT_COMMITTER_NAME": "test",
+            "GIT_COMMITTER_EMAIL": "t@t.com",
+        },
     )
 
 
@@ -288,9 +289,7 @@ def test_resolve_pr_for_branch_gh_mock(tmp_project_dir: Path) -> None:
             return [{"number": 7, "state": "OPEN", "url": "https://github.com/o/r/pull/7"}]
         return []
 
-    cell, source = m.resolve_pr_for_branch(
-        tmp_project_dir, "feature/x", gh_runner=fake_gh
-    )
+    cell, source = m.resolve_pr_for_branch(tmp_project_dir, "feature/x", gh_runner=fake_gh)
     assert source == "gh"
     assert "[#7 open]" in cell
     assert "https://github.com/o/r/pull/7" in cell
@@ -734,9 +733,7 @@ def test_master_mirror_excludes_plan_archives_from_drift(tmp_project_dir: Path) 
     items = m.collect_plan_items(plan_path, tmp_project_dir)
     cards = m.build_cards_index(tmp_project_dir, [plan_path], items, default_owner="@test")
     master_doc = m.parse_master_plan(plans / "_master.plan.md", tmp_project_dir)
-    mirror = m.render_master_mirror(
-        list(cards.values()), master_doc, repo_root=tmp_project_dir
-    )
+    mirror = m.render_master_mirror(list(cards.values()), master_doc, repo_root=tmp_project_dir)
     assert "### On disk but missing from curated master:" not in mirror
     assert "archived plan(s) under `.plan.archives/`" in mirror
 
@@ -758,7 +755,9 @@ def test_sync_master_archived_batch_writes_pr_fields(tmp_project_dir: Path) -> N
         encoding="utf-8",
     )
     master_path = plans / "_master.plan.md"
-    master_path.write_text("---\narchived_plans: []\n---\n\n# Master\n\n## archived\n\n", encoding="utf-8")
+    master_path.write_text(
+        "---\narchived_plans: []\n---\n\n# Master\n\n## archived\n\n", encoding="utf-8"
+    )
 
     def fake_gh(_root: Path, branch: str) -> list[dict[str, object]] | None:
         if branch == "feature/shipped":
@@ -809,8 +808,12 @@ def test_parse_master_plan_active_children_section(tmp_project_dir: Path) -> Non
     m = _load_audit_module()
     plans = tmp_project_dir / ".cursor" / "plans"
     plans.mkdir(parents=True)
-    (plans / "first.plan.md").write_text("---\ndisposition: active\n---\n# First\n", encoding="utf-8")
-    (plans / "second.plan.md").write_text("---\ndisposition: active\n---\n# Second\n", encoding="utf-8")
+    (plans / "first.plan.md").write_text(
+        "---\ndisposition: active\n---\n# First\n", encoding="utf-8"
+    )
+    (plans / "second.plan.md").write_text(
+        "---\ndisposition: active\n---\n# Second\n", encoding="utf-8"
+    )
     master_path = plans / "_master.plan.md"
     master_path.write_text(
         "---\n---\n\n# Master\n\n## active\n\n"
@@ -836,9 +839,7 @@ def test_compute_plan_ranks_follows_master_active_order(tmp_project_dir: Path) -
         )
     master_path = plans / "_master.plan.md"
     master_path.write_text(
-        "---\n---\n\n# Master\n\n## active\n\n"
-        "- [A](plan_a.plan.md)\n"
-        "- [B](plan_b.plan.md)\n",
+        "---\n---\n\n# Master\n\n## active\n\n- [A](plan_a.plan.md)\n- [B](plan_b.plan.md)\n",
         encoding="utf-8",
     )
     items: list[m.PlanItem] = []
@@ -907,9 +908,7 @@ def test_task_board_and_mirror_implementation_sequence(tmp_project_dir: Path) ->
     )
     master_path = plans / "_master.plan.md"
     master_path.write_text(
-        "---\n---\n\n# Master\n\n## active\n\n"
-        "- [Early](early.plan.md)\n"
-        "- [Late](late.plan.md)\n",
+        "---\n---\n\n# Master\n\n## active\n\n- [Early](early.plan.md)\n- [Late](late.plan.md)\n",
         encoding="utf-8",
     )
     items: list[m.PlanItem] = []
@@ -991,9 +990,7 @@ def test_detect_plan_overlaps_shared_path(tmp_project_dir: Path) -> None:
         items.extend(plan_items)
         card = m.build_plan_card(path, tmp_project_dir, plan_items, default_owner="@test")
         cards[card.source] = card
-    edges, clusters = m.detect_plan_overlaps(
-        cards, items, repo_root=tmp_project_dir
-    )
+    edges, clusters = m.detect_plan_overlaps(cards, items, repo_root=tmp_project_dir)
     path_edges = [edge for edge in edges if edge.signal == "path"]
     assert path_edges
     assert path_edges[0].severity == "high"
@@ -1022,9 +1019,7 @@ def test_apply_overlap_relations_appends_relates_to(tmp_project_dir: Path) -> No
         items.extend(plan_items)
         card = m.build_plan_card(path, tmp_project_dir, plan_items, default_owner="@test")
         cards[card.source] = card
-    edges, _clusters = m.detect_plan_overlaps(
-        cards, items, repo_root=tmp_project_dir
-    )
+    edges, _clusters = m.detect_plan_overlaps(cards, items, repo_root=tmp_project_dir)
     updated = m.apply_overlap_relations(tmp_project_dir, cards, edges)
     assert len(updated) == 2
     alpha_text = (plans / "alpha.plan.md").read_text(encoding="utf-8")
@@ -1095,10 +1090,10 @@ def test_parse_frontmatter_phase_branches() -> None:
         "  - feat-phase1\n"
         "phase_branches:\n"
         "  - branch: feat-phase0\n"
-        "    phase: \"0\"\n"
+        '    phase: "0"\n'
         "    pr: https://github.com/org/repo/pull/1\n"
         "  - branch: feat-phase1\n"
-        "    phase: \"1\"\n"
+        '    phase: "1"\n'
         "    pr: https://github.com/org/repo/pull/2\n"
         "    pr_state: OPEN\n"
         "---\n\n"

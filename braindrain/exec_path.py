@@ -5,8 +5,8 @@ from __future__ import annotations
 import os
 import shlex
 import shutil
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable, Optional
 
 _NODE_CLI_NAMES = frozenset({"npx", "npm", "node", "pnpm", "yarn", "corepack"})
 
@@ -58,7 +58,7 @@ def node_bin_prefixes() -> list[str]:
     return prefixes
 
 
-def augmented_path(*, extra_prefixes: Optional[Iterable[str]] = None) -> str:
+def augmented_path(*, extra_prefixes: Iterable[str] | None = None) -> str:
     """Build PATH with Node install dirs prepended (deduped, order preserved)."""
     parts: list[str] = []
     if extra_prefixes:
@@ -82,7 +82,7 @@ def ensure_node_path_in_environ() -> str:
     return path
 
 
-def resolve_executable(name: str) -> Optional[str]:
+def resolve_executable(name: str) -> str | None:
     """Return absolute path to ``name`` after PATH augmentation, or None."""
     ensure_node_path_in_environ()
     return shutil.which(name)
