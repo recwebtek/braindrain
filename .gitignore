@@ -19,9 +19,13 @@ venv/
 .logs/
 # Legacy: debug reports were committed under .logs/ before this rule; use .braindrain/logs/ only.
 
-# Docs (machine-local); allow shipped contributor guides
-docs/
+# Docs (machine-local); allow shipped public docs at docs/*.md only
+docs/*
 !docs/skill-braindrain-hub-pr.md
+!docs/BRAIN_CONTEXT_HUB_FULL_SPEC_v2.md
+!docs/learning-layer-gap-audit.md
+!docs/PROJECT_EVALUATION_2026-06.md
+docs/*/
 
 # QA / installer scratch (local-only)
 QA-Logs/

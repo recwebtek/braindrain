@@ -525,6 +525,8 @@ braindrain/
 ├── AGENTS.md.template          # template used to generate AGENTS.md
 ├── VERSION                     # semver for releases (kept in sync with this README)
 ├── CHANGELOG.md                # release history
+├── docs/
+│   └── BRAIN_CONTEXT_HUB_FULL_SPEC_v2.md  # sanitized architecture spec (public)
 ├── ROADMAP.md                  # public product direction (local scratch: `.devdocs/`, gitignored)
 ├── TODOS.md                    # public release-aligned checklist (never commit `.devdocs/`)
 ├── install.sh                  # new device setup script

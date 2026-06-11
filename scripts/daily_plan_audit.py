@@ -184,6 +184,58 @@ def load_trace_models(trace_path: Path, limit: int = 1000) -> list[str]:
 
 _DEFAULT_OWNER_CACHE: str | None = None
 
+_ROADMAP_ALIGNED_VERSION_RE = re.compile(
+    r"Last aligned with \*\*v?([\d.]+)\*\*",
+    re.IGNORECASE,
+)
+_PYPROJECT_VERSION_RE = re.compile(
+    r'^\s*version\s*=\s*["\']([^"\']+)["\']',
+    re.MULTILINE,
+)
+
+
+def read_pyproject_version(repo_root: Path) -> str | None:
+    """Return semver from ``pyproject.toml`` project.version, if present."""
+    path = repo_root / "pyproject.toml"
+    if not path.is_file():
+        return None
+    match = _PYPROJECT_VERSION_RE.search(path.read_text(encoding="utf-8", errors="replace"))
+    return match.group(1).strip() if match else None
+
+
+def read_roadmap_aligned_version(repo_root: Path) -> str | None:
+    """Return version named in ROADMAP.md ``Last aligned with **vX.Y.Z**``."""
+    path = repo_root / "ROADMAP.md"
+    if not path.is_file():
+        return None
+    match = _ROADMAP_ALIGNED_VERSION_RE.search(
+        path.read_text(encoding="utf-8", errors="replace")
+    )
+    return match.group(1).strip() if match else None
+
+
+def check_roadmap_version_alignment(repo_root: Path) -> list[str]:
+    """Warn when ROADMAP.md aligned version differs from pyproject.toml."""
+    pyproject_version = read_pyproject_version(repo_root)
+    roadmap_version = read_roadmap_aligned_version(repo_root)
+    warnings: list[str] = []
+    if pyproject_version is None:
+        warnings.append("- _Skipped:_ `pyproject.toml` version not found.")
+        return warnings
+    if roadmap_version is None:
+        warnings.append(
+            "- `ROADMAP.md` missing `Last aligned with **vX.Y.Z**` line — "
+            f"expected **v{pyproject_version}**."
+        )
+        return warnings
+    if roadmap_version != pyproject_version:
+        warnings.append(
+            f"- **Version drift:** `ROADMAP.md` aligned to **v{roadmap_version}** "
+            f"but `pyproject.toml` is **{pyproject_version}**. "
+            "Update ROADMAP (and README/TODOS if needed)."
+        )
+    return warnings
+
 
 def resolve_default_owner(
     repo_root: Path | None = None,
@@ -4121,6 +4173,11 @@ def render_master_mirror(
             lines.append("### Build-queue plans not in master index:")
             for src in unranked_build:
                 lines.append(f"- `{src}` (ranked at end via heuristic)")
+    if repo_root is not None:
+        roadmap_warnings = check_roadmap_version_alignment(repo_root)
+        if roadmap_warnings:
+            lines.append("### Public docs version alignment:")
+            lines.extend(roadmap_warnings)
     lines.append("")
     return "\n".join(lines)
 
