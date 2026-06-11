@@ -71,7 +71,15 @@ def resolve_base_branch(repo_root: Path) -> str:
 def branch_ref_exists(repo_root: Path, branch: str) -> bool:
     try:
         proc = subprocess.run(
-            ["git", "-C", str(repo_root), "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
+            [
+                "git",
+                "-C",
+                str(repo_root),
+                "show-ref",
+                "--verify",
+                "--quiet",
+                f"refs/heads/{branch}",
+            ],
             capture_output=True,
             check=False,
         )

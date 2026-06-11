@@ -1,7 +1,6 @@
 """Tool registry with defer_loading and BM25 search"""
 
 import asyncio
-from typing import Optional
 from dataclasses import dataclass
 
 try:
@@ -11,7 +10,7 @@ try:
 except ImportError:
     BM25_AVAILABLE = False
 
-from braindrain.types import MCPToolConfig, ConfigData
+from braindrain.types import ConfigData, MCPToolConfig
 
 
 @dataclass
@@ -32,7 +31,7 @@ class ToolRegistry:
     def __init__(self, config: ConfigData):
         self.config = config
         self._tools: dict[str, MCPToolConfig] = {}
-        self._search_index: Optional[BM25Okapi] = None
+        self._search_index: BM25Okapi | None = None
         self._tool_refs: list[ToolReference] = []
         self._load_tools()
 
@@ -63,10 +62,7 @@ class ToolRegistry:
         if not self._tool_refs:
             return
 
-        corpus = [
-            f"{ref.name} {' '.join(ref.tags)} {ref.description}"
-            for ref in self._tool_refs
-        ]
+        corpus = [f"{ref.name} {' '.join(ref.tags)} {ref.description}" for ref in self._tool_refs]
 
         tokenized_corpus = [doc.lower().split() for doc in corpus]
         self._search_index = BM25Okapi(tokenized_corpus)
@@ -75,8 +71,8 @@ class ToolRegistry:
         self,
         query: str,
         top_k: int = 5,
-        role: Optional[str] = None,
-        bundle: Optional[str] = None,
+        role: str | None = None,
+        bundle: str | None = None,
     ) -> list[dict]:
         """
         Search tools by query using BM25.
@@ -90,9 +86,7 @@ class ToolRegistry:
 
         scores = self._search_index.get_scores(query_tokens)
 
-        top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[
-            :top_k
-        ]
+        top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
 
         results = []
         for idx in top_indices:
@@ -117,7 +111,7 @@ class ToolRegistry:
         return results
 
     def _get_all_tools(
-        self, top_k: int, role: Optional[str] = None, bundle: Optional[str] = None
+        self, top_k: int, role: str | None = None, bundle: str | None = None
     ) -> list[dict]:
         """Fallback: return all tools if search fails"""
         results = [
@@ -135,7 +129,7 @@ class ToolRegistry:
         return filtered[:top_k]
 
     def _filter_results(
-        self, results: list[dict], role: Optional[str] = None, bundle: Optional[str] = None
+        self, results: list[dict], role: str | None = None, bundle: str | None = None
     ) -> list[dict]:
         if not role and not bundle:
             return results
@@ -153,8 +147,8 @@ class ToolRegistry:
         self,
         query: str,
         top_k: int = 5,
-        role: Optional[str] = None,
-        bundle: Optional[str] = None,
+        role: str | None = None,
+        bundle: str | None = None,
     ) -> list[dict]:
         """Async version of search"""
         return await asyncio.to_thread(self.search, query, top_k, role, bundle)
@@ -163,7 +157,7 @@ class ToolRegistry:
         """Return total number of registered tools"""
         return len(self._tools)
 
-    def get_tool(self, name: str) -> Optional[MCPToolConfig]:
+    def get_tool(self, name: str) -> MCPToolConfig | None:
         """Get a tool by name"""
         return self._tools.get(name)
 

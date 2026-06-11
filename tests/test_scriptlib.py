@@ -1,7 +1,6 @@
 from pathlib import Path
 
-from braindrain import scriptlib
-from braindrain import workspace_primer
+from braindrain import scriptlib, workspace_primer
 
 
 def _isolate_scriptlib(monkeypatch, tmp_path: Path) -> Path:
@@ -23,13 +22,11 @@ def _make_workspace(tmp_path: Path) -> Path:
 
     (tmp_path / "config" / "marker.txt").write_text("marker-value\n", encoding="utf-8")
     (tmp_path / "tests" / "test_marker.py").write_text(
-        "from pathlib import Path\n"
-        "print(Path('config/marker.txt').read_text().strip())\n",
+        "from pathlib import Path\nprint(Path('config/marker.txt').read_text().strip())\n",
         encoding="utf-8",
     )
     (tmp_path / "scripts" / "echo_helper.sh").write_text(
-        "#!/usr/bin/env bash\n"
-        "echo helper-ok\n",
+        "#!/usr/bin/env bash\necho helper-ok\n",
         encoding="utf-8",
     )
     (tmp_path / ".cursor" / "script_probe.py").write_text(
@@ -62,7 +59,9 @@ def test_scriptlib_harvest_search_run_and_fork(tmp_path, monkeypatch):
     assert search["results"]
     assert search["decision"]["reuseDecision"] in {"reuse", "fork", "new"}
 
-    marker_entry = next(item for item in search["results"] if item["canonical_id"] == "tests--test_marker")
+    marker_entry = next(
+        item for item in search["results"] if item["canonical_id"] == "tests--test_marker"
+    )
     run_result = scriptlib.run(marker_entry["script_id"], project_path=str(workspace))
     assert run_result["ok"] is True
     assert "marker-value" in run_result["stdout"]
@@ -140,19 +139,22 @@ def test_scriptlib_pin_and_update_flow(tmp_path, monkeypatch):
         outcome="success",
         promote_status="validated",
     )
-    first_promotion = scriptlib.promote(helper["script_id"], project_path=str(publisher), approved=True)
+    first_promotion = scriptlib.promote(
+        helper["script_id"], project_path=str(publisher), approved=True
+    )
     assert first_promotion["revision"] == 1
 
     adopted = _make_workspace(tmp_path / "adopter")
     scriptlib.enable(str(adopted), harvest=False)
-    pinned = scriptlib.apply_update(helper["canonical_id"], project_path=str(adopted), target_revision=1, approved=True)
+    pinned = scriptlib.apply_update(
+        helper["canonical_id"], project_path=str(adopted), target_revision=1, approved=True
+    )
     assert pinned["ok"] is True
     assert pinned["action"] == "pinned"
     assert pinned["pin"]["revision"] == 1
 
     (publisher / "scripts" / "echo_helper.sh").write_text(
-        "#!/usr/bin/env bash\n"
-        "echo helper-ok-v2\n",
+        "#!/usr/bin/env bash\necho helper-ok-v2\n",
         encoding="utf-8",
     )
     scriptlib.harvest_workspace(str(publisher))
@@ -163,7 +165,9 @@ def test_scriptlib_pin_and_update_flow(tmp_path, monkeypatch):
         outcome="success",
         promote_status="validated",
     )
-    second_promotion = scriptlib.promote(helper_v2["script_id"], project_path=str(publisher), approved=True)
+    second_promotion = scriptlib.promote(
+        helper_v2["script_id"], project_path=str(publisher), approved=True
+    )
     assert second_promotion["revision"] == 2
 
     updates = scriptlib.list_updates(project_path=str(adopted))
@@ -171,11 +175,15 @@ def test_scriptlib_pin_and_update_flow(tmp_path, monkeypatch):
     assert len(updates["updates"]) == 1
     assert updates["updates"][0]["update_available"] is True
 
-    blocked = scriptlib.apply_update(helper["canonical_id"], project_path=str(adopted), approved=False)
+    blocked = scriptlib.apply_update(
+        helper["canonical_id"], project_path=str(adopted), approved=False
+    )
     assert blocked["ok"] is False
     assert blocked["approval_required"] is True
 
-    updated = scriptlib.apply_update(helper["canonical_id"], project_path=str(adopted), approved=True)
+    updated = scriptlib.apply_update(
+        helper["canonical_id"], project_path=str(adopted), approved=True
+    )
     assert updated["ok"] is True
     assert updated["action"] == "updated"
     assert updated["pin"]["revision"] == 2
@@ -206,12 +214,10 @@ def test_scriptlib_maintenance_and_ignore_persistence(tmp_path, monkeypatch):
 
 def test_librarian_templates_require_reuse_decision():
     project_root = Path(__file__).parent.parent
-    skill = (project_root / "config/templates/cursor-skills/scriptlib-librarian/SKILL.md").read_text(
-        encoding="utf-8"
-    )
-    agent = (project_root / "config/templates/agents/librarian.md").read_text(
-        encoding="utf-8"
-    )
+    skill = (
+        project_root / "config/templates/cursor-skills/scriptlib-librarian/SKILL.md"
+    ).read_text(encoding="utf-8")
+    agent = (project_root / "config/templates/agents/librarian.md").read_text(encoding="utf-8")
     cursor_agent_path = project_root / "config/templates/cursor-subagents/librarian.md"
 
     assert "reuseDecision" in skill

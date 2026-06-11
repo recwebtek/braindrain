@@ -15,7 +15,7 @@ import json
 import os
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from braindrain.config import Config
 from braindrain.mcp_stdio_client import StdioMCPClient
@@ -40,10 +40,10 @@ class StepResult:
     finished_at: str
     output: Any
     routed: bool
-    route_handle: Optional[str] = None
-    route_preview: Optional[str] = None
-    route_suggested_queries: Optional[list[str]] = None
-    error: Optional[str] = None
+    route_handle: str | None = None
+    route_preview: str | None = None
+    route_suggested_queries: list[str] | None = None
+    error: str | None = None
 
 
 def _estimate_tokens(text: str) -> int:
@@ -216,7 +216,9 @@ def _step_tool_name(step: Any) -> str:
     return step_name.split(".")[0] if "." in step_name else step_name
 
 
-def should_run_workflow_step(*, step: Any, workflow, args: dict[str, Any]) -> tuple[bool, str | None]:
+def should_run_workflow_step(
+    *, step: Any, workflow, args: dict[str, Any]
+) -> tuple[bool, str | None]:
     """
     Gate optional workflow steps (distiller for large repos, heavy map when budget is low).
     """
@@ -249,12 +251,16 @@ def should_run_workflow_step(*, step: Any, workflow, args: dict[str, Any]) -> tu
 
 
 class WorkflowEngine:
-    def __init__(self, *, config: Config, telemetry: TelemetrySession, context_mode_client_getter) -> None:
+    def __init__(
+        self, *, config: Config, telemetry: TelemetrySession, context_mode_client_getter
+    ) -> None:
         self._config = config
         self._telemetry = telemetry
         self._get_context_mode_client = context_mode_client_getter
 
-    async def _maybe_route(self, *, tool_name: str, step: str, output_obj: Any, intent: str) -> tuple[bool, dict[str, Any]]:
+    async def _maybe_route(
+        self, *, tool_name: str, step: str, output_obj: Any, intent: str
+    ) -> tuple[bool, dict[str, Any]]:
         """
         Route large outputs through context-mode, returning a small envelope.
         """
@@ -281,7 +287,9 @@ class WorkflowEngine:
 {text}
 ```
 """
-        index_result = await client.index_markdown(content_md=md, source=f"workflow:{intent}", intent=intent)
+        index_result = await client.index_markdown(
+            content_md=md, source=f"workflow:{intent}", intent=intent
+        )
         handle = f"{intent}:{tool_name}:{step}:{datetime.now().strftime('%Y%m%d%H%M%S')}"
         suggested_queries = [
             f"{intent} {tool_name} {step}",
@@ -298,7 +306,10 @@ class WorkflowEngine:
     async def run(self, *, name: str, args: dict[str, Any]) -> dict[str, Any]:
         wf = self._config.get_workflow(name)
         if not wf:
-            return {"error": f"Workflow '{name}' not found", "available": [w.name for w in self._config.workflows]}
+            return {
+                "error": f"Workflow '{name}' not found",
+                "available": [w.name for w in self._config.workflows],
+            }
 
         steps_out: list[StepResult] = []
 
@@ -405,7 +416,9 @@ class WorkflowEngine:
             "steps": [json.loads(_safe_json_dumps(s.__dict__)) for s in steps_out],
         }
 
-        sandbox_summary = _summarize_in_sandbox(payload=raw_payload, max_chars=min(8000, wf.token_budget * 4))
+        sandbox_summary = _summarize_in_sandbox(
+            payload=raw_payload, max_chars=min(8000, wf.token_budget * 4)
+        )
 
         # Telemetry attribution: raw vs returned (estimated)
         raw_text = _safe_json_dumps(raw_payload)
@@ -421,14 +434,23 @@ class WorkflowEngine:
         return {
             "workflow": name,
             "token_budget": wf.token_budget,
-            "sandbox": {"enabled": True, "mode": sandbox_summary.get("mode"), "bytes_in": sandbox_summary.get("bytes_in")},
-            "result": json.loads(sandbox_summary["summary"]) if sandbox_summary.get("summary", "").startswith("{") else sandbox_summary,
+            "sandbox": {
+                "enabled": True,
+                "mode": sandbox_summary.get("mode"),
+                "bytes_in": sandbox_summary.get("bytes_in"),
+            },
+            "result": json.loads(sandbox_summary["summary"])
+            if sandbox_summary.get("summary", "").startswith("{")
+            else sandbox_summary,
         }
 
     def plan(self, *, name: str, args: dict[str, Any]) -> dict[str, Any]:
         wf = self._config.get_workflow(name)
         if not wf:
-            return {"error": f"Workflow '{name}' not found", "available": [w.name for w in self._config.workflows]}
+            return {
+                "error": f"Workflow '{name}' not found",
+                "available": [w.name for w in self._config.workflows],
+            }
 
         md = f"""# Workflow plan: `{name}`
 
@@ -456,4 +478,3 @@ class WorkflowEngine:
             "plan_markdown": md,
             "plan_before_run": wf.plan_before_run,
         }
-

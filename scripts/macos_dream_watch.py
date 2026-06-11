@@ -34,7 +34,14 @@ def main() -> int:
     sys.stdout.write("\n")
 
     status = result.get("status", "")
-    if status in {"ran", "disabled", "skipped_not_idle", "skipped_cooldown", "skipped_active_session", "skipped_lock_held"}:
+    if status in {
+        "ran",
+        "disabled",
+        "skipped_not_idle",
+        "skipped_cooldown",
+        "skipped_active_session",
+        "skipped_lock_held",
+    }:
         return 0
     if status in {"unsupported_platform", "idle_probe_failed"}:
         return 0

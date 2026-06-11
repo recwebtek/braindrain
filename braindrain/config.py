@@ -1,18 +1,14 @@
 """Configuration loader with hot-reload support"""
 
-import os
-import yaml
+import importlib.util
 from pathlib import Path
-from typing import Optional, Any
+from typing import Any
 
-try:
-    from watchfiles import watch
+import yaml
 
-    WATCHFILES_AVAILABLE = True
-except ImportError:
-    WATCHFILES_AVAILABLE = False
+from braindrain.types import ConfigData, MCPToolConfig, ModelTier, WorkflowConfig
 
-from braindrain.types import ConfigData, MCPToolConfig, WorkflowConfig, ModelTier
+WATCHFILES_AVAILABLE = importlib.util.find_spec("watchfiles") is not None
 
 
 class Config:
@@ -20,7 +16,7 @@ class Config:
 
     def __init__(self, config_path: str | Path):
         self.config_path = Path(config_path)
-        self._config: Optional[ConfigData] = None
+        self._config: ConfigData | None = None
         self._callbacks: list[callable] = []
         self._load()
 
@@ -29,7 +25,7 @@ class Config:
         if not self.config_path.exists():
             raise FileNotFoundError(f"Config file not found: {self.config_path}")
 
-        with open(self.config_path, "r") as f:
+        with open(self.config_path) as f:
             raw = yaml.safe_load(f)
 
         self._config = self._parse_config(raw)
@@ -150,14 +146,14 @@ class Config:
         """Get list of workflow configs"""
         return self._config.workflows
 
-    def get_tool(self, name: str) -> Optional[MCPToolConfig]:
+    def get_tool(self, name: str) -> MCPToolConfig | None:
         """Get a specific tool config by name"""
         for tool in self._config.mcp_tools:
             if tool.name == name:
                 return tool
         return None
 
-    def get_workflow(self, name: str) -> Optional[WorkflowConfig]:
+    def get_workflow(self, name: str) -> WorkflowConfig | None:
         """Get a specific workflow config by name"""
         for wf in self._config.workflows:
             if wf.name == name:

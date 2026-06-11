@@ -12,9 +12,56 @@ dependencies = [
     "pyyaml",
     "pydantic",
     "rank-bm25",
+    "sentence-transformers",
     "anthropic",
     "python-dotenv",
+    "tomli-w>=1.0.0",
+    "llm-sandbox[mcp-docker]",
 ]
 
 [project.scripts]
 braindrain = "braindrain.server:main"
+
+[tool.setuptools.packages.find]
+include = ["braindrain*"]
+exclude = ["config*"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.9",
+    "pre-commit>=4.0",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["braindrain", "scripts", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP"]
+ignore = [
+    "E501",  # line length handled by formatter
+    "E741",  # legacy single-letter loop vars in env_probe (tighten later)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"braindrain/server.py" = ["E402"]  # sys.path bootstrap before imports
+"scripts/plan_build_guard.py" = ["E402"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["braindrain"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "local_only: tests that require machine-local services or host-specific setup",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]

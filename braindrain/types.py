@@ -1,7 +1,7 @@
 """Type definitions for BRAINDRAIN"""
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass
@@ -9,7 +9,7 @@ class MCPToolConfig:
     name: str
     command: str
     transport: str = "stdio"
-    url: Optional[str] = None
+    url: str | None = None
     hot: bool = False
     defer_loading: bool = True
     tags: list[str] = field(default_factory=list)
@@ -40,7 +40,7 @@ class WorkflowConfig:
 class ModelTier:
     provider: str
     model: str
-    api_base: Optional[str] = None
+    api_base: str | None = None
     use_for: list[str] = field(default_factory=list)
     cost_per_1k_input: float = 0.0
     cost_per_1k_output: float = 0.0

@@ -8,8 +8,7 @@ import os
 import re
 import urllib.error
 import urllib.request
-from typing import Any, Optional
-
+from typing import Any
 
 _TOKEN_RE = re.compile(r"[a-z0-9_]+", re.I)
 
@@ -18,7 +17,7 @@ def _tokenize(text: str) -> list[str]:
     return _TOKEN_RE.findall(text.lower())
 
 
-def _provider_by_name(embeddings_cfg: dict, name: str) -> Optional[dict]:
+def _provider_by_name(embeddings_cfg: dict, name: str) -> dict | None:
     for provider in embeddings_cfg.get("providers") or []:
         if isinstance(provider, dict) and provider.get("name") == name:
             return provider
@@ -27,11 +26,15 @@ def _provider_by_name(embeddings_cfg: dict, name: str) -> Optional[dict]:
 
 def _resolve_rerank_provider(embeddings_cfg: dict, tool_gate_cfg: dict) -> str:
     """Provider id: none | lexical | mixedbread | auto."""
-    explicit = str(
-        tool_gate_cfg.get("rerank_provider")
-        or embeddings_cfg.get("rerank", {}).get("provider")
-        or "none"
-    ).strip().lower()
+    explicit = (
+        str(
+            tool_gate_cfg.get("rerank_provider")
+            or embeddings_cfg.get("rerank", {}).get("provider")
+            or "none"
+        )
+        .strip()
+        .lower()
+    )
     return explicit or "none"
 
 
@@ -290,8 +293,10 @@ def maybe_rerank_search_results(
             tool_gate_cfg=tool_gate_cfg,
             top_k=top_k,
         )
-        rerank_out = cloud if cloud.get("ok") else lexical_rerank(
-            query=query, documents=documents, top_k=top_k
+        rerank_out = (
+            cloud
+            if cloud.get("ok")
+            else lexical_rerank(query=query, documents=documents, top_k=top_k)
         )
         if not cloud.get("ok"):
             meta["fallback"] = cloud.get("error")

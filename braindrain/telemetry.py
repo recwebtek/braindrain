@@ -13,7 +13,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional, Protocol
+from typing import Any, Protocol
 
 
 class TokenEstimator(Protocol):
@@ -49,7 +49,7 @@ def build_estimator(cost_tracking: dict[str, Any]) -> TokenEstimator:
     return CharDiv4Estimator()
 
 
-def estimate_tokens(text: str, estimator: Optional[TokenEstimator] = None) -> int:
+def estimate_tokens(text: str, estimator: TokenEstimator | None = None) -> int:
     est = estimator or CharDiv4Estimator()
     return est.estimate(text)
 
@@ -105,6 +105,7 @@ def _is_sensitive_dict_key(key: str) -> bool:
     if normalized in _SENSITIVE_KEY_EXACT:
         return True
     return any(normalized.endswith(suffix) for suffix in _SENSITIVE_KEY_SUFFIXES)
+
 
 # Machine-local debug reports (under .braindrain/, never committed).
 _DEBUG_LOG_DIR = Path(".braindrain") / "logs"
@@ -198,8 +199,10 @@ class TelemetrySession:
                 sanitized: dict[Any, Any] = {}
                 for key, value in val.items():
                     sanitized_key = _do_sanitize(key)
-                    if isinstance(key, str) and _is_sensitive_dict_key(key) and isinstance(
-                        value, str
+                    if (
+                        isinstance(key, str)
+                        and _is_sensitive_dict_key(key)
+                        and isinstance(value, str)
                     ):
                         sanitized[sanitized_key] = "[REDACTED_SECRET]"
                         continue
@@ -243,7 +246,7 @@ class TelemetrySession:
         input_rate = float(self.rates.get("input_per_1m", 1.25) or 1.25)
         return (saved_tokens / 1_000_000.0) * input_rate
 
-    def log_error(self, error: str, context: Optional[dict[str, Any]] = None) -> None:
+    def log_error(self, error: str, context: dict[str, Any] | None = None) -> None:
         """
         Log an error or bad response to a daily debug report.
         Sanitizes personal information (device paths, usernames).
@@ -304,7 +307,7 @@ class TelemetrySession:
         raw_text: str,
         actual_text: str,
         module: str = "output_sandbox",
-        meta: Optional[dict[str, Any]] = None,
+        meta: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         raw_tokens = self.estimator.estimate(raw_text)
         actual_tokens = self.estimator.estimate(actual_text)
@@ -356,9 +359,7 @@ class TelemetrySession:
                     "tokens_saved_est": agg.tokens_saved_est,
                     "saved_pct_est": round(agg.saved_pct_est, 2),
                 }
-                for name, agg in sorted(
-                    self.tools.items(), key=lambda kv: -kv[1].tokens_saved_est
-                )
+                for name, agg in sorted(self.tools.items(), key=lambda kv: -kv[1].tokens_saved_est)
             },
         }
 

@@ -9,10 +9,11 @@ import inspect
 import json
 import os
 import time
-from typing import Any, Callable, Optional, Protocol
+from collections.abc import Callable
+from typing import Any, Protocol
 
 from braindrain.observer import BrainEvent, ObserverStore
-from braindrain.telemetry import TelemetrySession, estimate_tokens
+from braindrain.telemetry import TelemetrySession
 
 
 class TokenEstimator(Protocol):
@@ -82,7 +83,7 @@ def _build_tool_call_event(
     actual_tokens: int,
     saved_tokens: int,
     duration_ms: int,
-    session_id: Optional[str],
+    session_id: str | None,
     hash_tool_args: bool,
     args_hash_payload: Any,
 ) -> BrainEvent:
@@ -122,9 +123,9 @@ def record_tool_io(
     raw_text: str,
     actual_text: str,
     module: str = "tool_gate",
-    meta: Optional[dict[str, Any]] = None,
-    observer_store: Optional[ObserverStore] = None,
-    session_id: Optional[str] = None,
+    meta: dict[str, Any] | None = None,
+    observer_store: ObserverStore | None = None,
+    session_id: str | None = None,
     duration_ms: int = 0,
     hash_tool_args: bool = True,
     args_hash_payload: Any = None,
@@ -172,9 +173,9 @@ async def record_tool_io_async(
     raw_text: str,
     actual_text: str,
     module: str = "tool_gate",
-    meta: Optional[dict[str, Any]] = None,
-    observer_store: Optional[ObserverStore] = None,
-    session_id: Optional[str] = None,
+    meta: dict[str, Any] | None = None,
+    observer_store: ObserverStore | None = None,
+    session_id: str | None = None,
     duration_ms: int = 0,
     hash_tool_args: bool = True,
     args_hash_payload: Any = None,
@@ -222,7 +223,7 @@ def make_observe_mcp_tool(
     observer_store_getter: Callable[[], ObserverStore],
     hash_args_enabled: Callable[[], bool],
     wrap_tool: Callable[[str], bool],
-    module_for: Optional[Callable[[str], str]] = None,
+    module_for: Callable[[str], str] | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Factory for the MCP tool observer decorator."""
 

@@ -8,16 +8,18 @@ import re
 import shutil
 import subprocess
 import tarfile
-import yaml
+from datetime import UTC, datetime
 from hashlib import sha256
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+
+import yaml
 
 from braindrain.scriptlib import (
     enabled_for_workspace,
-    render_guidance as render_scriptlib_guidance,
     seed_if_enabled,
+)
+from braindrain.scriptlib import (
+    render_guidance as render_scriptlib_guidance,
 )
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "config" / "templates" / "ruler"
@@ -101,7 +103,7 @@ _FS_AGENT_PROBES: list[tuple[str, str]] = [
 ]
 
 
-def detect_prime_agents(target_dir: Optional[Path] = None) -> tuple[list[str], str]:
+def detect_prime_agents(target_dir: Path | None = None) -> tuple[list[str], str]:
     """
     Return the best single Ruler agent id for this environment and a short
     label describing how it was chosen (for telemetry / debugging).
@@ -138,7 +140,8 @@ def detect_prime_agents(target_dir: Optional[Path] = None) -> tuple[list[str], s
 # Primed-state marker
 # ---------------------------------------------------------------------------
 
-def _read_primed_state(target_dir: Path) -> Optional[dict]:
+
+def _read_primed_state(target_dir: Path) -> dict | None:
     """Return deserialized primed.json or None if absent/corrupt."""
     marker = target_dir / _PRIMED_MARKER
     if not marker.exists():
@@ -164,7 +167,7 @@ def _write_primed_state(
     marker.write_text(
         json.dumps(
             {
-                "primed_at": datetime.now(tz=timezone.utc).isoformat(),
+                "primed_at": datetime.now(tz=UTC).isoformat(),
                 "agents": agents,
                 "bundle": bundle,
                 "bundle_version": bundle_version,
@@ -191,7 +194,7 @@ def _load_bundle_manifest(bundle: str) -> dict:
     return raw
 
 
-def _resolve_bundle_manifest(bundle: Optional[str]) -> dict:
+def _resolve_bundle_manifest(bundle: str | None) -> dict:
     bundle_name = (bundle or DEFAULT_BUNDLE).strip() or DEFAULT_BUNDLE
     return _load_bundle_manifest(bundle_name)
 
@@ -199,6 +202,7 @@ def _resolve_bundle_manifest(bundle: Optional[str]) -> dict:
 # ---------------------------------------------------------------------------
 # Legacy migration helper
 # ---------------------------------------------------------------------------
+
 
 def _migrate_devdocs(target_dir: Path) -> dict[str, str]:
     """
@@ -235,10 +239,11 @@ def _migrate_devdocs(target_dir: Path) -> dict[str, str]:
 # Template deployment
 # ---------------------------------------------------------------------------
 
+
 def _materialize_ruler_toml_text(
     launcher_path: str,
     *,
-    agents: Optional[list[str]],
+    agents: list[str] | None,
     all_agents: bool,
 ) -> str:
     """Build the ruler.toml body that should live on disk for this prime."""
@@ -254,7 +259,7 @@ def deploy_templates(
     launcher_path: str,
     *,
     sync_templates: bool = False,
-    agents: Optional[list[str]] = None,
+    agents: list[str] | None = None,
     all_agents: bool = False,
 ) -> dict[str, dict[str, str | bool]]:
     """
@@ -478,11 +483,7 @@ def _merge_subagent_deploy_results(
             continue
         a = str((merged[fname] or {}).get("action") or "")
         b = str((meta or {}).get("action") or "")
-        pick = (
-            a
-            if _SUBAGENT_ACTION_RANK.get(a, 0) >= _SUBAGENT_ACTION_RANK.get(b, 0)
-            else b
-        )
+        pick = a if _SUBAGENT_ACTION_RANK.get(a, 0) >= _SUBAGENT_ACTION_RANK.get(b, 0) else b
         ba = str((merged[fname] or {}).get("backup") or "")
         bb = str((meta or {}).get("backup") or "")
         backup = bb if pick == b and bb else ba
@@ -580,9 +581,7 @@ def deploy_cursor_hook_templates(
     shell_src = CURSOR_HOOK_TEMPLATES_DIR / "hooks"
     if shell_src.is_dir():
         for src in sorted(shell_src.glob("*.sh")):
-            entries.append(
-                (f"hooks/{src.name}", src, hooks_dir / src.name, True)
-            )
+            entries.append((f"hooks/{src.name}", src, hooks_dir / src.name, True))
 
     for rel, src, dst, executable in entries:
         if dry_run:
@@ -608,8 +607,6 @@ def deploy_cursor_hook_templates(
             written[rel] = {"action": "created", "backup": ""}
 
     return written
-
-
 
 
 def deploy_cursor_skill_templates(
@@ -1112,9 +1109,7 @@ def merge_project_rules_mdc(
     """
     intro = _project_rules_static_intro()
     fm = _project_rules_mdc_frontmatter()
-    managed = (
-        f"{_PROJECT_CONTEXT_START}\n{synthesized}\n{_PROJECT_CONTEXT_END}\n"
-    )
+    managed = f"{_PROJECT_CONTEXT_START}\n{synthesized}\n{_PROJECT_CONTEXT_END}\n"
 
     ex_raw = existing or ""
     if not ex_raw.strip():
@@ -1123,7 +1118,15 @@ def merge_project_rules_mdc(
     if _PROJECT_CONTEXT_START in ex_raw and _PROJECT_CONTEXT_END in ex_raw:
         before, _, rest = ex_raw.partition(_PROJECT_CONTEXT_START)
         _, _, after = rest.partition(_PROJECT_CONTEXT_END)
-        return before + _PROJECT_CONTEXT_START + "\n" + synthesized + "\n" + _PROJECT_CONTEXT_END + after
+        return (
+            before
+            + _PROJECT_CONTEXT_START
+            + "\n"
+            + synthesized
+            + "\n"
+            + _PROJECT_CONTEXT_END
+            + after
+        )
 
     if _PROJECT_RULES_LEGACY_START in ex_raw and _PROJECT_RULES_LEGACY_END in ex_raw:
         _, _, rest = ex_raw.partition(_PROJECT_RULES_LEGACY_START)
@@ -1132,6 +1135,7 @@ def merge_project_rules_mdc(
 
     sep = "\n\n"
     return ex_raw.rstrip() + sep + "## Project context (managed)\n\n" + managed
+
 
 # Appended to .gitignore by prime_workspace (Ruler’s own --gitignore is off by default).
 _GITIGNORE_PROTOCOL_BEGIN = "# BEGIN BRAINDRAIN GITIGNORE PROTOCOL"
@@ -1166,7 +1170,9 @@ def ensure_gitignore_braindrain_protocol(
     result: dict[str, str | bool] = {"ok": True, "path": str(gi)}
     if dry_run:
         exists = gi.is_file()
-        has_block = exists and _GITIGNORE_PROTOCOL_BEGIN in gi.read_text(encoding="utf-8", errors="ignore")
+        has_block = exists and _GITIGNORE_PROTOCOL_BEGIN in gi.read_text(
+            encoding="utf-8", errors="ignore"
+        )
         result["dry_run"] = True
         result["would_append"] = not has_block
         return result
@@ -1253,7 +1259,7 @@ def ensure_cursor_mcp_json_server_name(
 def _resolve_ide_snapshot_dirs(
     target_dir: Path,
     *,
-    apply_agents: Optional[list[str]],
+    apply_agents: list[str] | None,
     all_agents: bool,
 ) -> list[Path]:
     """Return IDE dotdirs that should be snapshot-protected for this prime run."""
@@ -1285,7 +1291,7 @@ def _resolve_ide_snapshot_dirs(
 def _prime_touched_paths(
     target_dir: Path,
     *,
-    apply_agents: Optional[list[str]],
+    apply_agents: list[str] | None,
     all_agents: bool,
 ) -> list[str]:
     touched = [
@@ -1332,7 +1338,7 @@ def _prune_old_snapshots(rollback_root: Path, *, keep: int = MAX_ROLLBACK_SNAPSH
 def create_prime_snapshot(
     target_dir: Path,
     *,
-    apply_agents: Optional[list[str]],
+    apply_agents: list[str] | None,
     all_agents: bool,
     dry_run: bool = False,
 ) -> dict[str, object]:
@@ -1428,7 +1434,9 @@ def _restore_cursor_agents_from_snapshot(
     agents_dir = target_dir / ".cursor" / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
     with tarfile.open(cursor_archive, "r:gz") as tf:
-        members = [m for m in tf.getmembers() if m.isfile() and m.name.startswith(".cursor/agents/")]
+        members = [
+            m for m in tf.getmembers() if m.isfile() and m.name.startswith(".cursor/agents/")
+        ]
         if not members:
             result["reason"] = "no_agents_in_archive"
             return result
@@ -1456,7 +1464,9 @@ def verify_prime_install(target_dir: Path, bundle_manifest: dict) -> dict:
     """Run a lightweight verification checklist after prime."""
     bundle_agents = bundle_manifest.get("agents") or []
     cursor_agents_dir = target_dir / ".cursor" / "agents"
-    template_count = len(list(AGENT_TEMPLATES_DIR.glob("*.md"))) if AGENT_TEMPLATES_DIR.exists() else 0
+    template_count = (
+        len(list(AGENT_TEMPLATES_DIR.glob("*.md"))) if AGENT_TEMPLATES_DIR.exists() else 0
+    )
     deployed_agent_files = (
         len(list(cursor_agents_dir.glob("*.md"))) if cursor_agents_dir.is_dir() else 0
     )
@@ -1519,7 +1529,11 @@ def compact_prime_result_for_mcp(
     """
     if not isinstance(result, dict):
         return result
-    out = {k: v for k, v in result.items() if k not in ("templates", "ruler", "memory_init", "cursor_hooks")}
+    out = {
+        k: v
+        for k, v in result.items()
+        if k not in ("templates", "ruler", "memory_init", "cursor_hooks")
+    }
     tpl = result.get("templates") or {}
     deployed = tpl.get("deployed") or {}
     out["templates"] = {
@@ -1528,8 +1542,7 @@ def compact_prime_result_for_mcp(
         "updated_files": tpl.get("updated_files"),
         "skipped_existing": tpl.get("skipped_existing"),
         "deployed_summary": [
-            {"file": k, "action": (v or {}).get("action")}
-            for k, v in deployed.items()
+            {"file": k, "action": (v or {}).get("action")} for k, v in deployed.items()
         ],
     }
     r = dict(result.get("ruler") or {})
@@ -1648,9 +1661,13 @@ def sync_cursor_rules_from_ruler(
 
     if existing_pr is None:
         result["project-rules.mdc"] = "created"
-    elif _PROJECT_CONTEXT_START in (existing_pr or "") and _PROJECT_CONTEXT_END in (existing_pr or ""):
+    elif _PROJECT_CONTEXT_START in (existing_pr or "") and _PROJECT_CONTEXT_END in (
+        existing_pr or ""
+    ):
         result["project-rules.mdc"] = "updated_managed_region"
-    elif _PROJECT_RULES_LEGACY_START in (existing_pr or "") and _PROJECT_RULES_LEGACY_END in (existing_pr or ""):
+    elif _PROJECT_RULES_LEGACY_START in (existing_pr or "") and _PROJECT_RULES_LEGACY_END in (
+        existing_pr or ""
+    ):
         result["project-rules.mdc"] = "migrated_legacy_markers"
     else:
         result["project-rules.mdc"] = "updated"
@@ -1662,10 +1679,11 @@ def sync_cursor_rules_from_ruler(
 # Ruler apply
 # ---------------------------------------------------------------------------
 
+
 def run_ruler_apply(
     target_dir: Path,
     *,
-    agents: Optional[list[str]] = None,
+    agents: list[str] | None = None,
     dry_run: bool = False,
     local_only: bool = True,
     ruler_updates_gitignore: bool = False,
@@ -1697,8 +1715,7 @@ def run_ruler_apply(
 
     ensure_node_path_in_environ()
     npx = resolve_executable("npx") or "npx"
-    cmd = [npx, "--yes", "@intellectronica/ruler", "apply",
-           "--config", str(ruler_config)]
+    cmd = [npx, "--yes", "@intellectronica/ruler", "apply", "--config", str(ruler_config)]
     if dry_run:
         cmd.append("--dry-run")
     if local_only:
@@ -1744,6 +1761,7 @@ def run_ruler_apply(
 # ---------------------------------------------------------------------------
 # Project memory initialization
 # ---------------------------------------------------------------------------
+
 
 def initialize_project_memory(target_dir: Path, dry_run: bool = False) -> dict:
     """
@@ -1859,9 +1877,10 @@ Machine-local operational notes for this workspace. Do not commit `.braindrain/`
 # Prime (full flow)
 # ---------------------------------------------------------------------------
 
+
 def prime(
     path: str = ".",
-    agents: Optional[list[str]] = None,
+    agents: list[str] | None = None,
     dry_run: bool = False,
     sync_templates: bool = False,
     sync_subagents: bool = False,
@@ -1869,7 +1888,7 @@ def prime(
     local_only: bool = True,
     patch_user_cursor_mcp: bool = False,
     bundle: str = DEFAULT_BUNDLE,
-    codex_agent_targets: Optional[list[str]] = None,
+    codex_agent_targets: list[str] | None = None,
 ) -> dict:
     """
     Full prime flow: deploy templates + subagents + Cursor hook templates + run ruler apply
@@ -1906,8 +1925,8 @@ def prime(
     is_first_prime = prior_state is None
 
     # Resolve agents according to priority order.
-    apply_agents: Optional[list[str]]
-    detect_method: Optional[str] = None
+    apply_agents: list[str] | None
+    detect_method: str | None = None
     if agents is not None:
         apply_agents = agents
         detect_method = "explicit:agents_parameter"
@@ -1917,12 +1936,8 @@ def prime(
     else:
         apply_agents, detect_method = detect_prime_agents(target_dir)
 
-    cursor_in_scope = bool(
-        all_agents or apply_agents is None or "cursor" in (apply_agents or [])
-    )
-    codex_in_scope = bool(
-        all_agents or apply_agents is None or "codex" in (apply_agents or [])
-    )
+    cursor_in_scope = bool(all_agents or apply_agents is None or "cursor" in (apply_agents or []))
+    codex_in_scope = bool(all_agents or apply_agents is None or "codex" in (apply_agents or []))
 
     launcher_path = _get_launcher_path()
     try:
@@ -1963,9 +1978,7 @@ def prime(
             if cursor_in_scope
             else {}
         )
-        bundle_skill_ids = [
-            str(s) for s in (bundle_manifest.get("skills") or []) if str(s).strip()
-        ]
+        bundle_skill_ids = [str(s) for s in (bundle_manifest.get("skills") or []) if str(s).strip()]
         cursor_skill_results = (
             deploy_cursor_skill_templates(
                 target_dir,
@@ -1994,12 +2007,17 @@ def prime(
     else:
         template_results = {
             str(f.relative_to(TEMPLATES_DIR)): {"action": "dry_run", "backup": ""}
-            for f in TEMPLATES_DIR.rglob("*") if f.is_file()
+            for f in TEMPLATES_DIR.rglob("*")
+            if f.is_file()
         }
-        subagent_results = {
-            str(f.name): {"action": "dry_run", "backup": ""}
-            for f in AGENT_TEMPLATES_DIR.glob("*.md")
-        } if (cursor_in_scope or codex_in_scope) and AGENT_TEMPLATES_DIR.exists() else {}
+        subagent_results = (
+            {
+                str(f.name): {"action": "dry_run", "backup": ""}
+                for f in AGENT_TEMPLATES_DIR.glob("*.md")
+            }
+            if (cursor_in_scope or codex_in_scope) and AGENT_TEMPLATES_DIR.exists()
+            else {}
+        )
         cursor_hook_results = (
             deploy_cursor_hook_templates(
                 target_dir,
@@ -2009,9 +2027,7 @@ def prime(
             if cursor_in_scope
             else {}
         )
-        bundle_skill_ids = [
-            str(s) for s in (bundle_manifest.get("skills") or []) if str(s).strip()
-        ]
+        bundle_skill_ids = [str(s) for s in (bundle_manifest.get("skills") or []) if str(s).strip()]
         cursor_skill_results = (
             deploy_cursor_skill_templates(
                 target_dir,
@@ -2052,20 +2068,14 @@ def prime(
             cursor_agents_guard = _restore_cursor_agents_from_snapshot(target_dir, snapshot)
 
     # Step 3: .gitignore protocol (braindrain-owned; Ruler --gitignore off by default).
-    gitignore_protocol = ensure_gitignore_braindrain_protocol(
-        target_dir, dry_run=dry_run
-    )
+    gitignore_protocol = ensure_gitignore_braindrain_protocol(target_dir, dry_run=dry_run)
 
     # Step 4: Cursor project rules from .ruler/RULES.md (Ruler may omit or differ).
     cursor_rules: dict[str, str | bool] = {"skipped": True}
     if cursor_in_scope and not dry_run:
-        cursor_rules = sync_cursor_rules_from_ruler(
-            target_dir, dry_run=False, include_cursor=True
-        )
+        cursor_rules = sync_cursor_rules_from_ruler(target_dir, dry_run=False, include_cursor=True)
     elif cursor_in_scope and dry_run:
-        cursor_rules = sync_cursor_rules_from_ruler(
-            target_dir, dry_run=True, include_cursor=True
-        )
+        cursor_rules = sync_cursor_rules_from_ruler(target_dir, dry_run=True, include_cursor=True)
 
     # Step 5: Cursor MCP JSON — serverName for adapter (fixes MCP Allowlist warning).
     cursor_mcp_json: dict[str, str | bool | dict] = {"skipped": True}
@@ -2124,10 +2134,14 @@ def prime(
             braindrain_hub_root=str(_hub_root_from_launcher()),
         )
 
-    verification = verify_prime_install(target_dir, bundle_manifest) if not dry_run else {
-        "ok": True,
-        "checks": {"dry_run": True},
-    }
+    verification = (
+        verify_prime_install(target_dir, bundle_manifest)
+        if not dry_run
+        else {
+            "ok": True,
+            "checks": {"dry_run": True},
+        }
+    )
     ok = bool(ruler_result["ok"] and memory_init.get("ok", False) and verification.get("ok", False))
 
     return {
@@ -2206,9 +2220,7 @@ def prime(
                 1 for v in cursor_skill_results.values() if v.get("action") == "updated"
             ),
             "skipped_existing": sum(
-                1
-                for v in cursor_skill_results.values()
-                if v.get("action") == "skipped_existing"
+                1 for v in cursor_skill_results.values() if v.get("action") == "skipped_existing"
             ),
         },
         "operational_scripts": {

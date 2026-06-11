@@ -10,7 +10,9 @@ import pytest
 from braindrain.wiki_brain import WikiBrain
 
 
-def _wiki_brain(tmp_path: Path, *, half_life_days: float = 90.0, prune_threshold: float = 0.05) -> WikiBrain:
+def _wiki_brain(
+    tmp_path: Path, *, half_life_days: float = 90.0, prune_threshold: float = 0.05
+) -> WikiBrain:
     return WikiBrain(
         tmp_path / "brain.db",
         decay_half_life_days=half_life_days,
@@ -37,7 +39,14 @@ def _insert_active(
                 created_at, updated_at, last_accessed, access_count
             ) VALUES (?, 'fact', ?, ?, 'test', 'general', 'active', ?, 0.5, '[]', '[]', '{}', ?, ?, 0, 0)
             """,
-            (record_id, f"title-{record_id}", f"content-{record_id}", importance, anchor, updated_at),
+            (
+                record_id,
+                f"title-{record_id}",
+                f"content-{record_id}",
+                importance,
+                anchor,
+                updated_at,
+            ),
         )
 
 

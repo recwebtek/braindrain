@@ -6,7 +6,6 @@ from pathlib import Path
 
 from braindrain.config import Config
 from braindrain.mcp_catalog import collect_catalog_rows, export_mcp_catalog, render_tool_markdown
-from braindrain.types import MCPToolConfig
 
 
 def _sample_config(tmp_path: Path) -> Config:

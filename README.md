@@ -1,7 +1,9 @@
 # braindrain
 
+[![CI](https://github.com/recwebtek/braindrain/actions/workflows/ci.yml/badge.svg)](https://github.com/recwebtek/braindrain/actions/workflows/ci.yml)
+
 **Version:** V1.0.3  
-**Last Updated:** 2026-04-16
+**Last Updated:** 2026-06-11
 
 An MCP server that keeps AI agents lean. It stops context windows bloating with redundant tool definitions, large raw outputs, and repeated environment discovery — and gives agents the right information at the right time instead.
 
@@ -233,11 +235,34 @@ cd braindrain
 
 ### Manual setup (if you prefer)
 
+**With [uv](https://docs.astral.sh/uv/) (recommended for contributors — lockfile-backed):**
+
+```bash
+uv sync --group dev
+uv run pytest
+```
+
+**Classic pip (still supported):**
+
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
 ```
+
+### Contributing (lint + hooks)
+
+```bash
+uv sync --group dev
+uv run ruff check
+uv run ruff format --check
+uv run pytest -m "not local_only"
+
+pre-commit install   # once per clone
+pre-commit run --all-files
+```
+
+CI runs the same checks on Python 3.11 / 3.12 / 3.14 across Ubuntu and macOS. Tests marked `local_only` (machine-local services, launchd, LM Studio, etc.) are skipped in CI.
 
 ### Installer options
 
