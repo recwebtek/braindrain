@@ -16,7 +16,9 @@ def _make_test_config(tmp_path: Path) -> Config:
 
     # Minimal YAML override via string replacement (keeps test self-contained)
     # Replace repo_mapper command line
-    base = base.replace("command: \"python3 /usr/local/bin/repomap_server.py\"", f"command: \"{fake_cmd}\"")
+    base = base.replace(
+        'command: "python3 /usr/local/bin/repomap_server.py"', f'command: "{fake_cmd}"'
+    )
     # Replace jcodemunch command line
     base = base.replace('command: "uvx jcodemunch-mcp==1.108.53"', f'command: "{fake_cmd}"')
 
@@ -41,9 +43,13 @@ def test_run_workflow_executes_steps_and_routes(tmp_path):
 
     # No context-mode configured in this test config; routing should fall back to preview+error
     os.environ["BRAINDRAIN_DISABLE_DOCKER_SANDBOX"] = "1"
-    engine = WorkflowEngine(config=cfg, telemetry=telemetry, context_mode_client_getter=lambda: None)
+    engine = WorkflowEngine(
+        config=cfg, telemetry=telemetry, context_mode_client_getter=lambda: None
+    )
 
-    result = asyncio.run(engine.run(name="ingest_codebase", args={"path": "./src", "mode": "new_project"}))
+    result = asyncio.run(
+        engine.run(name="ingest_codebase", args={"path": "./src", "mode": "new_project"})
+    )
     assert result["workflow"] == "ingest_codebase"
     assert "result" in result
 
@@ -56,4 +62,3 @@ def test_run_workflow_executes_steps_and_routes(tmp_path):
     index_step = summary["steps"][-1]
     assert index_step["step"] == "jcodemunch.index"
     assert index_step["routed"] is True
-
