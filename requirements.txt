@@ -1,23 +1,10 @@
-# BRAINDRAIN Dependencies
-
-# Core
-fastmcp>=3.1.1
-pyyaml
-pydantic
-
-# Search
-rank-bm25
-sentence-transformers
-
-# Anthropic SDK (for defer_loading support)
-anthropic
-
-# Utilities
-python-dotenv
-tomli-w>=1.0.0
-
-# Workflow engine sandbox (Phase 3)
-llm-sandbox[mcp-docker]
-
-# Test
-pytest
+# Compat shim — canonical dependency manifest is pyproject.toml + uv.lock.
+#
+# Prefer (contributors):  uv sync --group dev
+# Prefer (end users):     ./install.sh
+# Classic pip fallback:   pip install -r requirements.txt
+#
+# Optional extras (not installed by default):
+#   pip install -e ".[embeddings]"   # in-process sentence-transformers (pulls torch)
+#
+-e .

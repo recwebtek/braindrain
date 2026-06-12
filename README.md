@@ -226,7 +226,7 @@ cd braindrain
 - Validates Python **3.11-3.14** (fails fast on unsupported runtimes like 3.15+)
 - Creates `.env.dev` early (before dependency steps) so env setup never gets skipped
 - Installs full dependencies with visible progress, retries, and install logging to `.braindrain/install-logs/`
-- On Linux CPU-only machines, prefers PyTorch CPU wheels to avoid accidental CUDA downloads
+- Default install is **torch-free** (`pyproject.toml` is canonical); optional in-process embeddings via `pip install -e ".[embeddings]"`
 - Runs fresh `get_env_context()` probe and regenerates `AGENTS.md`
 - Creates `.braindrain/` (gitignored, machine-local — never committed)
 - Runs an interactive MCP target checklist (Cursor, Windsurf, Zed, OpenCode, Antigravity, Codex, etc.), previews diffs, creates backups, then applies on confirmation
@@ -247,8 +247,12 @@ uv run pytest
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-pip install -r requirements.txt
+pip install -e .
+# optional in-process embeddings (pulls torch):
+pip install -e ".[embeddings]"
 ```
+
+`requirements.txt` is a thin compat shim (`-e .`) pointing at `pyproject.toml`.
 
 ### Contributing (lint + hooks)
 
@@ -429,7 +433,7 @@ Each device runs its own environment probe and gets its own `env_context` — co
 To pull updates:
 
 ```bash
-cd braindrain && git pull && .venv/bin/pip install -r requirements.txt
+cd braindrain && git pull && (command -v uv >/dev/null && uv sync || .venv/bin/pip install -e .)
 ```
 
 ---

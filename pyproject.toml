@@ -8,15 +8,18 @@ version = "1.0.3"
 description = "Intelligent MCP Context Hub"
 requires-python = ">=3.11"
 dependencies = [
-    "fastmcp>=3.1.1",
-    "pyyaml",
-    "pydantic",
-    "rank-bm25",
-    "sentence-transformers",
-    "anthropic",
-    "python-dotenv",
+    "fastmcp>=3.4.2",
+    "pyyaml>=6.0",
+    "pydantic>=2.0",
+    "rank-bm25>=0.2.2",
+    "python-dotenv>=1.0.0",
     "tomli-w>=1.0.0",
-    "llm-sandbox[mcp-docker]",
+    "llm-sandbox[mcp-docker]>=0.3.39",
+]
+
+[project.optional-dependencies]
+embeddings = [
+    "sentence-transformers>=5.0.0",
 ]
 
 [project.scripts]

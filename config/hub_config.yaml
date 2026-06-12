@@ -44,7 +44,7 @@ mcp_tools:
   # HOT: context-mode (always loaded - intercepts all outputs)
   - name: context_mode
     transport: stdio
-    command: "npx -y context-mode"
+    command: "npx -y context-mode@1.0.162"
     hot: true
     defer_loading: false
     tags: [sandbox, output, compression, fts5, session]
@@ -83,7 +83,7 @@ mcp_tools:
 
   - name: jcodemunch
     transport: stdio
-    command: "uvx jcodemunch-mcp"
+    command: "uvx jcodemunch-mcp==1.108.53"
     defer_loading: true
     tags: [codebase, symbols, retrieval, search, function, class]
     description: "Surgical symbol-level retrieval. Respects token_budget."
@@ -95,7 +95,7 @@ mcp_tools:
   # GitHub MCP (deferred - 26K tokens if loaded)
   - name: github
     transport: stdio
-    command: "npx @modelcontextprotocol/server-github"
+    command: "npx -y @modelcontextprotocol/server-github@2025.4.8"
     defer_loading: true
     hot_tools: [create_pull_request]
     tags: [git, pr, issues, commits, review]
@@ -109,7 +109,7 @@ mcp_tools:
   # DEFERRED: codebase distillation (high ROI for big repos)
   - name: ai_distiller
     transport: stdio
-    command: "npx -y @janreges/ai-distiller-mcp"
+    command: "npx -y @janreges/ai-distiller-mcp@1.4.0"
     defer_loading: true
     tags: [codebase, distillation, api, compression, tree-sitter]
     description: "Distills codebases to public APIs/types (90%+ context reduction on large repos)."
@@ -118,7 +118,7 @@ mcp_tools:
   # DEFERRED: token-efficient editing (line-range reads + safe patching)
   - name: text_editor
     transport: stdio
-    command: "uvx mcp-text-editor"
+    command: "uvx mcp-text-editor==1.0.2"
     defer_loading: true
     tags: [editing, line-oriented, patching, token-efficient]
     description: "Line-oriented text editing server to avoid full-file reads."
