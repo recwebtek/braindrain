@@ -492,8 +492,17 @@ def _normalize_entry(entry: dict[str, Any], *, root: Path) -> dict[str, Any]:
 
 
 def _normalize_index_entry(
-    entry: dict[str, Any], *, root: Path, project_path: str | None = None
+    entry: dict[str, Any],
+    *,
+    root: Path,
+    project_path: str | None = None,
+    settings: dict[str, Any] | None = None,
+    global_index: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    """
+    Normalize an index entry with scope, revision, and shared pin data.
+    Optimized: if settings and global_index are provided, avoid redundant disk reads and crawls.
+    """
     scope = entry.get("scope") or _scope_for_root(root)
     promotion_state = entry.get("promotion_state") or (
         "promoted" if scope == "shared" else "harvested"
@@ -513,11 +522,18 @@ def _normalize_index_entry(
     payload.setdefault("shared_pin", None)
     payload.setdefault("update_availability", None)
     if project_path:
-        pin = _project_pin(project_path, payload.get("canonical_id", ""))
+        if settings is not None:
+            pin = dict((settings.get("shared_pins") or {}).get(payload.get("canonical_id", "")) or {})
+        else:
+            pin = _project_pin(project_path, payload.get("canonical_id", ""))
+
         if pin and scope == "shared":
             payload["shared_pin"] = pin
             latest = _latest_shared_entry(
-                global_scriptlib_root(), payload["canonical_id"], channel=pin.get("channel")
+                global_scriptlib_root(),
+                payload["canonical_id"],
+                channel=pin.get("channel"),
+                index_data=global_index,
             )
             payload["update_availability"] = bool(
                 latest and latest.get("revision", 0) > int(pin.get("revision", 0))
@@ -737,13 +753,29 @@ def _find_entry_in_root(
 
 
 def _latest_shared_entry(
-    root: Path, canonical_id: str, *, channel: str | None = None
+    root: Path,
+    canonical_id: str,
+    *,
+    channel: str | None = None,
+    index_data: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
-    entries = [
-        entry
-        for entry in _iter_entry_metadata(root)
-        if entry.get("canonical_id") == canonical_id and entry.get("scope") == "shared"
-    ]
+    """
+    Find the latest shared entry for a canonical_id.
+    Optimized: if index_data is provided, search the index instead of crawling the filesystem.
+    """
+    if index_data is not None:
+        entries = [
+            entry
+            for entry in index_data
+            if entry.get("canonical_id") == canonical_id and entry.get("scope") == "shared"
+        ]
+    else:
+        entries = [
+            entry
+            for entry in _iter_entry_metadata(root)
+            if entry.get("canonical_id") == canonical_id and entry.get("scope") == "shared"
+        ]
+
     if channel:
         entries = [entry for entry in entries if entry.get("channel") == channel]
     if not entries:
@@ -1003,16 +1035,32 @@ def search(
     effect_tier: str | None = None,
     limit: int = 5,
 ) -> dict[str, Any]:
+    """
+    Search project and global scriptlib entries.
+    Optimized to hoist redundant disk I/O and directory crawls out of the search loop.
+    """
     roots = _active_roots(project_path)
     if not roots:
         return {"ok": False, "error": "scriptlib is disabled for both project and global scopes"}
 
+    # Optimization: Hoist redundant disk I/O and crawls out of the loop
+    project_root_path = project_scriptlib_root(project_path)
+    settings = read_settings(project_root_path)
+    global_index_root = global_scriptlib_root()
+    global_index_data = _load_index(global_index_root).get("entries", []) if is_enabled(global_index_root) else []
+
     tokens = [tok for tok in re.split(r"[^a-z0-9]+", query.lower()) if tok]
     ranked: list[dict[str, Any]] = []
-    project_root = str(project_scriptlib_root(project_path))
+    project_root_str = str(project_root_path)
     for root in roots:
         for entry in _load_index(root).get("entries") or []:
-            entry = _normalize_index_entry(entry, root=root, project_path=project_path)
+            entry = _normalize_index_entry(
+                entry,
+                root=root,
+                project_path=project_path,
+                settings=settings,
+                global_index=global_index_data,
+            )
             if capability and capability not in (entry.get("tags") or []):
                 continue
             if language and entry.get("language") != language:
@@ -1023,7 +1071,7 @@ def search(
                 continue
             haystack = entry.get("search_text", "")
             match_score = sum(haystack.count(token) for token in tokens) if tokens else 1
-            overlay_bonus = 15.0 if str(root) == project_root else 0.0
+            overlay_bonus = 15.0 if str(root) == project_root_str else 0.0
             pin_bonus = 10.0 if entry.get("shared_pin") else 0.0
             score = (
                 (match_score * 5.0)
