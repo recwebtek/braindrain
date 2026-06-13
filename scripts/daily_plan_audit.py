@@ -26,9 +26,10 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
-from plan_branch_utils import (  # noqa: E402
+from plan_branch_utils import (  # noqa: E402, I001
     FRONTMATTER_BLOCK_RE,
     FRONTMATTER_KV_RE,
+    _inject_frontmatter_key,
     _strip_quotes,
     parse_frontmatter_body as _parse_frontmatter_body,
     parse_frontmatter_children_spec,
@@ -38,7 +39,6 @@ from plan_branch_utils import (  # noqa: E402
     remove_frontmatter_scalar as _remove_frontmatter_scalar,
     set_frontmatter_key as _set_frontmatter_key,
     set_frontmatter_yaml_block as _set_frontmatter_yaml_block,
-    _inject_frontmatter_key,
 )
 
 SCHEMA_VERSION = "1.2"
@@ -2427,7 +2427,7 @@ def _first_active_item_excerpt(card: PlanCard) -> str:
     return ""
 
 
-def meta_plan_missing_child_files(card: "PlanCard", repo_root: Path) -> list[str]:
+def meta_plan_missing_child_files(card: PlanCard, repo_root: Path) -> list[str]:
     """Return child plan filenames from ``children_spec`` that are not on disk."""
     plan_path = repo_root / card.source
     if not plan_path.is_file():

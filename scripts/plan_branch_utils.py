@@ -26,7 +26,6 @@ def _strip_quotes(value: str) -> str:
 def parse_frontmatter_body(body: str) -> dict[str, object]:
     """Parse one YAML frontmatter body (between ``---`` fences)."""
     out: dict[str, object] = {}
-    current_key: str | None = None
     current_list: list[str] | None = None
 
     for raw in body.splitlines():
@@ -46,7 +45,6 @@ def parse_frontmatter_body(body: str) -> dict[str, object]:
         if not value:
             current_list = []
             out[key] = current_list
-            current_key = key
             continue
         if value.startswith("[") and value.endswith("]"):
             inner = value[1:-1].strip()
@@ -56,10 +54,8 @@ def parse_frontmatter_body(body: str) -> dict[str, object]:
                 if p.strip()
             ]
             out[key] = parts
-            current_key = key
             continue
         out[key] = _strip_quotes(value)
-        current_key = key
     return out
 
 

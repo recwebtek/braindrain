@@ -14,7 +14,7 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
-from plan_branch_utils import (
+from plan_branch_utils import (  # noqa: E402
     FRONTMATTER_BLOCK_RE,
     meta_slug_from_path,
     parse_frontmatter_children_spec,
@@ -22,7 +22,6 @@ from plan_branch_utils import (
     parse_plan_frontmatter,
     plan_body_after_frontmatter,
     render_frontmatter_todos,
-    set_frontmatter_key,
     set_frontmatter_yaml_block,
     slice_body_section,
 )
