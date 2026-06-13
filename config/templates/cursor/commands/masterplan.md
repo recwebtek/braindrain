@@ -2,6 +2,20 @@
 
 Run planning close-out for this workspace: refresh `.braindrain/plan-reports/` from local `*.plan.md` files (never committed).
 
+## When to run
+
+| Trigger | Required? | Notes |
+|---------|-----------|-------|
+| After creating/editing any `.cursor/plans/*.plan.md` | Yes | `--trigger "post-planning-session"` |
+| After `/metaplan-closeout` (phase 1 + 2) | Yes | Refreshes build queue with new children |
+| Before Plan Build when `branch:` missing/stale | Yes | `--trigger "pre-build"` or full `/masterplan` |
+| After marking plan todos complete / merge-ready | Yes | Check `READY_TO_ARCHIVE` in `next-actions.md` |
+| Before archive write-back | Human confirm | `--apply-disposition-sync --apply-archive` |
+| End of `/brainlog` if plans touched | Yes | Cross-linked in `brainlog.md` |
+| Daily stop hook | Optional | Rate-limited; do not rely on alone |
+
+**Distinction:** `/masterplan` = index/reconcile reports (read-only by default). `/metaplan-closeout` = split meta → child plan files + master links (mutates plans).
+
 ## Prerequisites
 
 - Workspace primed with `bundle="cursor-orchestration"` so `scripts/daily_plan_audit.py` and `.cursor/agents/daily-plan-auditor.md` are deployed from the hub (re-prime after hub upgrades — script hash auto-upgrades on prime).

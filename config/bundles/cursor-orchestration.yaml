@@ -15,6 +15,7 @@ mcp_servers:
 operational_scripts:
   - daily_plan_audit
   - plan_build_guard
+  - plan_meta_closeout
 # Subagents: all config/templates/agents/*.md (incl. daily-plan-auditor) deploy to .cursor/agents/ on prime.
 capability_profiles:
   default_role: coordinator

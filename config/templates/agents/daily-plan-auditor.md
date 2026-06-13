@@ -101,7 +101,14 @@ goalposts:
   - "Ship X without changing Y"
 ```
 
-**Build queue** excludes `merge-ready`, `implemented`, and `archived` plans from the numbered sequence (they still appear in disposition tables).
+**Build queue** excludes `merge-ready`, `implemented`, `archived`, and **`meta`** plans from the numbered sequence (they still appear in disposition tables).
+
+### Meta plans (`disposition: meta`)
+
+- Umbrella plans for multi-feature work — **not buildable** (`plan_build_guard` → `meta_plan_no_build`).
+- Require `children_spec:` in frontmatter; meta todos use `split-<id>`.
+- Next-actions verb **`SPLIT`** when child files are missing or `split-*` todos are pending.
+- Close out with `/metaplan-closeout` (not `/masterplan` alone) to create child plan files.
 
 Surfaces after each run:
 

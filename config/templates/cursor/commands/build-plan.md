@@ -12,6 +12,12 @@ python3 scripts/plan_build_guard.py --plan PATH/TO/plan.plan.md --repo-root .
 
 This creates the plan branch if missing and checks out that branch (stash + switch when the tree is dirty).
 
+If the guard JSON reports `"error": "meta_plan_no_build"`:
+
+- **Stop** — do not implement on the meta plan
+- Run `/metaplan-closeout` on the meta plan, finish phase 2 body extraction if needed
+- Run `/masterplan`, then Plan Build on a **child** plan file
+
 ## Then implement
 
 Proceed with Plan Build / implementation only after the guard JSON reports `"ok": true`.
