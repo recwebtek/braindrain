@@ -112,11 +112,7 @@ def _sync_meta_todos(text: str, specs: list[dict[str, str]], plans_dir: Path) ->
     todos = parse_frontmatter_todos(text)
     if not todos:
         return text
-    created_ids = {
-        spec["id"]
-        for spec in specs
-        if (plans_dir / str(spec.get("file"))).is_file()
-    }
+    created_ids = {spec["id"] for spec in specs if (plans_dir / str(spec.get("file"))).is_file()}
     updated = False
     for todo in todos:
         todo_id = todo.get("id", "")
@@ -142,7 +138,7 @@ def _append_master_active_links(
     text = master_path.read_text(encoding="utf-8", errors="ignore")
     fm_match = FRONTMATTER_BLOCK_RE.match(text)
     fm_block = fm_match.group(0) if fm_match else ""
-    body = text[len(fm_block):]
+    body = text[len(fm_block) :]
     existing_targets: set[str] = set()
     for _label, target in re.findall(r"\[([^\]]*)\]\(([^)]+)\)", body):
         existing_targets.add(target.split("/")[-1])
@@ -205,15 +201,11 @@ def run_closeout(
         child_titles[child_file] = str(spec.get("name") or spec.get("id") or child_file)
         if child_path.is_file() and not force:
             skipped.append(child_file)
-            content, complete = _child_skeleton(
-                spec, parent_slug=parent_slug, meta_body=meta_body
-            )
+            content, complete = _child_skeleton(spec, parent_slug=parent_slug, meta_body=meta_body)
             if not complete:
                 body_pending.append(child_file)
             continue
-        content, complete = _child_skeleton(
-            spec, parent_slug=parent_slug, meta_body=meta_body
-        )
+        content, complete = _child_skeleton(spec, parent_slug=parent_slug, meta_body=meta_body)
         if not complete:
             body_pending.append(child_file)
         if dry_run:
@@ -234,9 +226,7 @@ def run_closeout(
 
         master_path = plans_dir / "_master.plan.md"
         if master_path.is_file():
-            _append_master_active_links(
-                master_path, children_list, child_titles=child_titles
-            )
+            _append_master_active_links(master_path, children_list, child_titles=child_titles)
 
         exec_order = fm.get("execution_order")
         if isinstance(exec_order, list) and exec_order and master_path.is_file():

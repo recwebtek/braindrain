@@ -7,12 +7,8 @@ import subprocess
 from pathlib import Path
 
 # Frontmatter parser regexes (no PyYAML dependency — keeps scripts standalone).
-FRONTMATTER_BLOCK_RE = re.compile(
-    r"\A---\s*\n(.*?)\n---\s*(?:\n|$)", re.DOTALL
-)
-FRONTMATTER_KV_RE = re.compile(
-    r"^([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.*?)\s*$"
-)
+FRONTMATTER_BLOCK_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|$)", re.DOTALL)
+FRONTMATTER_KV_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.*?)\s*$")
 
 CHILDREN_SPEC_ITEM_KEYS = ("id", "file", "name", "branch", "section", "branches")
 
@@ -48,11 +44,7 @@ def parse_frontmatter_body(body: str) -> dict[str, object]:
             continue
         if value.startswith("[") and value.endswith("]"):
             inner = value[1:-1].strip()
-            parts = [
-                _strip_quotes(p.strip())
-                for p in inner.split(",")
-                if p.strip()
-            ]
+            parts = [_strip_quotes(p.strip()) for p in inner.split(",") if p.strip()]
             out[key] = parts
             continue
         out[key] = _strip_quotes(value)
@@ -92,7 +84,7 @@ def _inject_frontmatter_key(text: str, key: str, value: str) -> str:
             return text
         updated_body = fm_body.rstrip() + f"\n{key}: {value}\n"
         new_block = f"---\n{updated_body}---\n"
-        return new_block + text[len(fm_block):]
+        return new_block + text[len(fm_block) :]
     return f"---\n{key}: {value}\n---\n\n{text}"
 
 
@@ -109,7 +101,7 @@ def set_frontmatter_key(text: str, key: str, value: str) -> str:
     else:
         updated_body = fm_body.rstrip() + f"\n{key}: {value}\n"
     new_block = f"---\n{updated_body}---\n"
-    return new_block + text[len(fm_block):]
+    return new_block + text[len(fm_block) :]
 
 
 def remove_frontmatter_scalar(fm_body: str, key: str) -> str:
@@ -147,13 +139,13 @@ def set_frontmatter_yaml_block(text: str, key: str, block_lines: list[str]) -> s
     else:
         fm_body = block_text
     new_block = f"---\n{fm_body}---\n"
-    return new_block + text[len(match.group(0)):]
+    return new_block + text[len(match.group(0)) :]
 
 
 def plan_body_after_frontmatter(text: str) -> str:
     match = FRONTMATTER_BLOCK_RE.match(text)
     if match:
-        return text[match.end():]
+        return text[match.end() :]
     return text
 
 

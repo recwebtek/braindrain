@@ -84,11 +84,7 @@ def test_explicit_branch_honored(tmp_git_repo: Path) -> None:
     branch = "features/genai-ldmode-option-toggle"
     plan = tmp_git_repo / ".cursor" / "plans" / "genai.plan.md"
     plan.write_text(
-        f"---\n"
-        f"disposition: active\n"
-        f"branch: {branch}\n"
-        f"---\n\n"
-        f"# GenAI toggle\n",
+        f"---\ndisposition: active\nbranch: {branch}\n---\n\n# GenAI toggle\n",
         encoding="utf-8",
     )
     out = _run_guard(tmp_git_repo, ".cursor/plans/genai.plan.md", create_only=True)
@@ -103,11 +99,7 @@ def test_resolve_plan_branch_prefers_frontmatter(tmp_git_repo: Path) -> None:
     spec.loader.exec_module(mod)
     plan = tmp_git_repo / ".cursor" / "plans" / "named.plan.md"
     plan.write_text(
-        "---\n"
-        "disposition: active\n"
-        "branch: feature/custom-branch\n"
-        "---\n\n"
-        "# Custom Branch Plan\n",
+        "---\ndisposition: active\nbranch: feature/custom-branch\n---\n\n# Custom Branch Plan\n",
         encoding="utf-8",
     )
     assert mod.resolve_plan_branch(plan) == "feature/custom-branch"

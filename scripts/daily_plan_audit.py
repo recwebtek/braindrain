@@ -137,6 +137,7 @@ DISPOSITION_VERB = {
     "backlogged": "BACKLOG",
 }
 
+
 def resolve_model_name(model_name: str | None = None) -> str:
     if model_name and model_name.strip():
         return model_name.strip()
@@ -2476,9 +2477,7 @@ def detect_actions(
             missing = meta_plan_missing_child_files(card, repo_root)
             plan_path = repo_root / card.source
             todos = (
-                parse_frontmatter_todos(
-                    plan_path.read_text(encoding="utf-8", errors="ignore")
-                )
+                parse_frontmatter_todos(plan_path.read_text(encoding="utf-8", errors="ignore"))
                 if plan_path.is_file()
                 else []
             )
@@ -2906,9 +2905,7 @@ _DISPOSITION_ORDER = (
 )
 
 # Plans excluded from the overseer "build queue" / implementation sequence.
-_BUILD_QUEUE_EXCLUDED_DISPOSITIONS = frozenset(
-    {"implemented", "archived", "merge-ready", "meta"}
-)
+_BUILD_QUEUE_EXCLUDED_DISPOSITIONS = frozenset({"implemented", "archived", "merge-ready", "meta"})
 
 
 def render_plan_cards(
