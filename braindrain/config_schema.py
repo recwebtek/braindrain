@@ -353,9 +353,7 @@ class HubConfigSchema(_ExtraIgnoreModel):
 
 def _collect_unknown_top_level_keys(raw: dict[str, Any]) -> list[str]:
     unknown = sorted(
-        key
-        for key in raw
-        if key not in KNOWN_TOP_LEVEL_KEYS and key not in EXCLUDED_TOP_LEVEL_KEYS
+        key for key in raw if key not in KNOWN_TOP_LEVEL_KEYS and key not in EXCLUDED_TOP_LEVEL_KEYS
     )
     return unknown
 
@@ -381,10 +379,7 @@ def validate_hub_config(raw: dict[str, Any] | None) -> tuple[HubConfigSchema, li
         logger.warning(message)
 
     if "livingdash" in raw:
-        message = (
-            "Top-level 'livingdash' block is ignored "
-            "(superseded by MCP Apps dashboard plan)"
-        )
+        message = "Top-level 'livingdash' block is ignored (superseded by MCP Apps dashboard plan)"
         warnings.append(message)
         logger.warning(message)
 
