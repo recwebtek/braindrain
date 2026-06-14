@@ -48,3 +48,17 @@ def test_build_consolidation_plan_uses_nested_weights():
     engine = _engine({"weights": {"frequency": 0.99}})
     plan = engine._build_consolidation_plan(mode="full", episodes=[], recent_events=[])
     assert plan.scoring_weights["frequency"] == 0.99
+
+
+def test_nested_weights_win_over_legacy_dotted_keys():
+    """Regression: nested weights dict must beat legacy weights.<key> dotted keys."""
+    engine = _engine(
+        {
+            "weights": {"frequency": 0.5, "relevance": 0.2},
+            "weights.frequency": 0.99,
+            "weights.relevance": 0.88,
+        }
+    )
+    weights = engine._scoring_weights()
+    assert weights["frequency"] == 0.5
+    assert weights["relevance"] == 0.2
