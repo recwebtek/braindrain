@@ -78,6 +78,8 @@ class _ExtraIgnoreModel(BaseModel):
 
 
 class ToolGateModule(_ExtraIgnoreModel):
+    model_config = ConfigDict(extra="allow")
+
     enabled: bool = True
     rerank_on_search: bool = False
     rerank_provider: str = "none"
