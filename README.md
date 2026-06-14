@@ -443,6 +443,13 @@ cd braindrain && git pull && (command -v uv >/dev/null && uv sync || .venv/bin/p
 
 Main config: `config/hub_config.yaml`
 
+**Startup validation (Pydantic v2)** — `braindrain/config_schema.py` validates the YAML at server load via `braindrain/config.py`:
+
+- Invalid types or missing required fields (e.g. `mcp_tools[].name`) **fail fast** with dotted field paths.
+- Unknown **top-level** keys log a warning and are ignored (forward-compat).
+- The legacy `livingdash:` block is **not** validated; if present it is ignored (superseded by MCP Apps dashboard work).
+- Restart the braindrain MCP server after config or schema changes.
+
 **Memory stack (L0–L3)** — explicit sections in `hub_config.yaml` (defaults match server fallbacks):
 
 - `observer` — episodic tool-call ring buffer (`~/.braindrain/events.db`)

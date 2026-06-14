@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from fastmcp import FastMCP
 
 from braindrain.config import Config
+from braindrain.config_schema import ConfigValidationError
 from braindrain.context_mode_client import ContextModeClient, MCPProtocolError
 from braindrain.dream import DreamEngine
 from braindrain.env_probe import get_env_context as _probe_env_context
@@ -118,7 +119,17 @@ for _env_name in (".env.dev", ".env.prod", ".env"):
 
 ensure_node_path_in_environ()
 
-config = Config(CONFIG_PATH)
+try:
+    config = Config(CONFIG_PATH)
+except FileNotFoundError as exc:
+    print(f"[braindrain] {exc}", file=sys.stderr)
+    raise SystemExit(1) from exc
+except ConfigValidationError as exc:
+    print(f"[braindrain] Invalid hub_config.yaml: {exc}", file=sys.stderr)
+    raise SystemExit(1) from exc
+except Exception as exc:
+    print(f"[braindrain] Failed to load config from {CONFIG_PATH}: {exc}", file=sys.stderr)
+    raise SystemExit(1) from exc
 registry = ToolRegistry(config.data)
 telemetry = telemetry_from_config(config.get("cost_tracking", {}) or {})
 
@@ -1797,7 +1808,8 @@ def main():
 
     if transport == "stdio":
         # No banner: FastMCP prints ASCII + update notice to stderr; Cursor MCP logs stderr as [error].
-        mcp.run(transport="stdio", show_banner=False)
+        # log_level=warning avoids the "Starting MCP server" INFO line being surfaced as an MCP error.
+        mcp.run(transport="stdio", show_banner=False, log_level="warning")
     else:
         mcp.run(transport="sse", port=int(os.environ.get("PORT", "8000")), show_banner=False)
 
