@@ -88,6 +88,7 @@ from braindrain.session_compaction import (
 from braindrain.telemetry import telemetry_from_config
 from braindrain.token_checkpoints import append_checkpoint as _append_token_checkpoint
 from braindrain.tools import memory as memory_tools
+from braindrain.tools import output_models
 from braindrain.tools import scriptlib as scriptlib_tools
 from braindrain.tools import tokens as token_tools
 from braindrain.tools import workflows as workflow_tools
@@ -413,8 +414,21 @@ def _should_route_output(text: str, *, min_chars: int, force_inline: bool) -> bo
 
 session_stats = {"note": "deprecated: use telemetry snapshot"}  # kept for backwards compatibility
 
+OUTPUT_SCHEMAS = {
+    "search_tools": output_models.schema_for(output_models.SearchToolsOutput),
+    "get_token_dashboard": output_models.schema_for(output_models.TokenDashboardOutput),
+    "get_env_context": output_models.schema_for(output_models.EnvContextOutput),
+    "get_session_summary": output_models.schema_for(output_models.SessionSummaryOutput),
+    "list_workflows": output_models.schema_for(output_models.ListWorkflowsOutput),
+    "get_token_stats": output_models.schema_for(output_models.TokenStatsOutput),
+    "search_index": output_models.schema_for(output_models.SearchIndexOutput),
+    "route_output": output_models.schema_for(output_models.RouteOutputModel),
+    "get_available_tools": output_models.schema_for(output_models.GetAvailableToolsOutput),
+    "prime_workspace": output_models.schema_for(output_models.PrimeWorkspaceOutput),
+}
 
-@mcp.tool()
+
+@mcp.tool(output_schema=OUTPUT_SCHEMAS["search_tools"])
 async def search_tools(query: str = "", top_k: int = 5) -> dict:
     """
     Search available tools by capability. Call this FIRST before any task.
@@ -427,7 +441,7 @@ async def search_tools(query: str = "", top_k: int = 5) -> dict:
     return await token_tools.search_tools_impl(registry, query=query, top_k=top_k)
 
 
-@mcp.tool()
+@mcp.tool(output_schema=OUTPUT_SCHEMAS["list_workflows"])
 async def list_workflows() -> dict:
     """
     List available workflows with descriptions and token budgets.
@@ -477,7 +491,7 @@ async def plan_workflow(name: str, args: dict = None) -> dict:
     )
 
 
-@mcp.tool()
+@mcp.tool(output_schema=OUTPUT_SCHEMAS["get_token_stats"])
 async def get_token_stats() -> dict:
     """
     Session cost tracking: tokens saved, cost avoided, cache hits by module.
@@ -486,7 +500,7 @@ async def get_token_stats() -> dict:
     return await token_tools.get_token_stats_impl(registry=registry, telemetry=telemetry, config=config)
 
 
-@mcp.tool()
+@mcp.tool(output_schema=OUTPUT_SCHEMAS["get_available_tools"])
 async def get_available_tools() -> dict:
     """
     Get list of all available MCP tools with their loading status.
@@ -495,7 +509,7 @@ async def get_available_tools() -> dict:
     return await token_tools.get_available_tools_impl(config=config)
 
 
-@mcp.tool()
+@mcp.tool(output_schema=OUTPUT_SCHEMAS["route_output"])
 async def route_output(
     text: str,
     source: str = "braindrain",
@@ -528,7 +542,7 @@ async def route_output(
     )
 
 
-@mcp.tool()
+@mcp.tool(output_schema=OUTPUT_SCHEMAS["search_index"])
 async def search_index(query: str, limit: int = 5, rerank: bool | None = None) -> dict:
     """
     Convenience wrapper for context-mode ctx_search.
@@ -550,7 +564,7 @@ async def search_index(query: str, limit: int = 5, rerank: bool | None = None) -
     )
 
 
-@mcp.tool()
+@mcp.tool(output_schema=OUTPUT_SCHEMAS["get_token_dashboard"])
 async def get_token_dashboard() -> dict:
     """Compact token-savings dashboard (estimated tokens, Claude-focused)."""
     return telemetry.snapshot()
@@ -790,7 +804,7 @@ async def touch_session(
     )
 
 
-@mcp.tool()
+@mcp.tool(output_schema=OUTPUT_SCHEMAS["get_session_summary"])
 def get_session_summary(session_id: str | None = None) -> dict:
     """
     Return latest session summary or a specific session.
@@ -1029,7 +1043,7 @@ async def ping() -> dict:
     return await workspace_tools.ping_impl(config)
 
 
-@mcp.tool()
+@mcp.tool(output_schema=OUTPUT_SCHEMAS["get_env_context"])
 def get_env_context(refresh: bool = False) -> dict:
     """
     Return a cached snapshot of the host OS environment: identity, network,
@@ -1392,7 +1406,7 @@ def scriptlib_refresh_index(
     )
 
 
-@mcp.tool()
+@mcp.tool(output_schema=OUTPUT_SCHEMAS["prime_workspace"])
 async def prime_workspace(
     path: str = ".",
     agents: list[str] | None = None,
