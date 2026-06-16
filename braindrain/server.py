@@ -1512,7 +1512,15 @@ def main():
         # log_level=warning avoids the "Starting MCP server" INFO line being surfaced as an MCP error.
         mcp.run(transport="stdio", show_banner=False, log_level="warning")
     else:
-        mcp.run(transport="sse", port=int(os.environ.get("PORT", "8000")), show_banner=False)
+        # Remote mode uses Streamable HTTP with stateless semantics (SSE removed).
+        # FastMCP handles protocol header validation for MCP requests, including
+        # MCP-Protocol-Version negotiation and required MCP method/name headers.
+        mcp.run(
+            transport="streamable-http",
+            port=int(os.environ.get("PORT", "8000")),
+            show_banner=False,
+            stateless_http=True,
+        )
 
 
 if __name__ == "__main__":

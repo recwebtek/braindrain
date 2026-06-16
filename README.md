@@ -327,6 +327,12 @@ Replace `/path/to/braindrain` with the absolute path to your clone. `install.sh`
 
 If the MCP log shows `**[MCP Allowlist] No serverName provided for adapter**`, either add `**"serverName": "braindrain"**` on that server object in `**~/.cursor/mcp.json**`, or run `**prime_workspace(..., patch_user_cursor_mcp=true)**` once so braindrain patches the global file. `install.sh` / `configure_mcp.py` and project-level `prime_workspace` set this for generated configs; UI-created entries may omit it.
 
+### Remote transport (non-stdio)
+
+- braindrain now uses FastMCP `streamable-http` for remote mode with `stateless_http=true`.
+- Legacy SSE remote transport has been removed.
+- MCP protocol headers (including `MCP-Protocol-Version`) are validated by FastMCP's Streamable HTTP transport stack.
+
 **Large `prime_workspace` results:** the MCP tool defaults to `**compact_mcp_response=true`** (smaller JSON) to avoid **ClosedResourceError** / connection closed while returning the tool result. Set `**compact_mcp_response=false`** only if you need the full `templates.deployed` map and untruncated Ruler logs.
 
 #### Multi-agent loop (Cursor)
@@ -530,8 +536,10 @@ python3 scripts/daily_plan_audit.py \
 ```
 braindrain/
 ├── braindrain/
-│   ├── server.py               # FastMCP server — all MCP tools registered here
-│   ├── workspace_primer.py     # prime_workspace: Ruler templates, subagents, Cursor hooks
+│   ├── server.py               # FastMCP server entrypoint + tool registration
+│   ├── tools/                  # Tool-domain implementations (tokens, memory, workflows, etc.)
+│   ├── primer/                 # Workspace primer submodules (detect/deploy/apply/memory/prime)
+│   ├── workspace_primer.py     # compatibility exports for legacy primer imports
 │   ├── env_probe.py            # OS fingerprint probe, synthesis, and cache
 │   ├── config.py               # YAML config loader
 │   ├── context_mode_client.py  # context-mode stdio client (output routing)
