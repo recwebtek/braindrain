@@ -101,7 +101,17 @@ Set `embeddings.default_provider` (default: `lmstudio_local`). Programmatic help
 - `ingest_codebase` — runs `ai_distiller` first only when repo file count exceeds `options.distiller_when_file_count_gt` (default 200).
 - `refactor_prep_token_light` — `filescope` + `text_editor` before `repo_mapper` / `jcodemunch` when `token_budget` &lt; 2000.
 
-**Benchmark harness** (machine-local): `python3 .scriptlib/benchmark_token_savings_brain_mcp_hub_v1.py --repo-root .` → writes `.braindrain/plan-reports/token-benchmark-*.md`.
+**Benchmark harness** (machine-local report under `.braindrain/plan-reports/`):
+
+```bash
+# Tracked CLI (also mirrored in .scriptlib/ when scriptlib is enabled)
+python3 scripts/benchmark_token_savings_brain_mcp_hub_v1.py --repo-root . --fail-on-regression
+
+# Pytest marker (used by nightly token-benchmark workflow)
+uv run pytest -m token_benchmark
+```
+
+Replays deterministic fixtures in `tests/fixtures/token_benchmark/` through **hub-on** paths (`route_output`, `search_tools`, cached `get_env_context`, session compaction) vs a **hub-off** naive full-context baseline. Metrics align with `braindrain/telemetry.py` (`estimated_raw_tokens` / `actual_context_tokens` / `saved_tokens`). Minimum savings floor defaults to **25%** (`TOKEN_BENCHMARK_MIN_SAVINGS_PCT`). Nightly CI uploads the markdown report as a workflow artifact (not committed).
 
 
 ### Workflows
@@ -267,7 +277,7 @@ pre-commit install   # once per clone
 pre-commit run --all-files
 ```
 
-CI runs the same checks on Python 3.11 / 3.12 / 3.14 across Ubuntu and macOS. Tests marked `local_only` (machine-local services, launchd, LM Studio, etc.) are skipped in CI.
+CI runs the same checks on Python 3.11 / 3.12 / 3.14 across Ubuntu and macOS. Tests marked `local_only` (machine-local services, launchd, LM Studio, etc.) are skipped in CI. The **token benchmark** suite (`pytest -m token_benchmark`) runs on a separate nightly schedule via `.github/workflows/token-benchmark.yml`.
 
 ### Installer options
 
