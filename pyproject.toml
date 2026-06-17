@@ -64,6 +64,7 @@ line-ending = "auto"
 testpaths = ["tests"]
 markers = [
     "local_only: tests that require machine-local services or host-specific setup",
+    "token_benchmark: hub-on vs hub-off token savings replay benchmarks",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning",
