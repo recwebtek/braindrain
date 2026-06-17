@@ -918,15 +918,19 @@ def record_observer_event(
         metadata: Optional extra structured fields for the event.
         timestamp: Unix timestamp; default is current time.
     """
+    # Ensure sensitive information in metadata/paths is redacted before persistence
+    sanitized_metadata = telemetry.sanitize(metadata or {})
+    sanitized_files = telemetry.sanitize(files_touched or [])
+
     event = BrainEvent(
         timestamp=float(timestamp or datetime.now().timestamp()),
         session_id=session_id,
         event_type=event_type,
         tool_name=tool_name,
-        files_touched=files_touched or [],
+        files_touched=sanitized_files,
         token_cost=token_cost,
         duration_ms=duration_ms,
-        metadata=metadata or {},
+        metadata=sanitized_metadata,
     )
     return _get_observer_store().record_event(event)
 
@@ -973,13 +977,19 @@ async def touch_session(
         index_in_context_mode: When True and end_session, index package via context-mode.
     """
     store = _get_session_store()
+    # Ensure sensitive information in decisions/errors/paths is redacted
+    sanitized_key_decision = telemetry.sanitize(key_decision)
+    sanitized_error = telemetry.sanitize(error)
+    sanitized_todos = telemetry.sanitize(open_todos)
+    sanitized_files = telemetry.sanitize(files_modified)
+
     summary = store.touch_session(
         session_id=session_id,
         tool_name=tool_name,
-        files_modified=files_modified,
-        key_decision=key_decision,
-        error=error,
-        open_todos=open_todos,
+        files_modified=sanitized_files,
+        key_decision=sanitized_key_decision,
+        error=sanitized_error,
+        open_todos=sanitized_todos,
         token_delta=token_delta,
         timestamp=timestamp,
     )
@@ -1085,18 +1095,19 @@ def record_episode(
         tags: Optional categorization tags.
         episode_id: Optional explicit id; auto-generated when empty.
     """
+    # Ensure sensitive information is redacted before persistence
     episode = EpisodeRecord(
         episode_id=episode_id,
         session_id=session_id,
-        problem=problem,
-        context=context,
-        action=action,
-        outcome=outcome,
-        evidence_refs=evidence_refs or [],
-        local_critique=local_critique,
-        global_reflection=global_reflection,
+        problem=telemetry.sanitize(problem),
+        context=telemetry.sanitize(context),
+        action=telemetry.sanitize(action),
+        outcome=telemetry.sanitize(outcome),
+        evidence_refs=telemetry.sanitize(evidence_refs or []),
+        local_critique=telemetry.sanitize(local_critique),
+        global_reflection=telemetry.sanitize(global_reflection),
         confidence=confidence,
-        tags=tags or [],
+        tags=telemetry.sanitize(tags or []),
     )
     return _get_session_store().record_episode(episode)
 
@@ -1142,17 +1153,18 @@ def store_fact(
         evidence_refs: Optional file paths, URLs, or index handles supporting the record.
         metadata: Optional extra structured fields stored with the record.
     """
+    # Ensure sensitive information in content/metadata is redacted
     return _get_wiki_brain().store_fact(
-        content=content,
+        content=telemetry.sanitize(content),
         record_class=record_class,
-        title=title,
+        title=telemetry.sanitize(title) if title else None,
         source=source,
         category=category,
         importance=importance,
         confidence=confidence,
-        tags=tags or [],
-        evidence_refs=evidence_refs or [],
-        metadata=metadata or {},
+        tags=telemetry.sanitize(tags or []),
+        evidence_refs=telemetry.sanitize(evidence_refs or []),
+        metadata=telemetry.sanitize(metadata or {}),
     )
 
 
@@ -1228,11 +1240,14 @@ def record_memory_metric(
         source: Provenance label. Default: manual.
         metadata: Optional extra fields attached to the metric event.
     """
+    # Ensure sensitive information in metadata is redacted before persistence
+    sanitized_metadata = telemetry.sanitize(metadata or {})
+
     return _get_wiki_brain().record_metric(
         metric_type,
         value=value,
         source=source,
-        metadata=metadata or {},
+        metadata=sanitized_metadata,
     )
 
 
@@ -1500,12 +1515,15 @@ def scriptlib_record_result(
         promote_status: Optional promotion status update.
         validate_native_copy: When True, validate the native copy artifact. Default: False.
     """
+    # Ensure sensitive information in notes is redacted
+    sanitized_notes = telemetry.sanitize(notes)
+
     return _scriptlib_record_result(
         script_id,
         project_path=path,
         variant=variant,
         outcome=outcome,
-        notes=notes,
+        notes=sanitized_notes,
         duration_ms=duration_ms,
         promote_status=promote_status,
         validate_native_copy=validate_native_copy,
