@@ -1,4 +1,12 @@
-"""Regression: every native MCP tool parameter must expose a schema description."""
+"""Regression: every native MCP tool parameter must expose a schema description.
+
+Snapshot gate: ``tests/fixtures/mcp_tool_schemas_snapshot.json`` locks native tool
+schemas (name, description, parameters, outputSchema). After intentional schema
+changes, regenerate and commit the fixture with the code change:
+
+    uv run python scripts/regenerate_mcp_tool_schemas_snapshot.py
+    uv run pytest tests/test_mcp_tool_schemas.py -q
+"""
 
 from __future__ import annotations
 

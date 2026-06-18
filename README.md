@@ -279,6 +279,13 @@ pre-commit run --all-files
 
 CI runs the same checks on Python 3.11 / 3.12 / 3.14 across Ubuntu and macOS. Tests marked `local_only` (machine-local services, launchd, LM Studio, etc.) are skipped in CI. The **token benchmark** suite (`pytest -m token_benchmark`) runs on a separate nightly schedule via `.github/workflows/token-benchmark.yml`.
 
+**MCP tool schema snapshot** (`tests/test_mcp_tool_schemas.py`): CI fails if native tool definitions drift from `tests/fixtures/mcp_tool_schemas_snapshot.json`. After you intentionally change `@mcp.tool()` signatures, descriptions, or `outputSchema`, regenerate and commit the fixture:
+
+```bash
+uv run python scripts/regenerate_mcp_tool_schemas_snapshot.py
+uv run pytest tests/test_mcp_tool_schemas.py -q
+```
+
 ### Installer options
 
 ```bash
