@@ -926,7 +926,7 @@ def record_observer_event(
         files_touched=files_touched or [],
         token_cost=token_cost,
         duration_ms=duration_ms,
-        metadata=metadata or {},
+        metadata=telemetry.sanitize(metadata or {}),
     )
     return _get_observer_store().record_event(event)
 
@@ -977,9 +977,9 @@ async def touch_session(
         session_id=session_id,
         tool_name=tool_name,
         files_modified=files_modified,
-        key_decision=key_decision,
-        error=error,
-        open_todos=open_todos,
+        key_decision=telemetry.sanitize(key_decision),
+        error=telemetry.sanitize(error),
+        open_todos=telemetry.sanitize(open_todos) if open_todos is not None else None,
         token_delta=token_delta,
         timestamp=timestamp,
     )
@@ -1088,15 +1088,15 @@ def record_episode(
     episode = EpisodeRecord(
         episode_id=episode_id,
         session_id=session_id,
-        problem=problem,
-        context=context,
-        action=action,
-        outcome=outcome,
+        problem=telemetry.sanitize(problem),
+        context=telemetry.sanitize(context),
+        action=telemetry.sanitize(action),
+        outcome=telemetry.sanitize(outcome),
         evidence_refs=evidence_refs or [],
-        local_critique=local_critique,
-        global_reflection=global_reflection,
+        local_critique=telemetry.sanitize(local_critique),
+        global_reflection=telemetry.sanitize(global_reflection),
         confidence=confidence,
-        tags=tags or [],
+        tags=telemetry.sanitize(tags or []),
     )
     return _get_session_store().record_episode(episode)
 
@@ -1143,16 +1143,16 @@ def store_fact(
         metadata: Optional extra structured fields stored with the record.
     """
     return _get_wiki_brain().store_fact(
-        content=content,
+        content=telemetry.sanitize(content),
         record_class=record_class,
-        title=title,
+        title=telemetry.sanitize(title),
         source=source,
         category=category,
         importance=importance,
         confidence=confidence,
-        tags=tags or [],
+        tags=telemetry.sanitize(tags or []),
         evidence_refs=evidence_refs or [],
-        metadata=metadata or {},
+        metadata=telemetry.sanitize(metadata or {}),
     )
 
 
@@ -1232,7 +1232,7 @@ def record_memory_metric(
         metric_type,
         value=value,
         source=source,
-        metadata=metadata or {},
+        metadata=telemetry.sanitize(metadata or {}),
     )
 
 
@@ -1505,7 +1505,7 @@ def scriptlib_record_result(
         project_path=path,
         variant=variant,
         outcome=outcome,
-        notes=notes,
+        notes=telemetry.sanitize(notes),
         duration_ms=duration_ms,
         promote_status=promote_status,
         validate_native_copy=validate_native_copy,
