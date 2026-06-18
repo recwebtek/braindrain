@@ -78,6 +78,7 @@ tests/*
 !tests/test_dream_trigger.py
 !tests/test_telemetry_sanitization.py
 !tests/test_mcp_tool_schemas.py
+!tests/test_mcp_apps.py
 !tests/test_mcp_catalog.py
 !tests/test_workflow_engine.py
 !tests/test_token_benchmark.py

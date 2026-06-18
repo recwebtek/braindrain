@@ -96,6 +96,7 @@ from braindrain.tools import workspace as workspace_tools
 from braindrain.tool_registry import ToolRegistry
 from braindrain.wiki_brain import WikiBrain
 from braindrain.workflow_engine import WorkflowEngine
+from braindrain.mcp_apps import register_mcp_app_resources, register_mcp_app_tools
 from braindrain.workspace_primer import compact_prime_result_for_mcp
 from braindrain.workspace_primer import (
     initialize_project_memory as _initialize_project_memory,
@@ -1499,6 +1500,10 @@ def init_project_memory(path: str = ".", dry_run: bool = False) -> dict:
         path=path,
         dry_run=dry_run,
     )
+
+
+register_mcp_app_resources(mcp)
+register_mcp_app_tools(mcp, telemetry=telemetry, tool_decorator=mcp.tool)
 
 
 def main():

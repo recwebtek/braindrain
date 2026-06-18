@@ -1,22 +1,13 @@
 [
   {
-    "description": "Score and rank durable recall candidates.",
     "name": "cognitive_recall",
-    "outputSchema": {
-      "additionalProperties": true,
-      "type": "object"
-    },
+    "description": "Score and rank durable recall candidates.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
-        "limit": {
-          "default": 5,
-          "description": "Maximum ranked results. Default: 5.",
-          "type": "integer"
-        },
         "query": {
-          "description": "Natural-language recall query.",
-          "type": "string"
+          "type": "string",
+          "description": "Natural-language recall query."
         },
         "record_class": {
           "anyOf": [
@@ -29,27 +20,50 @@
           ],
           "default": null,
           "description": "Filter by semantic | procedural | lesson; None searches all."
+        },
+        "limit": {
+          "default": 5,
+          "type": "integer",
+          "description": "Maximum ranked results. Default: 5."
         }
       },
       "required": [
         "query"
       ],
       "type": "object"
-    }
-  },
-  {
-    "description": "Evaluate grounded episode content for lesson/playbook promotion.",
-    "name": "evaluate_lesson_candidate_tool",
+    },
     "outputSchema": {
       "additionalProperties": true,
       "type": "object"
-    },
+    }
+  },
+  {
+    "name": "evaluate_lesson_candidate_tool",
+    "description": "Evaluate grounded episode content for lesson/playbook promotion.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
+        "problem": {
+          "type": "string",
+          "description": "Problem or situation the episode addressed."
+        },
         "action": {
-          "description": "Action taken to address the problem.",
-          "type": "string"
+          "type": "string",
+          "description": "Action taken to address the problem."
+        },
+        "outcome": {
+          "type": "string",
+          "description": "Result of the action (success, failure, partial)."
+        },
+        "local_critique": {
+          "default": "",
+          "type": "string",
+          "description": "Optional critique of the specific action taken."
+        },
+        "global_reflection": {
+          "default": "",
+          "type": "string",
+          "description": "Optional broader lesson learned."
         },
         "evidence_refs": {
           "anyOf": [
@@ -65,24 +79,6 @@
           ],
           "default": null,
           "description": "Optional file paths, URLs, or handles supporting the episode."
-        },
-        "global_reflection": {
-          "default": "",
-          "description": "Optional broader lesson learned.",
-          "type": "string"
-        },
-        "local_critique": {
-          "default": "",
-          "description": "Optional critique of the specific action taken.",
-          "type": "string"
-        },
-        "outcome": {
-          "description": "Result of the action (success, failure, partial).",
-          "type": "string"
-        },
-        "problem": {
-          "description": "Problem or situation the episode addressed.",
-          "type": "string"
         }
       },
       "required": [
@@ -91,74 +87,113 @@
         "outcome"
       ],
       "type": "object"
-    }
-  },
-  {
-    "description": "Evaluate whether a memory candidate can be promoted safely.",
-    "name": "evaluate_memory_candidate",
+    },
     "outputSchema": {
       "additionalProperties": true,
       "type": "object"
-    },
+    }
+  },
+  {
+    "name": "evaluate_memory_candidate",
+    "description": "Evaluate whether a memory candidate can be promoted safely.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
         "candidate": {
-          "description": "Proposed memory text to score against promotion policy.",
-          "type": "string"
+          "type": "string",
+          "description": "Proposed memory text to score against promotion policy."
         }
       },
       "required": [
         "candidate"
       ],
       "type": "object"
-    }
-  },
-  {
-    "description": "Export MCP tool catalog markdown for folder-discovery.\n\nWrites `.braindrain/mcp-catalog/<server>/tools/*.md` from hub_config external\nservers plus native braindrain MCP tools. Use `rg` on the catalog before loading\nheavy deferred servers.",
-    "name": "export_mcp_catalog",
+    },
     "outputSchema": {
       "additionalProperties": true,
       "type": "object"
-    },
+    }
+  },
+  {
+    "name": "export_mcp_catalog",
+    "description": "Export MCP tool catalog markdown for folder-discovery.\n\nWrites `.braindrain/mcp-catalog/<server>/tools/*.md` from hub_config external\nservers plus native braindrain MCP tools. Use `rg` on the catalog before loading\nheavy deferred servers.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
-        "dry_run": {
-          "default": false,
-          "description": "When True, return planned paths without writing files.",
-          "type": "boolean"
-        },
         "path": {
           "default": ".",
-          "description": "Project root for `.braindrain/mcp-catalog/` output. Default: current directory.",
-          "type": "string"
+          "type": "string",
+          "description": "Project root for `.braindrain/mcp-catalog/` output. Default: current directory."
+        },
+        "dry_run": {
+          "default": false,
+          "type": "boolean",
+          "description": "When True, return planned paths without writing files."
         }
       },
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
       "type": "object"
     }
   },
   {
-    "description": "Get list of all available MCP tools with their loading status.\nShows which tools are HOT (always loaded) vs DEFERRED (loaded on demand).",
     "name": "get_available_tools",
+    "description": "Get list of all available MCP tools with their loading status.\nShows which tools are HOT (always loaded) vs DEFERRED (loaded on demand).",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
     "outputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": true,
       "properties": {
-        "deferred_count": {
-          "title": "Deferred Count",
+        "hot_tools": {
+          "items": {
+            "additionalProperties": true,
+            "properties": {
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "description": {
+                "title": "Description",
+                "type": "string"
+              },
+              "tags": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Tags",
+                "type": "array"
+              }
+            },
+            "required": [
+              "name",
+              "description"
+            ],
+            "title": "AvailableToolItem",
+            "type": "object"
+          },
+          "title": "Hot Tools",
+          "type": "array"
+        },
+        "hot_count": {
+          "title": "Hot Count",
           "type": "integer"
         },
         "deferred_tools": {
           "items": {
             "additionalProperties": true,
             "properties": {
-              "description": {
-                "title": "Description",
-                "type": "string"
-              },
               "name": {
                 "title": "Name",
+                "type": "string"
+              },
+              "description": {
+                "title": "Description",
                 "type": "string"
               },
               "tags": {
@@ -179,39 +214,9 @@
           "title": "Deferred Tools",
           "type": "array"
         },
-        "hot_count": {
-          "title": "Hot Count",
+        "deferred_count": {
+          "title": "Deferred Count",
           "type": "integer"
-        },
-        "hot_tools": {
-          "items": {
-            "additionalProperties": true,
-            "properties": {
-              "description": {
-                "title": "Description",
-                "type": "string"
-              },
-              "name": {
-                "title": "Name",
-                "type": "string"
-              },
-              "tags": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Tags",
-                "type": "array"
-              }
-            },
-            "required": [
-              "name",
-              "description"
-            ],
-            "title": "AvailableToolItem",
-            "type": "object"
-          },
-          "title": "Hot Tools",
-          "type": "array"
         }
       },
       "required": [
@@ -222,43 +227,49 @@
       ],
       "title": "GetAvailableToolsOutput",
       "type": "object"
-    },
+    }
+  },
+  {
+    "name": "get_dream_status",
+    "description": "Read latest dream consolidation status.",
     "parameters": {
       "additionalProperties": false,
       "properties": {},
       "type": "object"
-    }
-  },
-  {
-    "description": "Read latest dream consolidation status.",
-    "name": "get_dream_status",
+    },
     "outputSchema": {
       "additionalProperties": true,
       "type": "object"
-    },
-    "parameters": {
-      "additionalProperties": false,
-      "properties": {},
-      "type": "object"
     }
   },
   {
-    "description": "Return a cached snapshot of the host OS environment: identity, network,\nshell, runtimes, editors, installed CLI tools, and agent behaviour hints.\n\nReturns a ready-to-paste AGENTS.md block plus full structured summary.",
     "name": "get_env_context",
+    "description": "Return a cached snapshot of the host OS environment: identity, network,\nshell, runtimes, editors, installed CLI tools, and agent behaviour hints.\n\nReturns a ready-to-paste AGENTS.md block plus full structured summary.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "refresh": {
+          "default": false,
+          "type": "boolean",
+          "description": "If True, re-run the OS probe and update the cache.\n     Default False returns the cached result instantly."
+        }
+      },
+      "type": "object"
+    },
     "outputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": true,
       "properties": {
-        "agents_md_block": {
-          "title": "Agents Md Block",
-          "type": "string"
-        },
         "cached": {
           "title": "Cached",
           "type": "boolean"
         },
         "probe_timestamp": {
           "title": "Probe Timestamp",
+          "type": "string"
+        },
+        "agents_md_block": {
+          "title": "Agents Md Block",
           "type": "string"
         },
         "summary": {
@@ -275,26 +286,11 @@
       ],
       "title": "EnvContextOutput",
       "type": "object"
-    },
-    "parameters": {
-      "additionalProperties": false,
-      "properties": {
-        "refresh": {
-          "default": false,
-          "description": "If True, re-run the OS probe and update the cache.\n     Default False returns the cached result instantly.",
-          "type": "boolean"
-        }
-      },
-      "type": "object"
     }
   },
   {
-    "description": "Get observer event counts and latest activity.",
     "name": "get_event_stats",
-    "outputSchema": {
-      "additionalProperties": true,
-      "type": "object"
-    },
+    "description": "Get observer event counts and latest activity.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
@@ -312,107 +308,54 @@
         }
       },
       "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
     }
   },
   {
-    "description": "Get memory metrics and durable record counts.",
     "name": "get_memory_metrics",
-    "outputSchema": {
-      "additionalProperties": true,
-      "type": "object"
-    },
+    "description": "Get memory metrics and durable record counts.",
     "parameters": {
       "additionalProperties": false,
       "properties": {},
       "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
     }
   },
   {
-    "description": "Return current model provenance settings and effective defaults.",
     "name": "get_provenance_settings",
-    "outputSchema": {
-      "additionalProperties": true,
-      "type": "object"
-    },
+    "description": "Return current model provenance settings and effective defaults.",
     "parameters": {
       "additionalProperties": false,
       "properties": {},
       "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
     }
   },
   {
-    "description": "Return provider boundary strategy for durable vs ephemeral context.",
     "name": "get_provider_context_policy",
-    "outputSchema": {
-      "additionalProperties": true,
-      "type": "object"
-    },
+    "description": "Return provider boundary strategy for durable vs ephemeral context.",
     "parameters": {
       "additionalProperties": false,
       "properties": {},
       "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
     }
   },
   {
-    "description": "Return latest session summary or a specific session.",
     "name": "get_session_summary",
-    "outputSchema": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "additionalProperties": true,
-      "properties": {
-        "compact_package": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Compact Package"
-        },
-        "retrieval_hint": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Retrieval Hint"
-        },
-        "session_id": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Session Id"
-        },
-        "status": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Status"
-        }
-      },
-      "title": "SessionSummaryOutput",
-      "type": "object"
-    },
+    "description": "Return latest session summary or a specific session.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
@@ -430,15 +373,167 @@
         }
       },
       "type": "object"
-    }
-  },
-  {
-    "description": "Compact token-savings dashboard (estimated tokens, Claude-focused).",
-    "name": "get_token_dashboard",
+    },
     "outputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": true,
       "properties": {
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Status"
+        },
+        "session_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Session Id"
+        },
+        "retrieval_hint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retrieval Hint"
+        },
+        "compact_package": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Compact Package"
+        }
+      },
+      "title": "SessionSummaryOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "get_token_dashboard",
+    "description": "Compact token-savings dashboard (estimated tokens, Claude-focused).",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": true,
+      "properties": {
+        "started_at": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Started At"
+        },
+        "uptime_seconds": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Uptime Seconds"
+        },
+        "tokens_in_raw_est": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tokens In Raw Est"
+        },
+        "tokens_in_actual_est": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tokens In Actual Est"
+        },
+        "tokens_saved_est": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tokens Saved Est"
+        },
+        "saved_pct_est": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Saved Pct Est"
+        },
         "cache_hits": {
           "anyOf": [
             {
@@ -465,144 +560,47 @@
           ],
           "default": null,
           "title": "Cost Avoided Usd"
-        },
-        "saved_pct_est": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Saved Pct Est"
-        },
-        "started_at": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Started At"
-        },
-        "tokens_in_actual_est": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Tokens In Actual Est"
-        },
-        "tokens_in_raw_est": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Tokens In Raw Est"
-        },
-        "tokens_saved_est": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Tokens Saved Est"
-        },
-        "uptime_seconds": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Uptime Seconds"
         }
       },
       "title": "TokenDashboardOutput",
       "type": "object"
-    },
+    }
+  },
+  {
+    "name": "get_token_stats",
+    "description": "Session cost tracking: tokens saved, cost avoided, cache hits by module.\nCall anytime to see BRAINDRAIN's impact on your token usage.",
     "parameters": {
       "additionalProperties": false,
       "properties": {},
       "type": "object"
-    }
-  },
-  {
-    "description": "Session cost tracking: tokens saved, cost avoided, cache hits by module.\nCall anytime to see BRAINDRAIN's impact on your token usage.",
-    "name": "get_token_stats",
+    },
     "outputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": true,
       "properties": {
-        "project": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Project"
+        "session": {
+          "additionalProperties": true,
+          "title": "Session",
+          "type": "object"
         },
         "registry": {
           "additionalProperties": true,
           "properties": {
-            "deferred_tools": {
-              "title": "Deferred Tools",
+            "total_tools": {
+              "title": "Total Tools",
               "type": "integer"
             },
             "hot_tools": {
               "title": "Hot Tools",
               "type": "integer"
             },
+            "deferred_tools": {
+              "title": "Deferred Tools",
+              "type": "integer"
+            },
             "search_index_ready": {
               "title": "Search Index Ready",
               "type": "boolean"
-            },
-            "total_tools": {
-              "title": "Total Tools",
-              "type": "integer"
             }
           },
           "required": [
@@ -614,10 +612,17 @@
           "title": "RegistryStats",
           "type": "object"
         },
-        "session": {
-          "additionalProperties": true,
-          "title": "Session",
-          "type": "object"
+        "project": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Project"
         },
         "version": {
           "anyOf": [
@@ -638,52 +643,38 @@
       ],
       "title": "TokenStatsOutput",
       "type": "object"
-    },
-    "parameters": {
-      "additionalProperties": false,
-      "properties": {},
-      "type": "object"
     }
   },
   {
-    "description": "Initialize project memory artifacts used by continual-learning workflows.\n\nCreates (if missing):\n- .braindrain/AGENT_MEMORY.md  (migrated from .devdocs/ on first run if present)\n- .cursor/hooks/state/continual-learning-index.json\n\nBoth paths are gitignored. This tool is idempotent and safe to re-run.",
     "name": "init_project_memory",
-    "outputSchema": {
-      "additionalProperties": true,
-      "type": "object"
-    },
+    "description": "Initialize project memory artifacts used by continual-learning workflows.\n\nCreates (if missing):\n- .braindrain/AGENT_MEMORY.md  (migrated from .devdocs/ on first run if present)\n- .cursor/hooks/state/continual-learning-index.json\n\nBoth paths are gitignored. This tool is idempotent and safe to re-run.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
-        "dry_run": {
-          "default": false,
-          "description": "When True, preview artifacts without creating files.",
-          "type": "boolean"
-        },
         "path": {
           "default": ".",
-          "description": "Project root directory. Default: current working directory.",
-          "type": "string"
+          "type": "string",
+          "description": "Project root directory. Default: current working directory."
+        },
+        "dry_run": {
+          "default": false,
+          "type": "boolean",
+          "description": "When True, preview artifacts without creating files."
         }
       },
       "type": "object"
-    }
-  },
-  {
-    "description": "List recent episodes (optionally by session).",
-    "name": "list_episodes",
+    },
     "outputSchema": {
       "additionalProperties": true,
       "type": "object"
-    },
+    }
+  },
+  {
+    "name": "list_episodes",
+    "description": "List recent episodes (optionally by session).",
     "parameters": {
       "additionalProperties": false,
       "properties": {
-        "limit": {
-          "default": 20,
-          "description": "Maximum episodes to return. Default: 20.",
-          "type": "integer"
-        },
         "session_id": {
           "anyOf": [
             {
@@ -695,14 +686,28 @@
           ],
           "default": null,
           "description": "Filter to one session; None returns episodes across sessions."
+        },
+        "limit": {
+          "default": 20,
+          "type": "integer",
+          "description": "Maximum episodes to return. Default: 20."
         }
       },
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
       "type": "object"
     }
   },
   {
-    "description": "List available workflows with descriptions and token budgets.\nUse this to see what automated tasks BRAINDRAIN can perform.",
     "name": "list_workflows",
+    "description": "List available workflows with descriptions and token budgets.\nUse this to see what automated tasks BRAINDRAIN can perform.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
     "outputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": true,
@@ -713,6 +718,10 @@
               "items": {
                 "additionalProperties": true,
                 "properties": {
+                  "name": {
+                    "title": "Name",
+                    "type": "string"
+                  },
                   "description": {
                     "anyOf": [
                       {
@@ -725,9 +734,17 @@
                     "default": null,
                     "title": "Description"
                   },
-                  "name": {
-                    "title": "Name",
-                    "type": "string"
+                  "token_budget": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Token Budget"
                   },
                   "steps": {
                     "anyOf": [
@@ -743,18 +760,6 @@
                     ],
                     "default": null,
                     "title": "Steps"
-                  },
-                  "token_budget": {
-                    "anyOf": [
-                      {
-                        "type": "integer"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "default": null,
-                    "title": "Token Budget"
                   }
                 },
                 "required": [
@@ -775,125 +780,91 @@
       },
       "title": "ListWorkflowsOutput",
       "type": "object"
-    },
-    "parameters": {
-      "additionalProperties": false,
-      "properties": {},
-      "type": "object"
     }
   },
   {
-    "description": "Health check - verify BRAINDRAIN is running",
     "name": "ping",
-    "outputSchema": {
-      "additionalProperties": true,
-      "type": "object"
-    },
+    "description": "Health check - verify BRAINDRAIN is running",
     "parameters": {
       "additionalProperties": false,
       "properties": {},
       "type": "object"
-    }
-  },
-  {
-    "description": "Generate a review plan before running a destructive workflow.\nUse before: refactor_prep, ingest_codebase (large projects)\n\nNote: This feature requires crit (Phase 3). Currently returns stub.",
-    "name": "plan_workflow",
+    },
     "outputSchema": {
       "additionalProperties": true,
       "type": "object"
-    },
+    }
+  },
+  {
+    "name": "plan_workflow",
+    "description": "Generate a review plan before running a destructive workflow.\nUse before: refactor_prep, ingest_codebase (large projects)\n\nNote: This feature requires crit (Phase 3). Currently returns stub.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
+        "name": {
+          "type": "string",
+          "description": "Workflow id from list_workflows()."
+        },
         "args": {
           "additionalProperties": true,
           "default": null,
-          "description": "Workflow-specific argument dict to include in the plan preview.",
-          "type": "object"
-        },
-        "name": {
-          "description": "Workflow id from list_workflows().",
-          "type": "string"
+          "type": "object",
+          "description": "Workflow-specific argument dict to include in the plan preview."
         }
       },
       "required": [
         "name"
       ],
       "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
     }
   },
   {
-    "description": "Prime a project/workspace for AI agent use.\n\nFirst run: detects current IDE/CLI, deploys minimal Ruler templates, writes\n.braindrain/primed.json, initializes project memory under .braindrain/.\nSubsequent runs: updates templates (if sync_templates=True), optionally syncs\nsubagent files (if sync_subagents=True), and re-applies.",
-    "name": "prime_workspace",
-    "outputSchema": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "additionalProperties": true,
-      "properties": {
-        "bundle": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Bundle"
-        },
-        "dry_run": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Dry Run"
-        },
-        "next_steps": {
-          "anyOf": [
-            {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Next Steps"
-        },
-        "ok": {
-          "title": "Ok",
-          "type": "boolean"
-        },
-        "target": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Target"
-        }
-      },
-      "required": [
-        "ok"
-      ],
-      "title": "PrimeWorkspaceOutput",
-      "type": "object"
-    },
+    "name": "poll_plan_board",
+    "description": "App-only refresh for the plan board iframe (not for the model).",
     "parameters": {
       "additionalProperties": false,
       "properties": {
+        "path": {
+          "default": ".",
+          "type": "string",
+          "description": "Project root containing `.braindrain/plan-reports/`. Default: cwd."
+        }
+      },
+      "type": "object"
+    },
+    "outputSchema": null
+  },
+  {
+    "name": "poll_token_dashboard",
+    "description": "App-only refresh for the token dashboard iframe (not for the model).",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "default": ".",
+          "type": "string",
+          "description": "Project root for checkpoint file resolution. Default: current directory."
+        }
+      },
+      "type": "object"
+    },
+    "outputSchema": null
+  },
+  {
+    "name": "prime_workspace",
+    "description": "Prime a project/workspace for AI agent use.\n\nFirst run: detects current IDE/CLI, deploys minimal Ruler templates, writes\n.braindrain/primed.json, initializes project memory under .braindrain/.\nSubsequent runs: updates templates (if sync_templates=True), optionally syncs\nsubagent files (if sync_subagents=True), and re-applies.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "default": ".",
+          "type": "string",
+          "description": "Target project root. Default: current working directory."
+        },
         "agents": {
           "anyOf": [
             {
@@ -909,15 +880,35 @@
           "default": null,
           "description": "Explicit agent ids (e.g. [\"cursor\", \"claude\"])."
         },
+        "dry_run": {
+          "default": false,
+          "type": "boolean",
+          "description": "Preview changes without writing files."
+        },
+        "sync_templates": {
+          "default": false,
+          "type": "boolean",
+          "description": "Update existing .ruler files with timestamped backups."
+        },
+        "sync_subagents": {
+          "default": false,
+          "type": "boolean",
+          "description": "Update existing ``.cursor/agents/*.md`` and ``.codex/agents/*.md``\nfrom ``config/templates/agents/`` with timestamped backups (create-only by default);\nwhen Codex is in scope, also updates the managed block in ``.codex/config.toml``."
+        },
         "all_agents": {
           "default": false,
-          "description": "Deploy full template and apply all configured agents.",
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Deploy full template and apply all configured agents."
         },
-        "bundle": {
-          "default": "core",
-          "description": "Bundle manifest to use from config/bundles/<name>.yaml.",
-          "type": "string"
+        "local_only": {
+          "default": true,
+          "type": "boolean",
+          "description": "Pass --local-only to ruler apply (default True)."
+        },
+        "patch_user_cursor_mcp": {
+          "default": false,
+          "type": "boolean",
+          "description": "If True, also patch ~/.cursor/mcp.json with\nserverName entries (fixes Cursor allowlist warning for user-braindrain)."
         },
         "codex_agent_targets": {
           "anyOf": [
@@ -936,67 +927,94 @@
         },
         "compact_mcp_response": {
           "default": true,
-          "description": "If True (default), return a smaller dict so the MCP\nclient is less likely to hit ClosedResourceError on large tool results.",
-          "type": "boolean"
+          "type": "boolean",
+          "description": "If True (default), return a smaller dict so the MCP\nclient is less likely to hit ClosedResourceError on large tool results."
         },
-        "dry_run": {
-          "default": false,
-          "description": "Preview changes without writing files.",
-          "type": "boolean"
-        },
-        "local_only": {
-          "default": true,
-          "description": "Pass --local-only to ruler apply (default True).",
-          "type": "boolean"
-        },
-        "patch_user_cursor_mcp": {
-          "default": false,
-          "description": "If True, also patch ~/.cursor/mcp.json with\nserverName entries (fixes Cursor allowlist warning for user-braindrain).",
-          "type": "boolean"
-        },
-        "path": {
-          "default": ".",
-          "description": "Target project root. Default: current working directory.",
-          "type": "string"
-        },
-        "sync_subagents": {
-          "default": false,
-          "description": "Update existing ``.cursor/agents/*.md`` and ``.codex/agents/*.md``\nfrom ``config/templates/agents/`` with timestamped backups (create-only by default);\nwhen Codex is in scope, also updates the managed block in ``.codex/config.toml``.",
-          "type": "boolean"
-        },
-        "sync_templates": {
-          "default": false,
-          "description": "Update existing .ruler files with timestamped backups.",
-          "type": "boolean"
+        "bundle": {
+          "default": "core",
+          "type": "string",
+          "description": "Bundle manifest to use from config/bundles/<name>.yaml."
         }
       },
+      "type": "object"
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": true,
+      "properties": {
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target"
+        },
+        "dry_run": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dry Run"
+        },
+        "bundle": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bundle"
+        },
+        "next_steps": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Next Steps"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "title": "PrimeWorkspaceOutput",
       "type": "object"
     }
   },
   {
-    "description": "Query durable records from Wiki-Brain.",
     "name": "query_facts",
-    "outputSchema": {
-      "additionalProperties": true,
-      "type": "object"
-    },
+    "description": "Query durable records from Wiki-Brain.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
-        "include_superseded": {
-          "default": false,
-          "description": "When True, include records marked superseded. Default: False.",
-          "type": "boolean"
-        },
-        "limit": {
-          "default": 10,
-          "description": "Maximum records to return. Default: 10.",
-          "type": "integer"
-        },
         "query": {
           "default": "",
-          "description": "Text search query; empty returns recent records.",
-          "type": "string"
+          "type": "string",
+          "description": "Text search query; empty returns recent records."
         },
         "record_class": {
           "anyOf": [
@@ -1009,38 +1027,50 @@
           ],
           "default": null,
           "description": "Filter by semantic | procedural | lesson; None returns all classes."
+        },
+        "limit": {
+          "default": 10,
+          "type": "integer",
+          "description": "Maximum records to return. Default: 10."
+        },
+        "include_superseded": {
+          "default": false,
+          "type": "boolean",
+          "description": "When True, include records marked superseded. Default: False."
         }
       },
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
       "type": "object"
     }
   },
   {
-    "description": "Store a grounded episode candidate for future dream consolidation.",
     "name": "record_episode",
-    "outputSchema": {
-      "additionalProperties": true,
-      "type": "object"
-    },
+    "description": "Store a grounded episode candidate for future dream consolidation.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
-        "action": {
-          "description": "Action taken to address the problem.",
-          "type": "string"
+        "session_id": {
+          "type": "string",
+          "description": "Session this episode belongs to."
         },
-        "confidence": {
-          "default": 0.5,
-          "description": "Confidence score 0.0\u20131.0. Default: 0.5.",
-          "type": "number"
+        "problem": {
+          "type": "string",
+          "description": "Problem or situation encountered."
         },
         "context": {
-          "description": "Background context relevant to the problem.",
-          "type": "string"
+          "type": "string",
+          "description": "Background context relevant to the problem."
         },
-        "episode_id": {
-          "default": "",
-          "description": "Optional explicit id; auto-generated when empty.",
-          "type": "string"
+        "action": {
+          "type": "string",
+          "description": "Action taken to address the problem."
+        },
+        "outcome": {
+          "type": "string",
+          "description": "Result of the action."
         },
         "evidence_refs": {
           "anyOf": [
@@ -1057,27 +1087,20 @@
           "default": null,
           "description": "Optional supporting file paths, URLs, or index handles."
         },
-        "global_reflection": {
-          "default": "",
-          "description": "Optional broader lesson or pattern observed.",
-          "type": "string"
-        },
         "local_critique": {
           "default": "",
-          "description": "Optional critique of the specific action.",
-          "type": "string"
+          "type": "string",
+          "description": "Optional critique of the specific action."
         },
-        "outcome": {
-          "description": "Result of the action.",
-          "type": "string"
+        "global_reflection": {
+          "default": "",
+          "type": "string",
+          "description": "Optional broader lesson or pattern observed."
         },
-        "problem": {
-          "description": "Problem or situation encountered.",
-          "type": "string"
-        },
-        "session_id": {
-          "description": "Session this episode belongs to.",
-          "type": "string"
+        "confidence": {
+          "default": 0.5,
+          "type": "number",
+          "description": "Confidence score 0.0\u20131.0. Default: 0.5."
         },
         "tags": {
           "anyOf": [
@@ -1093,6 +1116,11 @@
           ],
           "default": null,
           "description": "Optional categorization tags."
+        },
+        "episode_id": {
+          "default": "",
+          "type": "string",
+          "description": "Optional explicit id; auto-generated when empty."
         }
       },
       "required": [
@@ -1103,18 +1131,32 @@
         "outcome"
       ],
       "type": "object"
-    }
-  },
-  {
-    "description": "Record durable memory-system metric events.",
-    "name": "record_memory_metric",
+    },
     "outputSchema": {
       "additionalProperties": true,
       "type": "object"
-    },
+    }
+  },
+  {
+    "name": "record_memory_metric",
+    "description": "Record durable memory-system metric events.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
+        "metric_type": {
+          "type": "string",
+          "description": "Metric name (e.g. recall_hit, promotion, dream_cycle)."
+        },
+        "value": {
+          "default": 1.0,
+          "type": "number",
+          "description": "Numeric metric value. Default: 1.0."
+        },
+        "source": {
+          "default": "manual",
+          "type": "string",
+          "description": "Provenance label. Default: manual."
+        },
         "metadata": {
           "anyOf": [
             {
@@ -1127,46 +1169,42 @@
           ],
           "default": null,
           "description": "Optional extra fields attached to the metric event."
-        },
-        "metric_type": {
-          "description": "Metric name (e.g. recall_hit, promotion, dream_cycle).",
-          "type": "string"
-        },
-        "source": {
-          "default": "manual",
-          "description": "Provenance label. Default: manual.",
-          "type": "string"
-        },
-        "value": {
-          "default": 1.0,
-          "description": "Numeric metric value. Default: 1.0.",
-          "type": "number"
         }
       },
       "required": [
         "metric_type"
       ],
       "type": "object"
-    }
-  },
-  {
-    "description": "Append a machine-local model provenance event for audits and plan reports.",
-    "name": "record_model_trace_event",
+    },
     "outputSchema": {
       "additionalProperties": true,
       "type": "object"
-    },
+    }
+  },
+  {
+    "name": "record_model_trace_event",
+    "description": "Append a machine-local model provenance event for audits and plan reports.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
         "actor": {
-          "description": "Agent or subagent name (e.g. coordinator, architect).",
-          "type": "string"
+          "type": "string",
+          "description": "Agent or subagent name (e.g. coordinator, architect)."
+        },
+        "model_name": {
+          "default": "",
+          "type": "string",
+          "description": "Model id override; empty uses effective model from host/config."
         },
         "event": {
           "default": "run",
-          "description": "Event type (e.g. run, plan, audit). Default: run.",
-          "type": "string"
+          "type": "string",
+          "description": "Event type (e.g. run, plan, audit). Default: run."
+        },
+        "source": {
+          "default": "manual",
+          "type": "string",
+          "description": "Provenance source label (e.g. manual, subagent). Default: manual."
         },
         "metadata": {
           "anyOf": [
@@ -1180,42 +1218,43 @@
           ],
           "default": null,
           "description": "Optional extra fields attached to the trace row."
-        },
-        "model_name": {
-          "default": "",
-          "description": "Model id override; empty uses effective model from host/config.",
-          "type": "string"
-        },
-        "source": {
-          "default": "manual",
-          "description": "Provenance source label (e.g. manual, subagent). Default: manual.",
-          "type": "string"
         }
       },
       "required": [
         "actor"
       ],
       "type": "object"
-    }
-  },
-  {
-    "description": "Record an observer event into the episodic ring buffer.",
-    "name": "record_observer_event",
+    },
     "outputSchema": {
       "additionalProperties": true,
       "type": "object"
-    },
+    }
+  },
+  {
+    "name": "record_observer_event",
+    "description": "Record an observer event into the episodic ring buffer.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
-        "duration_ms": {
-          "default": 0,
-          "description": "Event duration in milliseconds. Default: 0.",
-          "type": "integer"
+        "session_id": {
+          "type": "string",
+          "description": "Session identifier linking events to a work session."
         },
         "event_type": {
-          "description": "Event category (e.g. tool_call, file_edit, error).",
-          "type": "string"
+          "type": "string",
+          "description": "Event category (e.g. tool_call, file_edit, error)."
+        },
+        "tool_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional MCP tool name when event_type is tool-related."
         },
         "files_touched": {
           "anyOf": [
@@ -1232,6 +1271,16 @@
           "default": null,
           "description": "Optional list of file paths modified in this event."
         },
+        "token_cost": {
+          "default": 0,
+          "type": "integer",
+          "description": "Estimated tokens consumed. Default: 0."
+        },
+        "duration_ms": {
+          "default": 0,
+          "type": "integer",
+          "description": "Event duration in milliseconds. Default: 0."
+        },
         "metadata": {
           "anyOf": [
             {
@@ -1245,10 +1294,6 @@
           "default": null,
           "description": "Optional extra structured fields for the event."
         },
-        "session_id": {
-          "description": "Session identifier linking events to a work session.",
-          "type": "string"
-        },
         "timestamp": {
           "anyOf": [
             {
@@ -1260,23 +1305,6 @@
           ],
           "default": null,
           "description": "Unix timestamp; default is current time."
-        },
-        "token_cost": {
-          "default": 0,
-          "description": "Estimated tokens consumed. Default: 0.",
-          "type": "integer"
-        },
-        "tool_name": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Optional MCP tool name when event_type is tool-related."
         }
       },
       "required": [
@@ -1284,18 +1312,31 @@
         "event_type"
       ],
       "type": "object"
-    }
-  },
-  {
-    "description": "Append a schema 1.0 token checkpoint to `.braindrain/token-metrics.jsonl`.",
-    "name": "record_token_checkpoint",
+    },
     "outputSchema": {
       "additionalProperties": true,
       "type": "object"
-    },
+    }
+  },
+  {
+    "name": "record_token_checkpoint",
+    "description": "Append a schema 1.0 token checkpoint to `.braindrain/token-metrics.jsonl`.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
+        "phase": {
+          "type": "string",
+          "description": "Checkpoint phase \u2014 start | pre_high_cost | post_high_cost | milestone_close | end."
+        },
+        "task": {
+          "type": "string",
+          "description": "Short task identifier for this checkpoint row."
+        },
+        "note": {
+          "default": "",
+          "type": "string",
+          "description": "Optional human-readable summary of what triggered the checkpoint."
+        },
         "context_tags": {
           "anyOf": [
             {
@@ -1311,23 +1352,10 @@
           "default": null,
           "description": "Optional tags (e.g. [\"search\", \"subagent\"]) for attribution."
         },
-        "note": {
-          "default": "",
-          "description": "Optional human-readable summary of what triggered the checkpoint.",
-          "type": "string"
-        },
         "path": {
           "default": ".",
-          "description": "Project root directory (not the JSONL path). Default: current working directory.\n  Checkpoints write to <path>/.braindrain/token-metrics.jsonl.",
-          "type": "string"
-        },
-        "phase": {
-          "description": "Checkpoint phase \u2014 start | pre_high_cost | post_high_cost | milestone_close | end.",
-          "type": "string"
-        },
-        "task": {
-          "description": "Short task identifier for this checkpoint row.",
-          "type": "string"
+          "type": "string",
+          "description": "Project root directory (not the JSONL path). Default: current working directory.\n  Checkpoints write to <path>/.braindrain/token-metrics.jsonl."
         }
       },
       "required": [
@@ -1335,78 +1363,65 @@
         "task"
       ],
       "type": "object"
-    }
-  },
-  {
-    "description": "Re-run the full OS environment probe and update the cached snapshot.\n\nRun this when:\n- You've installed new tools or changed your shell config\n- You've switched machines or changed your network\n- The cached data feels stale\n\nReturns the fresh AGENTS.md block and structured summary.",
-    "name": "refresh_env_context",
+    },
     "outputSchema": {
       "additionalProperties": true,
       "type": "object"
-    },
+    }
+  },
+  {
+    "name": "refresh_env_context",
+    "description": "Re-run the full OS environment probe and update the cached snapshot.\n\nRun this when:\n- You've installed new tools or changed your shell config\n- You've switched machines or changed your network\n- The cached data feels stale\n\nReturns the fresh AGENTS.md block and structured summary.",
     "parameters": {
       "additionalProperties": false,
       "properties": {},
       "type": "object"
-    }
-  },
-  {
-    "description": "Review active lesson/playbook records.",
-    "name": "review_playbook",
+    },
     "outputSchema": {
       "additionalProperties": true,
       "type": "object"
-    },
+    }
+  },
+  {
+    "name": "review_playbook",
+    "description": "Review active lesson/playbook records.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
-        "limit": {
-          "default": 10,
-          "description": "Maximum records to return. Default: 10.",
-          "type": "integer"
-        },
         "query": {
           "default": "",
-          "description": "Optional text filter for lesson content.",
-          "type": "string"
+          "type": "string",
+          "description": "Optional text filter for lesson content."
+        },
+        "limit": {
+          "default": 10,
+          "type": "integer",
+          "description": "Maximum records to return. Default: 10."
         }
       },
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
       "type": "object"
     }
   },
   {
-    "description": "Route large text outputs through context-mode's FTS5 index to avoid dumping\nraw bytes into the model context window.",
     "name": "route_output",
-    "outputSchema": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "additionalProperties": true,
+    "description": "Route large text outputs through context-mode's FTS5 index to avoid dumping\nraw bytes into the model context window.",
+    "parameters": {
+      "additionalProperties": false,
       "properties": {
-        "bytes_raw": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Bytes Raw"
+        "text": {
+          "type": "string",
+          "description": "Content to route or return inline when below threshold."
         },
-        "context_mode": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Context Mode"
+        "source": {
+          "default": "braindrain",
+          "type": "string",
+          "description": "Source label stored with the index entry. Default: braindrain."
         },
-        "error": {
+        "intent": {
           "anyOf": [
             {
               "type": "string"
@@ -1416,7 +1431,40 @@
             }
           ],
           "default": null,
-          "title": "Error"
+          "description": "Optional intent tag for context-mode indexing."
+        },
+        "min_chars": {
+          "default": 5000,
+          "type": "integer",
+          "description": "Character threshold before routing (when auto-route is off). Default: 5000."
+        },
+        "force_index": {
+          "default": false,
+          "type": "boolean",
+          "description": "When True, always index regardless of size."
+        },
+        "force_inline": {
+          "default": false,
+          "type": "boolean",
+          "description": "When True, skip auto-routing and return inline text when allowed."
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": true,
+      "properties": {
+        "routed": {
+          "title": "Routed",
+          "type": "boolean"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
         },
         "handle": {
           "anyOf": [
@@ -1442,18 +1490,17 @@
           "default": null,
           "title": "Index Id"
         },
-        "next_steps": {
+        "bytes_raw": {
           "anyOf": [
             {
-              "additionalProperties": true,
-              "type": "object"
+              "type": "integer"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "title": "Next Steps"
+          "title": "Bytes Raw"
         },
         "preview": {
           "anyOf": [
@@ -1479,29 +1526,6 @@
           "default": null,
           "title": "Retrieval Hint"
         },
-        "routed": {
-          "title": "Routed",
-          "type": "boolean"
-        },
-        "source": {
-          "title": "Source",
-          "type": "string"
-        },
-        "suggested_queries": {
-          "anyOf": [
-            {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Suggested Queries"
-        },
         "text": {
           "anyOf": [
             {
@@ -1525,29 +1549,8 @@
           ],
           "default": null,
           "title": "Text Preview"
-        }
-      },
-      "required": [
-        "routed",
-        "source"
-      ],
-      "title": "RouteOutputModel",
-      "type": "object"
-    },
-    "parameters": {
-      "additionalProperties": false,
-      "properties": {
-        "force_index": {
-          "default": false,
-          "description": "When True, always index regardless of size.",
-          "type": "boolean"
         },
-        "force_inline": {
-          "default": false,
-          "description": "When True, skip auto-routing and return inline text when allowed.",
-          "type": "boolean"
-        },
-        "intent": {
+        "error": {
           "anyOf": [
             {
               "type": "string"
@@ -1557,94 +1560,123 @@
             }
           ],
           "default": null,
-          "description": "Optional intent tag for context-mode indexing."
+          "title": "Error"
         },
-        "min_chars": {
-          "default": 5000,
-          "description": "Character threshold before routing (when auto-route is off). Default: 5000.",
-          "type": "integer"
+        "suggested_queries": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Suggested Queries"
         },
-        "source": {
-          "default": "braindrain",
-          "description": "Source label stored with the index entry. Default: braindrain.",
-          "type": "string"
+        "context_mode": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Context Mode"
         },
-        "text": {
-          "description": "Content to route or return inline when below threshold.",
-          "type": "string"
+        "next_steps": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Next Steps"
         }
       },
       "required": [
-        "text"
+        "routed",
+        "source"
       ],
+      "title": "RouteOutputModel",
       "type": "object"
     }
   },
   {
-    "description": "Run Light/REM/Deep memory consolidation.",
     "name": "run_dream",
-    "outputSchema": {
-      "additionalProperties": true,
-      "type": "object"
-    },
+    "description": "Run Light/REM/Deep memory consolidation.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
-        "force": {
-          "default": false,
-          "description": "When True, run even if interval guard would skip. Default: False.",
-          "type": "boolean"
-        },
         "mode": {
           "default": "full",
-          "description": "Dream cycle mode \u2014 light | rem | deep | full. Default: full.",
-          "type": "string"
+          "type": "string",
+          "description": "Dream cycle mode \u2014 light | rem | deep | full. Default: full."
+        },
+        "force": {
+          "default": false,
+          "type": "boolean",
+          "description": "When True, run even if interval guard would skip. Default: False."
         }
       },
       "type": "object"
-    }
-  },
-  {
-    "description": "Execute a workflow in an isolated sandbox. Returns only final summary.\nIntermediate data NEVER enters your context window.",
-    "name": "run_workflow",
+    },
     "outputSchema": {
       "additionalProperties": true,
       "type": "object"
-    },
+    }
+  },
+  {
+    "name": "run_workflow",
+    "description": "Execute a workflow in an isolated sandbox. Returns only final summary.\nIntermediate data NEVER enters your context window.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
+        "name": {
+          "type": "string",
+          "description": "Workflow id from list_workflows() (e.g. ingest_codebase, refactor_prep)."
+        },
         "args": {
           "additionalProperties": true,
           "default": null,
-          "description": "Workflow-specific argument dict (see hub_config workflows input_examples).",
-          "type": "object"
-        },
-        "name": {
-          "description": "Workflow id from list_workflows() (e.g. ingest_codebase, refactor_prep).",
-          "type": "string"
+          "type": "object",
+          "description": "Workflow-specific argument dict (see hub_config workflows input_examples)."
         }
       },
       "required": [
         "name"
       ],
       "type": "object"
-    }
-  },
-  {
-    "description": "Pin or upgrade a shared script artifact in the current workspace.",
-    "name": "scriptlib_apply_update",
+    },
     "outputSchema": {
       "additionalProperties": true,
       "type": "object"
-    },
+    }
+  },
+  {
+    "name": "scriptlib_apply_update",
+    "description": "Pin or upgrade a shared script artifact in the current workspace.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
-        "approved": {
-          "default": false,
-          "description": "When True, confirm update approval gate. Default: False.",
-          "type": "boolean"
+        "script_id": {
+          "type": "string",
+          "description": "Shared scriptlib entry id to pin or upgrade."
+        },
+        "path": {
+          "default": ".",
+          "type": "string",
+          "description": "Project root. Default: current working directory."
         },
         "channel": {
           "anyOf": [
@@ -1658,20 +1690,6 @@
           "default": null,
           "description": "Optional release channel to pin (e.g. stable)."
         },
-        "dry_run": {
-          "default": false,
-          "description": "When True, preview update without writing. Default: False.",
-          "type": "boolean"
-        },
-        "path": {
-          "default": ".",
-          "description": "Project root. Default: current working directory.",
-          "type": "string"
-        },
-        "script_id": {
-          "description": "Shared scriptlib entry id to pin or upgrade.",
-          "type": "string"
-        },
         "target_revision": {
           "anyOf": [
             {
@@ -1683,61 +1701,71 @@
           ],
           "default": null,
           "description": "Optional explicit revision number to pin."
+        },
+        "approved": {
+          "default": false,
+          "type": "boolean",
+          "description": "When True, confirm update approval gate. Default: False."
+        },
+        "dry_run": {
+          "default": false,
+          "type": "boolean",
+          "description": "When True, preview update without writing. Default: False."
         }
       },
       "required": [
         "script_id"
       ],
       "type": "object"
-    }
-  },
-  {
-    "description": "Summarize local/shared scriptlib state, promotion candidates, pins, and updates.",
-    "name": "scriptlib_catalog_status",
+    },
     "outputSchema": {
       "additionalProperties": true,
       "type": "object"
-    },
+    }
+  },
+  {
+    "name": "scriptlib_catalog_status",
+    "description": "Summarize local/shared scriptlib state, promotion candidates, pins, and updates.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
+        "path": {
+          "default": ".",
+          "type": "string",
+          "description": "Project root. Default: current working directory."
+        },
         "include_entries": {
           "default": false,
-          "description": "When True, include entry summaries in response. Default: False.",
-          "type": "boolean"
+          "type": "boolean",
+          "description": "When True, include entry summaries in response. Default: False."
         },
         "limit": {
           "default": 20,
-          "description": "Max entries when include_entries is True. Default: 20.",
-          "type": "integer"
-        },
-        "path": {
-          "default": ".",
-          "description": "Project root. Default: current working directory.",
-          "type": "string"
+          "type": "integer",
+          "description": "Max entries when include_entries is True. Default: 20."
         }
       },
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
       "type": "object"
     }
   },
   {
-    "description": "Return full metadata for a scriptlib entry.",
     "name": "scriptlib_describe",
-    "outputSchema": {
-      "additionalProperties": true,
-      "type": "object"
-    },
+    "description": "Return full metadata for a scriptlib entry.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
+        "script_id": {
+          "type": "string",
+          "description": "Scriptlib entry id from search or catalog."
+        },
         "path": {
           "default": ".",
-          "description": "Project root for project-scoped lookup. Default: current directory.",
-          "type": "string"
-        },
-        "script_id": {
-          "description": "Scriptlib entry id from search or catalog.",
-          "type": "string"
+          "type": "string",
+          "description": "Project root for project-scoped lookup. Default: current directory."
         },
         "variant": {
           "anyOf": [
@@ -1756,93 +1784,93 @@
         "script_id"
       ],
       "type": "object"
-    }
-  },
-  {
-    "description": "Disable scriptlib for the project or global scope without removing harvested files.",
-    "name": "scriptlib_disable",
+    },
     "outputSchema": {
       "additionalProperties": true,
       "type": "object"
-    },
+    }
+  },
+  {
+    "name": "scriptlib_disable",
+    "description": "Disable scriptlib for the project or global scope without removing harvested files.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
-        "dry_run": {
-          "default": false,
-          "description": "When True, preview without writing config. Default: False.",
-          "type": "boolean"
-        },
         "path": {
           "default": ".",
-          "description": "Project root directory. Default: current working directory.",
-          "type": "string"
+          "type": "string",
+          "description": "Project root directory. Default: current working directory."
         },
         "scope": {
           "default": "project",
-          "description": "Disable target \u2014 project | global. Default: project.",
-          "type": "string"
+          "type": "string",
+          "description": "Disable target \u2014 project | global. Default: project."
+        },
+        "dry_run": {
+          "default": false,
+          "type": "boolean",
+          "description": "When True, preview without writing config. Default: False."
         }
       },
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
       "type": "object"
     }
   },
   {
-    "description": "Enable scriptlib for the project or global scope. Project enable harvests scripts by default.",
     "name": "scriptlib_enable",
-    "outputSchema": {
-      "additionalProperties": true,
-      "type": "object"
-    },
+    "description": "Enable scriptlib for the project or global scope. Project enable harvests scripts by default.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
-        "dry_run": {
-          "default": false,
-          "description": "When True, preview without writing config. Default: False.",
-          "type": "boolean"
+        "path": {
+          "default": ".",
+          "type": "string",
+          "description": "Project root directory. Default: current working directory."
+        },
+        "scope": {
+          "default": "project",
+          "type": "string",
+          "description": "Enable target \u2014 project | global. Default: project."
         },
         "harvest": {
           "default": true,
-          "description": "When True, harvest workspace scripts on project enable. Default: True.",
-          "type": "boolean"
+          "type": "boolean",
+          "description": "When True, harvest workspace scripts on project enable. Default: True."
         },
-        "path": {
-          "default": ".",
-          "description": "Project root directory. Default: current working directory.",
-          "type": "string"
-        },
-        "scope": {
-          "default": "project",
-          "description": "Enable target \u2014 project | global. Default: project.",
-          "type": "string"
+        "dry_run": {
+          "default": false,
+          "type": "boolean",
+          "description": "When True, preview without writing config. Default: False."
         }
       },
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
       "type": "object"
     }
   },
   {
-    "description": "Fork an existing scriptlib entry into a new version for safe modification.",
     "name": "scriptlib_fork",
-    "outputSchema": {
-      "additionalProperties": true,
-      "type": "object"
-    },
+    "description": "Fork an existing scriptlib entry into a new version for safe modification.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
+        "script_id": {
+          "type": "string",
+          "description": "Source scriptlib entry id to fork."
+        },
         "new_variant_or_version": {
-          "description": "New variant or version label for the fork.",
-          "type": "string"
+          "type": "string",
+          "description": "New variant or version label for the fork."
         },
         "path": {
           "default": ".",
-          "description": "Project root for project-scoped catalog. Default: current directory.",
-          "type": "string"
-        },
-        "script_id": {
-          "description": "Source scriptlib entry id to fork.",
-          "type": "string"
+          "type": "string",
+          "description": "Project root for project-scoped catalog. Default: current directory."
         }
       },
       "required": [
@@ -1850,84 +1878,69 @@
         "new_variant_or_version"
       ],
       "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
     }
   },
   {
-    "description": "Copy useful script-like files from the workspace into the local scriptlib catalog.",
     "name": "scriptlib_harvest_workspace",
-    "outputSchema": {
-      "additionalProperties": true,
-      "type": "object"
-    },
+    "description": "Copy useful script-like files from the workspace into the local scriptlib catalog.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
-        "dry_run": {
-          "default": false,
-          "description": "When True, report candidates without copying. Default: False.",
-          "type": "boolean"
-        },
         "path": {
           "default": ".",
-          "description": "Project root to harvest from. Default: current working directory.",
-          "type": "string"
+          "type": "string",
+          "description": "Project root to harvest from. Default: current working directory."
+        },
+        "dry_run": {
+          "default": false,
+          "type": "boolean",
+          "description": "When True, report candidates without copying. Default: False."
         }
       },
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
       "type": "object"
     }
   },
   {
-    "description": "List pinned shared script artifacts with available updates for this workspace.",
     "name": "scriptlib_list_updates",
-    "outputSchema": {
-      "additionalProperties": true,
-      "type": "object"
-    },
+    "description": "List pinned shared script artifacts with available updates for this workspace.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
         "path": {
           "default": ".",
-          "description": "Project root. Default: current working directory.",
-          "type": "string"
+          "type": "string",
+          "description": "Project root. Default: current working directory."
         }
       },
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
       "type": "object"
     }
   },
   {
-    "description": "Promote a validated project script into the shared personal scriptlib catalog.",
     "name": "scriptlib_promote",
-    "outputSchema": {
-      "additionalProperties": true,
-      "type": "object"
-    },
+    "description": "Promote a validated project script into the shared personal scriptlib catalog.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
-        "approved": {
-          "default": false,
-          "description": "When True, confirm promotion approval gate. Default: False.",
-          "type": "boolean"
-        },
-        "channel": {
-          "default": "stable",
-          "description": "Release channel (e.g. stable, beta). Default: stable.",
-          "type": "string"
-        },
-        "dry_run": {
-          "default": false,
-          "description": "When True, preview promotion without writing. Default: False.",
-          "type": "boolean"
+        "script_id": {
+          "type": "string",
+          "description": "Project scriptlib entry id to promote."
         },
         "path": {
           "default": ".",
-          "description": "Project root. Default: current working directory.",
-          "type": "string"
-        },
-        "script_id": {
-          "description": "Project scriptlib entry id to promote.",
-          "type": "string"
+          "type": "string",
+          "description": "Project root. Default: current working directory."
         },
         "variant": {
           "anyOf": [
@@ -1940,35 +1953,63 @@
           ],
           "default": null,
           "description": "Optional variant/version id to promote."
+        },
+        "channel": {
+          "default": "stable",
+          "type": "string",
+          "description": "Release channel (e.g. stable, beta). Default: stable."
+        },
+        "approved": {
+          "default": false,
+          "type": "boolean",
+          "description": "When True, confirm promotion approval gate. Default: False."
+        },
+        "dry_run": {
+          "default": false,
+          "type": "boolean",
+          "description": "When True, preview promotion without writing. Default: False."
         }
       },
       "required": [
         "script_id"
       ],
       "type": "object"
-    }
-  },
-  {
-    "description": "Record a run result and update success score, mistakes, and validation state.",
-    "name": "scriptlib_record_result",
+    },
     "outputSchema": {
       "additionalProperties": true,
       "type": "object"
-    },
+    }
+  },
+  {
+    "name": "scriptlib_record_result",
+    "description": "Record a run result and update success score, mistakes, and validation state.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
-        "duration_ms": {
+        "script_id": {
+          "type": "string",
+          "description": "Scriptlib entry id that was run."
+        },
+        "outcome": {
+          "type": "string",
+          "description": "Run outcome \u2014 success | failure | partial."
+        },
+        "path": {
+          "default": ".",
+          "type": "string",
+          "description": "Project root for project-scoped catalog. Default: current directory."
+        },
+        "variant": {
           "anyOf": [
             {
-              "type": "integer"
+              "type": "string"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "description": "Optional run duration in milliseconds."
+          "description": "Optional variant/version id that was run."
         },
         "notes": {
           "anyOf": [
@@ -1982,14 +2023,17 @@
           "default": null,
           "description": "Optional freeform notes about the run."
         },
-        "outcome": {
-          "description": "Run outcome \u2014 success | failure | partial.",
-          "type": "string"
-        },
-        "path": {
-          "default": ".",
-          "description": "Project root for project-scoped catalog. Default: current directory.",
-          "type": "string"
+        "duration_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional run duration in milliseconds."
         },
         "promote_status": {
           "anyOf": [
@@ -2003,14 +2047,66 @@
           "default": null,
           "description": "Optional promotion status update."
         },
-        "script_id": {
-          "description": "Scriptlib entry id that was run.",
-          "type": "string"
-        },
         "validate_native_copy": {
           "default": false,
-          "description": "When True, validate the native copy artifact. Default: False.",
-          "type": "boolean"
+          "type": "boolean",
+          "description": "When True, validate the native copy artifact. Default: False."
+        }
+      },
+      "required": [
+        "script_id",
+        "outcome"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    }
+  },
+  {
+    "name": "scriptlib_refresh_index",
+    "description": "Rebuild project, global, or combined scriptlib indexes and catalogs.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "default": ".",
+          "type": "string",
+          "description": "Project root for project scope. Default: current working directory."
+        },
+        "scope": {
+          "default": "project",
+          "type": "string",
+          "description": "Index scope \u2014 project | global | all. Default: project."
+        },
+        "dry_run": {
+          "default": false,
+          "type": "boolean",
+          "description": "When True, preview rebuild without writing. Default: False."
+        }
+      },
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    }
+  },
+  {
+    "name": "scriptlib_run",
+    "description": "Run a scriptlib entry using native copy or restored source context.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "script_id": {
+          "type": "string",
+          "description": "Scriptlib entry id to execute."
+        },
+        "path": {
+          "default": ".",
+          "type": "string",
+          "description": "Project root for project-scoped lookup. Default: current directory."
         },
         "variant": {
           "anyOf": [
@@ -2022,55 +2118,8 @@
             }
           ],
           "default": null,
-          "description": "Optional variant/version id that was run."
-        }
-      },
-      "required": [
-        "script_id",
-        "outcome"
-      ],
-      "type": "object"
-    }
-  },
-  {
-    "description": "Rebuild project, global, or combined scriptlib indexes and catalogs.",
-    "name": "scriptlib_refresh_index",
-    "outputSchema": {
-      "additionalProperties": true,
-      "type": "object"
-    },
-    "parameters": {
-      "additionalProperties": false,
-      "properties": {
-        "dry_run": {
-          "default": false,
-          "description": "When True, preview rebuild without writing. Default: False.",
-          "type": "boolean"
+          "description": "Optional variant/version id to run."
         },
-        "path": {
-          "default": ".",
-          "description": "Project root for project scope. Default: current working directory.",
-          "type": "string"
-        },
-        "scope": {
-          "default": "project",
-          "description": "Index scope \u2014 project | global | all. Default: project.",
-          "type": "string"
-        }
-      },
-      "type": "object"
-    }
-  },
-  {
-    "description": "Run a scriptlib entry using native copy or restored source context.",
-    "name": "scriptlib_run",
-    "outputSchema": {
-      "additionalProperties": true,
-      "type": "object"
-    },
-    "parameters": {
-      "additionalProperties": false,
-      "properties": {
         "args": {
           "anyOf": [
             {
@@ -2088,52 +2137,46 @@
         },
         "dry_run": {
           "default": false,
-          "description": "When True, return the command without executing. Default: False.",
-          "type": "boolean"
-        },
-        "path": {
-          "default": ".",
-          "description": "Project root for project-scoped lookup. Default: current directory.",
-          "type": "string"
-        },
-        "script_id": {
-          "description": "Scriptlib entry id to execute.",
-          "type": "string"
+          "type": "boolean",
+          "description": "When True, return the command without executing. Default: False."
         },
         "timeout_seconds": {
           "default": 60,
-          "description": "Max execution time in seconds. Default: 60.",
-          "type": "integer"
-        },
-        "variant": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Optional variant/version id to run."
+          "type": "integer",
+          "description": "Max execution time in seconds. Default: 60."
         }
       },
       "required": [
         "script_id"
       ],
       "type": "object"
-    }
-  },
-  {
-    "description": "Refresh indexes, surface duplicates and promotion candidates, and optionally persist ignore dirs.",
-    "name": "scriptlib_run_maintenance",
+    },
     "outputSchema": {
       "additionalProperties": true,
       "type": "object"
-    },
+    }
+  },
+  {
+    "name": "scriptlib_run_maintenance",
+    "description": "Refresh indexes, surface duplicates and promotion candidates, and optionally persist ignore dirs.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
+        "path": {
+          "default": ".",
+          "type": "string",
+          "description": "Project root. Default: current working directory."
+        },
+        "scope": {
+          "default": "all",
+          "type": "string",
+          "description": "Maintenance scope \u2014 project | global | all. Default: all."
+        },
+        "dry_run": {
+          "default": false,
+          "type": "boolean",
+          "description": "When True, report findings without writing. Default: False."
+        },
         "add_ignore_dirs": {
           "anyOf": [
             {
@@ -2148,36 +2191,30 @@
           ],
           "default": null,
           "description": "Optional directory names to add to harvest ignore list."
-        },
-        "dry_run": {
-          "default": false,
-          "description": "When True, report findings without writing. Default: False.",
-          "type": "boolean"
-        },
-        "path": {
-          "default": ".",
-          "description": "Project root. Default: current working directory.",
-          "type": "string"
-        },
-        "scope": {
-          "default": "all",
-          "description": "Maintenance scope \u2014 project | global | all. Default: all.",
-          "type": "string"
         }
       },
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
       "type": "object"
     }
   },
   {
-    "description": "Search project and global scriptlib entries with lightweight lexical ranking.",
     "name": "scriptlib_search",
-    "outputSchema": {
-      "additionalProperties": true,
-      "type": "object"
-    },
+    "description": "Search project and global scriptlib entries with lightweight lexical ranking.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
+        "query": {
+          "type": "string",
+          "description": "Natural-language or keyword search query."
+        },
+        "path": {
+          "default": ".",
+          "type": "string",
+          "description": "Project root for project-scoped catalog. Default: current directory."
+        },
         "capability": {
           "anyOf": [
             {
@@ -2189,30 +2226,6 @@
           ],
           "default": null,
           "description": "Optional filter by capability tag."
-        },
-        "effect_tier": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Optional filter by side-effect tier."
-        },
-        "harness": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Optional filter by test harness type."
         },
         "language": {
           "anyOf": [
@@ -2226,114 +2239,60 @@
           "default": null,
           "description": "Optional filter by language (e.g. python, bash)."
         },
+        "harness": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional filter by test harness type."
+        },
+        "effect_tier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional filter by side-effect tier."
+        },
         "limit": {
           "default": 5,
-          "description": "Maximum results. Default: 5.",
-          "type": "integer"
-        },
-        "path": {
-          "default": ".",
-          "description": "Project root for project-scoped catalog. Default: current directory.",
-          "type": "string"
-        },
-        "query": {
-          "description": "Natural-language or keyword search query.",
-          "type": "string"
+          "type": "integer",
+          "description": "Maximum results. Default: 5."
         }
       },
       "required": [
         "query"
       ],
       "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
     }
   },
   {
-    "description": "Convenience wrapper for context-mode ctx_search.\nUse when you have a handle/source and want to retrieve only relevant chunks.\n\nPrimary retrieval is context-mode FTS5 \u2014 no embedding API required.",
     "name": "search_index",
-    "outputSchema": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "additionalProperties": true,
-      "properties": {
-        "error": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Error"
-        },
-        "limit": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Limit"
-        },
-        "query": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Query"
-        },
-        "rerank": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Rerank"
-        },
-        "results": {
-          "anyOf": [
-            {
-              "items": {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Results"
-        }
-      },
-      "title": "SearchIndexOutput",
-      "type": "object"
-    },
+    "description": "Convenience wrapper for context-mode ctx_search.\nUse when you have a handle/source and want to retrieve only relevant chunks.\n\nPrimary retrieval is context-mode FTS5 \u2014 no embedding API required.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
+        "query": {
+          "type": "string",
+          "description": "Search query or handle (e.g. handle:abc123)."
+        },
         "limit": {
           "default": 5,
-          "description": "Maximum number of chunks to return. Default: 5.",
-          "type": "integer"
-        },
-        "query": {
-          "description": "Search query or handle (e.g. handle:abc123).",
-          "type": "string"
+          "type": "integer",
+          "description": "Maximum number of chunks to return. Default: 5."
         },
         "rerank": {
           "anyOf": [
@@ -2352,37 +2311,122 @@
         "query"
       ],
       "type": "object"
-    }
-  },
-  {
-    "description": "Search available tools by capability. Call this FIRST before any task.\nReturns lightweight references (~300 tokens total), not full definitions.",
-    "name": "search_tools",
+    },
     "outputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": true,
       "properties": {
         "query": {
-          "title": "Query",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Query"
         },
+        "limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Limit"
+        },
+        "results": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Results"
+        },
+        "rerank": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rerank"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        }
+      },
+      "title": "SearchIndexOutput",
+      "type": "object"
+    }
+  },
+  {
+    "name": "search_tools",
+    "description": "Search available tools by capability. Call this FIRST before any task.\nReturns lightweight references (~300 tokens total), not full definitions.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "query": {
+          "default": "",
+          "type": "string",
+          "description": "Natural-language capability query (e.g. \"codebase symbols\", \"git operations\")."
+        },
+        "top_k": {
+          "default": 5,
+          "type": "integer",
+          "description": "Maximum number of matching tools to return. Default: 5."
+        }
+      },
+      "type": "object"
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": true,
+      "properties": {
         "tools": {
           "items": {
             "additionalProperties": true,
             "properties": {
-              "bundles": {
-                "anyOf": [
-                  {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Bundles"
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "description": {
+                "title": "Description",
+                "type": "string"
+              },
+              "tags": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Tags",
+                "type": "array"
               },
               "defer_loading": {
                 "anyOf": [
@@ -2395,14 +2439,6 @@
                 ],
                 "default": null,
                 "title": "Defer Loading"
-              },
-              "description": {
-                "title": "Description",
-                "type": "string"
-              },
-              "name": {
-                "title": "Name",
-                "type": "string"
               },
               "roles": {
                 "anyOf": [
@@ -2419,6 +2455,21 @@
                 "default": null,
                 "title": "Roles"
               },
+              "bundles": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Bundles"
+              },
               "score": {
                 "anyOf": [
                   {
@@ -2430,13 +2481,6 @@
                 ],
                 "default": null,
                 "title": "Score"
-              },
-              "tags": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Tags",
-                "type": "array"
               }
             },
             "required": [
@@ -2452,6 +2496,10 @@
         "total_available": {
           "title": "Total Available",
           "type": "integer"
+        },
+        "query": {
+          "title": "Query",
+          "type": "string"
         }
       },
       "required": [
@@ -2461,90 +2509,86 @@
       ],
       "title": "SearchToolsOutput",
       "type": "object"
-    },
-    "parameters": {
-      "additionalProperties": false,
-      "properties": {
-        "query": {
-          "default": "",
-          "description": "Natural-language capability query (e.g. \"codebase symbols\", \"git operations\").",
-          "type": "string"
-        },
-        "top_k": {
-          "default": 5,
-          "description": "Maximum number of matching tools to return. Default: 5.",
-          "type": "integer"
-        }
-      },
-      "type": "object"
     }
   },
   {
-    "description": "Store a durable semantic/procedural/lesson record.",
-    "name": "store_fact",
-    "outputSchema": {
-      "additionalProperties": true,
-      "type": "object"
-    },
+    "name": "show_plan_board",
+    "description": "Open an interactive plan task board inline in the chat (MCP App).\n\nReads `.braindrain/plan-reports/plan-task-board.md` when present (from `/masterplan`\nor `daily_plan_audit.py`). Use for visual plan status, not raw markdown dumps.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
-        "category": {
-          "default": "general",
-          "description": "Grouping category. Default: general.",
-          "type": "string"
-        },
-        "confidence": {
-          "default": 0.5,
-          "description": "Confidence score 0.0\u20131.0. Default: 0.5.",
-          "type": "number"
-        },
+        "path": {
+          "default": ".",
+          "type": "string",
+          "description": "Project root containing `.braindrain/plan-reports/`. Default: cwd."
+        }
+      },
+      "type": "object"
+    },
+    "outputSchema": null
+  },
+  {
+    "name": "show_token_dashboard",
+    "description": "Open an interactive token-savings dashboard inline in the chat (MCP App).\n\nShows session totals, per-tool savings, and recent `.braindrain/token-metrics.jsonl`\ncheckpoints. Use when the user wants a visual token dashboard, not just JSON.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "default": ".",
+          "type": "string",
+          "description": "Project root for checkpoint file resolution. Default: current directory."
+        }
+      },
+      "type": "object"
+    },
+    "outputSchema": null
+  },
+  {
+    "name": "store_fact",
+    "description": "Store a durable semantic/procedural/lesson record.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
         "content": {
-          "description": "Durable fact or lesson body text to store.",
-          "type": "string"
-        },
-        "evidence_refs": {
-          "anyOf": [
-            {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Optional file paths, URLs, or index handles supporting the record."
-        },
-        "importance": {
-          "default": 0.5,
-          "description": "Importance score 0.0\u20131.0. Default: 0.5.",
-          "type": "number"
-        },
-        "metadata": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Optional extra structured fields stored with the record."
+          "type": "string",
+          "description": "Durable fact or lesson body text to store."
         },
         "record_class": {
           "default": "semantic",
-          "description": "Record type \u2014 semantic | procedural | lesson. Default: semantic.",
-          "type": "string"
+          "type": "string",
+          "description": "Record type \u2014 semantic | procedural | lesson. Default: semantic."
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional short title for the record."
         },
         "source": {
           "default": "manual",
-          "description": "Provenance label (e.g. manual, dream, session). Default: manual.",
-          "type": "string"
+          "type": "string",
+          "description": "Provenance label (e.g. manual, dream, session). Default: manual."
+        },
+        "category": {
+          "default": "general",
+          "type": "string",
+          "description": "Grouping category. Default: general."
+        },
+        "importance": {
+          "default": 0.5,
+          "type": "number",
+          "description": "Importance score 0.0\u20131.0. Default: 0.5."
+        },
+        "confidence": {
+          "default": 0.5,
+          "type": "number",
+          "description": "Confidence score 0.0\u20131.0. Default: 0.5."
         },
         "tags": {
           "anyOf": [
@@ -2561,41 +2605,56 @@
           "default": null,
           "description": "Optional list of categorization tags."
         },
-        "title": {
+        "evidence_refs": {
           "anyOf": [
             {
-              "type": "string"
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "description": "Optional short title for the record."
+          "description": "Optional file paths, URLs, or index handles supporting the record."
+        },
+        "metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional extra structured fields stored with the record."
         }
       },
       "required": [
         "content"
       ],
       "type": "object"
-    }
-  },
-  {
-    "description": "Update session summary telemetry.\n\nSet end_session=true to finalize and emit a \u22642 KB compact package.",
-    "name": "touch_session",
+    },
     "outputSchema": {
       "additionalProperties": true,
       "type": "object"
-    },
+    }
+  },
+  {
+    "name": "touch_session",
+    "description": "Update session summary telemetry.\n\nSet end_session=true to finalize and emit a \u22642 KB compact package.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
-        "end_session": {
-          "default": false,
-          "description": "When True, finalize session and emit compact package.",
-          "type": "boolean"
+        "session_id": {
+          "type": "string",
+          "description": "Unique session identifier for this work session."
         },
-        "error": {
+        "tool_name": {
           "anyOf": [
             {
               "type": "string"
@@ -2605,7 +2664,7 @@
             }
           ],
           "default": null,
-          "description": "Optional error message if a failure occurred."
+          "description": "Optional last tool invoked in this touch."
         },
         "files_modified": {
           "anyOf": [
@@ -2622,11 +2681,6 @@
           "default": null,
           "description": "Optional list of file paths changed this touch."
         },
-        "index_in_context_mode": {
-          "default": true,
-          "description": "When True and end_session, index package via context-mode.",
-          "type": "boolean"
-        },
         "key_decision": {
           "anyOf": [
             {
@@ -2638,6 +2692,18 @@
           ],
           "default": null,
           "description": "Optional short decision note to append."
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional error message if a failure occurred."
         },
         "open_todos": {
           "anyOf": [
@@ -2654,9 +2720,10 @@
           "default": null,
           "description": "Optional list of remaining todo strings."
         },
-        "session_id": {
-          "description": "Unique session identifier for this work session.",
-          "type": "string"
+        "token_delta": {
+          "default": 0,
+          "type": "integer",
+          "description": "Token count delta to add to session total. Default: 0."
         },
         "timestamp": {
           "anyOf": [
@@ -2670,27 +2737,24 @@
           "default": null,
           "description": "Unix timestamp override; default is current time."
         },
-        "token_delta": {
-          "default": 0,
-          "description": "Token count delta to add to session total. Default: 0.",
-          "type": "integer"
+        "end_session": {
+          "default": false,
+          "type": "boolean",
+          "description": "When True, finalize session and emit compact package."
         },
-        "tool_name": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Optional last tool invoked in this touch."
+        "index_in_context_mode": {
+          "default": true,
+          "type": "boolean",
+          "description": "When True and end_session, index package via context-mode."
         }
       },
       "required": [
         "session_id"
       ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
       "type": "object"
     }
   }
