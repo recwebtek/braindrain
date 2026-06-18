@@ -492,7 +492,12 @@ def _normalize_entry(entry: dict[str, Any], *, root: Path) -> dict[str, Any]:
 
 
 def _normalize_index_entry(
-    entry: dict[str, Any], *, root: Path, project_path: str | None = None
+    entry: dict[str, Any],
+    *,
+    root: Path,
+    project_path: str | None = None,
+    project_settings: dict[str, Any] | None = None,
+    latest_shared_map: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     scope = entry.get("scope") or _scope_for_root(root)
     promotion_state = entry.get("promotion_state") or (
@@ -512,13 +517,25 @@ def _normalize_index_entry(
     payload.setdefault("provenance", {})
     payload.setdefault("shared_pin", None)
     payload.setdefault("update_availability", None)
+
     if project_path:
-        pin = _project_pin(project_path, payload.get("canonical_id", ""))
+        if project_settings is not None:
+            pin_data = (project_settings.get("shared_pins") or {}).get(payload.get("canonical_id", ""))
+            pin = dict(pin_data) if pin_data else None
+        else:
+            pin = _project_pin(project_path, payload.get("canonical_id", ""))
+
         if pin and scope == "shared":
             payload["shared_pin"] = pin
-            latest = _latest_shared_entry(
-                global_scriptlib_root(), payload["canonical_id"], channel=pin.get("channel")
-            )
+            cid = payload["canonical_id"]
+            chan = _normalize_channel(pin.get("channel"), default=PINNED_SHARED_DEFAULT_CHANNEL)
+            if latest_shared_map is not None:
+                # Use pre-computed map to avoid O(N^2) or disk crawl in search loops
+                latest = latest_shared_map.get(f"{cid}:{chan}")
+            else:
+                latest = _latest_shared_entry(
+                    global_scriptlib_root(), cid, channel=chan
+                )
             payload["update_availability"] = bool(
                 latest and latest.get("revision", 0) > int(pin.get("revision", 0))
             )
@@ -1009,10 +1026,38 @@ def search(
 
     tokens = [tok for tok in re.split(r"[^a-z0-9]+", query.lower()) if tok]
     ranked: list[dict[str, Any]] = []
-    project_root = str(project_scriptlib_root(project_path))
+    p_root = project_scriptlib_root(project_path)
+    project_root_str = str(p_root)
+
+    # Optimization: hoist I/O and shared lookup out of the entry loop.
+    # 1. Load project settings once.
+    p_settings = read_settings(p_root) if is_enabled(p_root) else None
+
+    # 2. Pre-calculate latest shared entries if global root is active.
+    g_root = global_scriptlib_root()
+    latest_shared_map: dict[str, dict[str, Any]] = {}
+    if is_enabled(g_root):
+        # Use index instead of directory crawl for faster map building
+        for entry_idx in _load_index(g_root).get("entries") or []:
+            if entry_idx.get("scope") != "shared":
+                continue
+            cid = entry_idx.get("canonical_id", "")
+            chan = _normalize_channel(entry_idx.get("channel"), default=PINNED_SHARED_DEFAULT_CHANNEL)
+            key = f"{cid}:{chan}"
+            existing = latest_shared_map.get(key)
+            if not existing or int(entry_idx.get("revision", 1)) > int(existing.get("revision", 0)):
+                latest_shared_map[key] = entry_idx
+
     for root in roots:
         for entry in _load_index(root).get("entries") or []:
-            entry = _normalize_index_entry(entry, root=root, project_path=project_path)
+            # Pass pre-computed state to avoid redundant disk I/O and crawls.
+            entry = _normalize_index_entry(
+                entry,
+                root=root,
+                project_path=project_path,
+                project_settings=p_settings,
+                latest_shared_map=latest_shared_map,
+            )
             if capability and capability not in (entry.get("tags") or []):
                 continue
             if language and entry.get("language") != language:
@@ -1023,7 +1068,7 @@ def search(
                 continue
             haystack = entry.get("search_text", "")
             match_score = sum(haystack.count(token) for token in tokens) if tokens else 1
-            overlay_bonus = 15.0 if str(root) == project_root else 0.0
+            overlay_bonus = 15.0 if str(root) == project_root_str else 0.0
             pin_bonus = 10.0 if entry.get("shared_pin") else 0.0
             score = (
                 (match_score * 5.0)
