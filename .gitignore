@@ -84,6 +84,7 @@ tests/*
 !tests/fixtures/
 !tests/fixtures/token_benchmark/
 !tests/fixtures/token_benchmark/**
+!tests/fixtures/mcp_tool_schemas_snapshot.json
 !tests/fake_mcp_tool_server.py
 
 # Ruler outputs at repo root (no leading dot)
