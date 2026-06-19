@@ -567,7 +567,12 @@ async def search_index(query: str, limit: int = 5, rerank: bool | None = None) -
 
 @mcp.tool(output_schema=OUTPUT_SCHEMAS["get_token_dashboard"])
 async def get_token_dashboard() -> dict:
-    """Compact token-savings dashboard (estimated tokens, Claude-focused)."""
+    """
+    Compact token-savings JSON snapshot (estimated tokens, Claude-focused).
+
+    For an inline visual dashboard in MCP Apps hosts (Cursor 2.6+), call
+    ``show_token_dashboard`` instead — this tool returns JSON only.
+    """
     return telemetry.snapshot()
 
 
@@ -1040,8 +1045,16 @@ def get_dream_status() -> dict:
 
 @mcp.tool()
 async def ping() -> dict:
-    """Health check - verify BRAINDRAIN is running"""
-    return await workspace_tools.ping_impl(config)
+    """Health check — verify BRAINDRAIN is running and whether MCP Apps tools are loaded."""
+    result = await workspace_tools.ping_impl(config)
+    tool_names = {t.name for t in await mcp.list_tools()}
+    result["mcp_tool_count"] = len(tool_names)
+    result["mcp_apps"] = {
+        "enabled": "show_token_dashboard" in tool_names,
+        "show_token_dashboard": "show_token_dashboard" in tool_names,
+        "show_plan_board": "show_plan_board" in tool_names,
+    }
+    return result
 
 
 @mcp.tool(output_schema=OUTPUT_SCHEMAS["get_env_context"])
@@ -1503,7 +1516,12 @@ def init_project_memory(path: str = ".", dry_run: bool = False) -> dict:
 
 
 register_mcp_app_resources(mcp)
-register_mcp_app_tools(mcp, telemetry=telemetry, tool_decorator=mcp.tool)
+register_mcp_app_tools(
+    mcp,
+    telemetry=telemetry,
+    tool_decorator=mcp.tool,
+    default_project_root=_project_root,
+)
 
 
 def main():
