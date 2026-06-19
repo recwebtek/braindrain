@@ -311,6 +311,30 @@ def build_plan_board_payload(*, path: str | None = None) -> dict[str, Any]:
     )
     archived_count = sum(1 for g in plan_groups if g.get("is_archived"))
 
+    disposition_options: list[str] = []
+    try:
+        import sys
+
+        root_str = str(root.resolve())
+        if root_str not in sys.path:
+            sys.path.insert(0, root_str)
+        from scripts.daily_plan_audit import VALID_DISPOSITIONS
+
+        disposition_options = list(VALID_DISPOSITIONS)
+    except ImportError:
+        disposition_options = [
+            "active",
+            "meta",
+            "research-needed",
+            "replan-needed",
+            "merge-ready",
+            "needs-fix",
+            "backlogged",
+            "scratched",
+            "implemented",
+            "archived",
+        ]
+
     return {
         "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "project_root": str(root),
@@ -329,6 +353,7 @@ def build_plan_board_payload(*, path: str | None = None) -> dict[str, Any]:
         "next_actions": _load_next_actions_preview(next_actions_path),
         "has_master_plan": master_path.is_file(),
         "has_next_actions": next_actions_path.is_file(),
+        "disposition_options": disposition_options,
         "hint": (
             "Run /masterplan or python3 scripts/daily_plan_audit.py to refresh "
             ".braindrain/plan-reports/ when the board is empty."

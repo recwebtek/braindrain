@@ -300,6 +300,21 @@ def test_plan_board_html_has_action_bridge():
     assert "cancel_plan" in html
     assert "run-masterplan" in html
     assert "show-archived" in html
+    assert "session.showArchived = false" in html
+    assert "ts-tag" in html
+    assert "renderTimestampTags" in html
+    assert "date-filter" in html
+    assert "ts-current-month" in html
+    assert "matchesDateFilter" in html
+    assert "open-cursor" in html
+    assert "openPlanInEditor" in html
+    assert "showPlanOpenDialog" in html
+    assert "copyTextFallback" in html
+    assert "ui/open-link" in html
+    assert "editorFileUriVariants" in html
+    assert "plan-disposition" in html
+    assert "renderDispositionSelect" in html
+    assert "set_disposition" in html
     assert "__planBoardSession" in html
     assert "planDialogCancelPlan" in html
     assert "plan-modal" in html
@@ -333,6 +348,57 @@ todos:
     )
     assert payload.get("plan_groups") is not None
     assert payload["action_result"]["proposals"]
+
+
+def test_audit_detects_pathish_without_backticks(tmp_path: Path):
+    from braindrain.mcp_apps.plan_actions import audit_plan_implementation
+
+    target = tmp_path / "braindrain" / "config_schema.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("# schema\n", encoding="utf-8")
+    plan_dir = tmp_path / "plans"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "demo.plan.md").write_text(
+        """---
+todos:
+  - id: t1
+    content: "Ship braindrain/config_schema.py validation"
+    status: pending
+---
+# Demo
+""",
+        encoding="utf-8",
+    )
+    audit = audit_plan_implementation(path=str(tmp_path), source="plans/demo.plan.md")
+    assert len(audit["proposals"]) >= 1
+    assert audit["proposals"][0]["suggested_status"] == "completed"
+
+
+def test_audit_uses_plan_body_snippet(tmp_path: Path):
+    from braindrain.mcp_apps.plan_actions import audit_plan_implementation
+
+    target = tmp_path / "braindrain" / "demo.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("# demo\n", encoding="utf-8")
+    plan_dir = tmp_path / "plans"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "demo.plan.md").write_text(
+        """---
+todos:
+  - id: phase-a-demo
+    content: "Implement demo module"
+    status: pending
+---
+# Demo
+
+## phase-a-demo
+Add `braindrain/demo.py` for the demo module.
+""",
+        encoding="utf-8",
+    )
+    audit = audit_plan_implementation(path=str(tmp_path), source="plans/demo.plan.md")
+    assert audit["proposals"]
+    assert audit["proposals"][0]["todo_id"] == "phase-a-demo"
 
 
 def test_force_cancel_archive_plan(tmp_path: Path):
@@ -371,30 +437,79 @@ overview: Old idea
     assert "status: cancelled" in text
 
 
-def test_compute_action_gates_enables_cancel_without_branch_or_pr():
+def test_compute_action_gates_enables_cancel_without_branch_or_pr(tmp_path: Path):
     from braindrain.mcp_apps.plan_gates import compute_action_gates
 
+    plan_path = tmp_path / "plans" / "ai-shell.plan.md"
+    plan_path.parent.mkdir(parents=True)
+    plan_path.write_text("---\ndisposition: replan-needed\n---\n# AI Shell\n", encoding="utf-8")
     group = {
-        "source": ".cursor/plans/ai-shell.plan.md",
+        "source": "plans/ai-shell.plan.md",
         "disposition": "replan-needed",
         "branch": "—",
         "todo_summary": {"total": 9, "completed": 0, "cancelled": 0},
     }
-    gates = compute_action_gates(group, repo_root=Path("/tmp"))
+    gates = compute_action_gates(group, repo_root=tmp_path)
     assert gates["cancel_plan"]["enabled"] is True
 
 
-def test_compute_action_gates_disables_cancel_with_branch():
+def test_compute_action_gates_enables_cancel_with_branch(tmp_path: Path):
     from braindrain.mcp_apps.plan_gates import compute_action_gates
 
+    plan_path = tmp_path / "plans" / "demo.plan.md"
+    plan_path.parent.mkdir(parents=True)
+    plan_path.write_text("---\ndisposition: active\n---\n# Demo\n", encoding="utf-8")
     group = {
-        "source": ".cursor/plans/demo.plan.md",
+        "source": "plans/demo.plan.md",
         "disposition": "active",
         "branch": "feat/demo",
         "todo_summary": {"total": 2, "completed": 0, "cancelled": 0},
     }
-    gates = compute_action_gates(group, repo_root=Path("/tmp"))
-    assert gates["cancel_plan"]["enabled"] is False
+    gates = compute_action_gates(group, repo_root=tmp_path)
+    assert gates["cancel_plan"]["enabled"] is True
+    assert gates["archive"]["enabled"] is True
+
+
+def test_compute_action_gates_enables_archive_for_active_plan(tmp_path: Path):
+    from braindrain.mcp_apps.plan_gates import compute_action_gates
+
+    plan_path = tmp_path / "plans" / "demo.plan.md"
+    plan_path.parent.mkdir(parents=True)
+    plan_path.write_text("---\ndisposition: active\n---\n# Demo\n", encoding="utf-8")
+    group = {
+        "source": "plans/demo.plan.md",
+        "disposition": "active",
+        "branch": "docs/hermes-gap",
+        "todo_summary": {"total": 2, "completed": 0, "cancelled": 0},
+    }
+    gates = compute_action_gates(group, repo_root=tmp_path)
+    assert gates["archive"]["enabled"] is True
+
+
+def test_archive_active_plan_with_branch(tmp_path: Path):
+    from braindrain.mcp_apps.plan_actions import archive_plan
+
+    plan_dir = tmp_path / "plans"
+    plan_dir.mkdir(parents=True)
+    plan_path = plan_dir / "hermes.plan.md"
+    plan_path.write_text(
+        """---
+disposition: active
+branch: docs/hermes-gap
+---
+# Hermes gap
+""",
+        encoding="utf-8",
+    )
+    result = archive_plan(
+        path=str(tmp_path),
+        source="plans/hermes.plan.md",
+        confirm=True,
+        force=False,
+    )
+    assert result["ok"] is True
+    assert result["disposition"] == "archived"
+    assert (plan_dir / ".plan.archives" / "hermes.plan.md").is_file()
 
 
 def test_compute_action_gates_disables_merge_ready_without_pr(tmp_path: Path):
@@ -523,6 +638,88 @@ def test_build_plan_board_includes_archived(tmp_path: Path):
     payload = build_plan_board_payload(path=str(tmp_path))
     assert payload["summary"]["archived_count"] >= 1
     assert any(g.get("is_archived") for g in payload["plan_groups"])
+
+
+def test_load_plan_file_meta_timestamps(tmp_path: Path):
+    from braindrain.mcp_apps.plan_enrich import load_plan_file_meta
+
+    plan_dir = tmp_path / "plans"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "dated.plan.md").write_text(
+        """---
+name: Dated plan
+created_at: 2026-06-01T10:00:00Z
+last_modified_at: 2026-06-19T14:30:00Z
+last_modified_by_model: auto
+---
+# Dated
+""",
+        encoding="utf-8",
+    )
+    meta = load_plan_file_meta(tmp_path, "plans/dated.plan.md")
+    assert meta["updated_at"] == "2026-06-19T14:30:00Z"
+    assert meta["created_at"] == "2026-06-01T10:00:00Z"
+    tags = meta.get("timestamp_tags") or []
+    assert any("updated" in t for t in tags)
+    assert any("created 2026-06-01" in t for t in tags)
+    assert any("model auto" in t for t in tags)
+
+
+def test_build_plan_board_timestamp_tags_on_archived(tmp_path: Path):
+    reports = tmp_path / ".braindrain" / "plan-reports"
+    reports.mkdir(parents=True)
+    (reports / "plan-task-board.md").write_text(
+        "| Seq | Plan | IDE | Status | Owner | Item | Source | Gaps |\n|-----|------|-----|--------|-------|------|--------|------|\n",
+        encoding="utf-8",
+    )
+    (reports / "master-plan.md").write_text("# Master\n", encoding="utf-8")
+    archive_dir = tmp_path / ".cursor" / "plans" / ".plan.archives"
+    archive_dir.mkdir(parents=True)
+    (archive_dir / "gone.plan.md").write_text(
+        """---
+disposition: scratched
+name: Gone
+last_modified_at: 2026-06-18T09:15:00Z
+---
+# Gone
+""",
+        encoding="utf-8",
+    )
+    payload = build_plan_board_payload(path=str(tmp_path))
+    archived = [g for g in payload["plan_groups"] if g.get("is_archived")]
+    assert len(archived) == 1
+    assert archived[0].get("timestamp_tags")
+    assert archived[0].get("updated_at") == "2026-06-18T09:15:00Z"
+
+
+def test_set_plan_disposition(tmp_path: Path):
+    from braindrain.mcp_apps.plan_actions import set_plan_disposition
+
+    plan_dir = tmp_path / "plans"
+    plan_dir.mkdir(parents=True)
+    plan_path = plan_dir / "demo.plan.md"
+    plan_path.write_text("---\ndisposition: active\n---\n# Demo\n", encoding="utf-8")
+    result = set_plan_disposition(
+        path=str(tmp_path),
+        source="plans/demo.plan.md",
+        disposition="backlogged",
+        confirm=True,
+    )
+    assert result["ok"] is True
+    assert "disposition: backlogged" in plan_path.read_text(encoding="utf-8")
+
+
+def test_build_plan_board_includes_disposition_options(tmp_path: Path):
+    reports = tmp_path / ".braindrain" / "plan-reports"
+    reports.mkdir(parents=True)
+    (reports / "plan-task-board.md").write_text(
+        "| Seq | Plan | IDE | Status | Owner | Item | Source | Gaps |\n|-----|------|-----|--------|-------|------|--------|------|\n",
+        encoding="utf-8",
+    )
+    (reports / "master-plan.md").write_text("# Master\n", encoding="utf-8")
+    payload = build_plan_board_payload(path=str(tmp_path))
+    assert "backlogged" in payload["disposition_options"]
+    assert "active" in payload["disposition_options"]
 
 
 def test_plan_board_action_tools_registered():

@@ -156,6 +156,7 @@ def register_mcp_app_tools(
         dry_run: bool = True,
         proposals: list[dict[str, object]] | None = None,
         branch: str = "",
+        disposition: str = "",
     ) -> ToolResult:
         """
         App-only refresh for the plan board iframe (not for the model).
@@ -166,7 +167,7 @@ def register_mcp_app_tools(
         Args:
             path: Project root containing `.braindrain/plan-reports/`. Default: cwd.
             action: Optional action key (audit, apply_sync, merge_ready, archive,
-                cancel_plan, continue, research).
+                cancel_plan, continue, research, set_disposition).
             source: Repo-relative plan path for action dispatch.
             confirm: Required true for write actions.
             force: Force cancel/archive (sets disposition scratched + overview note).
@@ -174,6 +175,7 @@ def register_mcp_app_tools(
             dry_run: Audit read-only flag (default true).
             proposals: Todo sync proposals for apply_sync.
             branch: Optional branch hint for handoff actions.
+            disposition: Target disposition for set_disposition.
         """
         payload = dispatch_plan_board_action(
             path=path or default_path,
@@ -185,6 +187,7 @@ def register_mcp_app_tools(
             dry_run=dry_run,
             proposals=proposals,
             branch=branch,
+            disposition=disposition,
         )
         return ToolResult(structured_content=payload)
 

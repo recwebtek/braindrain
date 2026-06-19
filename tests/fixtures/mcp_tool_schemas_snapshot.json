@@ -1023,7 +1023,7 @@
         "action": {
           "default": "",
           "type": "string",
-          "description": "Optional action key (audit, apply_sync, merge_ready, archive,\ncancel_plan, continue, research)."
+          "description": "Optional action key (audit, apply_sync, merge_ready, archive,\ncancel_plan, continue, research, set_disposition)."
         },
         "source": {
           "default": "",
@@ -1070,6 +1070,11 @@
           "default": "",
           "type": "string",
           "description": "Optional branch hint for handoff actions."
+        },
+        "disposition": {
+          "default": "",
+          "type": "string",
+          "description": "Target disposition for set_disposition."
         }
       },
       "type": "object"

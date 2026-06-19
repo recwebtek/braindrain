@@ -80,17 +80,16 @@ def compute_action_gates(
     else:
         merge_reason = ""
 
-    archive_ok = plan_exists and (
-        disposition in {"merge-ready", "implemented"}
-        or (pr_state == "merged" and all_done)
-    )
+    archive_ok = plan_exists and disposition not in {"archived", "scratched"}
     if not archive_ok:
         if not plan_exists:
             archive_reason = "Plan file missing"
         elif disposition in {"archived", "scratched"}:
             archive_reason = f"Already {disposition}"
         else:
-            archive_reason = "Requires merge-ready/implemented or merged PR with todos done"
+            archive_reason = "Cannot archive this plan"
+    elif has_branch or has_pr:
+        archive_reason = ""
     else:
         archive_reason = ""
 
@@ -104,20 +103,13 @@ def compute_action_gates(
     else:
         continue_reason = "" if has_branch else "Branch will be created on continue"
 
-    # Cancel/scratch: any open plan without branch and without PR (UI + server).
-    cancel_ok = (
-        bool(source)
-        and disposition not in {"archived", "scratched"}
-        and not has_branch
-        and not has_pr
-    )
+    # Cancel/scratch: any open plan (branch/PR allowed — branch is not deleted).
+    cancel_ok = bool(source) and plan_exists and disposition not in {"archived", "scratched"}
     if not cancel_ok:
         if disposition in {"archived", "scratched"}:
             cancel_reason = f"Already {disposition}"
-        elif has_branch:
-            cancel_reason = "Plan has a branch — use Archive after merge-ready"
-        elif has_pr:
-            cancel_reason = "Plan has a PR — use Archive after merge"
+        elif not plan_exists:
+            cancel_reason = "Plan file missing"
         elif not source:
             cancel_reason = "No plan source path"
         else:

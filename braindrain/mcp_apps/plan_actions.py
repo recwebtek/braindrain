@@ -17,8 +17,9 @@ from braindrain.mcp_apps.plan_paths import resolve_plan_path
 _PATH_RE = re.compile(
     r"`([^`]+)`|"
     r'"([^"]+\.(?:py|md|yaml|yml|json|toml))"|'
-    r"(?<![\w./])((?:tests|braindrain|scripts)/[\w./-]+)"
+    r"(?<![\w./])((?:tests|braindrain|scripts|config)/[\w./-]+)"
 )
+_FILE_EXT_RE = re.compile(r"\b((?:[\w.-]+/)+[\w.-]+\.(?:py|md|yaml|yml|json|toml))\b")
 _CONFIDENCE_ORDER = {"high": 3, "medium": 2, "low": 1}
 
 
@@ -30,12 +31,124 @@ def _ensure_scripts_importable(repo_root: Path) -> None:
 
 def _extract_paths(content: str) -> list[str]:
     paths: list[str] = []
+    try:
+        from scripts.daily_plan_audit import extract_path_refs
+
+        paths.extend(extract_path_refs(content))
+    except ImportError:
+        pass
     for match in _PATH_RE.finditer(content):
         path = next(g for g in match.groups() if g)
         path = path.strip().strip("'\"")
         if path and path not in paths:
             paths.append(path)
+    for match in _FILE_EXT_RE.finditer(content):
+        path = match.group(1).strip()
+        if path and path not in paths:
+            paths.append(path)
     return paths
+
+
+def _keyword_path_hints(content: str, repo_root: Path) -> list[str]:
+    """Map common todo phrases to known repo paths when files exist."""
+    lowered = content.lower()
+    hints: list[str] = []
+    checks: list[tuple[tuple[str, ...], str]] = [
+        (("snapshot", "schema"), "tests/fixtures/mcp_tool_schemas_snapshot.json"),
+        (("mcp_tool_schemas",), "tests/fixtures/mcp_tool_schemas_snapshot.json"),
+        (("config_schema",), "braindrain/config_schema.py"),
+        (("token_benchmark",), "braindrain/token_benchmark.py"),
+        (("plan_enrich",), "braindrain/mcp_apps/plan_enrich.py"),
+        (("plan_actions",), "braindrain/mcp_apps/plan_actions.py"),
+        (("streamable",), "braindrain/server.py"),
+        (("primer",), "braindrain/primer/__init__.py"),
+    ]
+    for keywords, rel in checks:
+        if all(k in lowered for k in keywords) and (repo_root / rel).is_file():
+            hints.append(rel)
+    return hints
+
+
+def _todo_plan_snippet(plan_text: str, todo: dict[str, str]) -> str:
+    """Collect plan body lines that mention this todo id (phase sections)."""
+    todo_id = str(todo.get("id") or "").strip()
+    if not todo_id or "---" not in plan_text:
+        return ""
+    body = plan_text.split("---", 2)[-1]
+    block: list[str] = []
+    capturing = False
+    for line in body.splitlines():
+        if todo_id in line:
+            capturing = True
+        if capturing:
+            block.append(line)
+            if len(block) >= 20:
+                break
+    return "\n".join(block)
+
+
+def _branch_changed_files(repo_root: Path, branch: str) -> list[str]:
+    branch = branch.strip()
+    if not branch or branch in {"—", "-", "none", "n/a"}:
+        return []
+    for base_ref in ("main", "master", "origin/main", "origin/master"):
+        try:
+            verify = subprocess.run(
+                ["git", "rev-parse", "--verify", base_ref],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if verify.returncode != 0:
+                continue
+            for diff_args in (
+                ["git", "diff", "--name-only", f"{base_ref}...{branch}"],
+                ["git", "diff", "--name-only", base_ref, branch],
+            ):
+                diff = subprocess.run(
+                    diff_args,
+                    cwd=repo_root,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if diff.returncode == 0 and diff.stdout.strip():
+                    return [ln.strip() for ln in diff.stdout.splitlines() if ln.strip()]
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+    return []
+
+
+def _todo_branch_evidence(todo: dict[str, str], branch_files: list[str]) -> list[str]:
+    if not branch_files:
+        return []
+    haystack = f"{todo.get('id', '')} {todo.get('content', '')}".lower()
+    tokens = {t for t in re.findall(r"[a-z][a-z0-9_/-]{3,}", haystack)}
+    tokens -= {
+        "phase",
+        "server",
+        "plan",
+        "todo",
+        "item",
+        "with",
+        "from",
+        "that",
+        "this",
+        "merge",
+        "update",
+        "implement",
+        "modernization",
+        "baseline",
+    }
+    matched: list[str] = []
+    for path in branch_files:
+        normalized = path.lower().replace("/", " ").replace("-", " ").replace("_", " ")
+        for tok in tokens:
+            if tok in normalized or tok in path.lower():
+                matched.append(path)
+                break
+    return matched
 
 
 def _resolve_root(path: str) -> Path:
@@ -51,16 +164,6 @@ def _load_plan_text(repo_root: Path, source: str) -> tuple[Path, str]:
     if not plan_path.is_file():
         raise FileNotFoundError(f"Plan not found: {source}")
     return plan_path, plan_path.read_text(encoding="utf-8", errors="ignore")
-
-
-def _todo_summary_from_todos(todos: list[dict[str, str]]) -> dict[str, int]:
-    paths: list[str] = []
-    for match in _PATH_RE.finditer(content):
-        path = next(g for g in match.groups() if g)
-        path = path.strip().strip("'\"")
-        if path and path not in paths:
-            paths.append(path)
-    return paths
 
 
 def _resolve_pr_state(pr_url: str, *, timeout: float = 8.0) -> str:
@@ -101,12 +204,21 @@ def _todo_summary_from_todos(todos: list[dict[str, str]]) -> dict[str, int]:
     return summary
 
 
-def _audit_todo(repo_root: Path, todo: dict[str, str]) -> dict[str, Any] | None:
+def _audit_todo(
+    repo_root: Path,
+    todo: dict[str, str],
+    *,
+    plan_snippet: str = "",
+    branch_files: list[str] | None = None,
+) -> dict[str, Any] | None:
     status = str(todo.get("status") or "pending").lower()
     if status in {"completed", "cancelled"}:
         return None
     content = str(todo.get("content") or "")
-    paths = _extract_paths(content)
+    combined = "\n".join(part for part in (content, plan_snippet) if part)
+    paths = _extract_paths(combined)
+    paths.extend(_keyword_path_hints(combined, repo_root))
+    paths = list(dict.fromkeys(paths))
     evidence: list[str] = []
     found = 0
     for rel in paths:
@@ -117,6 +229,17 @@ def _audit_todo(repo_root: Path, todo: dict[str, str]) -> dict[str, Any] | None:
         else:
             evidence.append(f"missing: {rel}")
     if not paths:
+        branch_hits = _todo_branch_evidence(todo, branch_files or [])
+        existing_branch = [p for p in branch_hits if (repo_root / p).is_file()]
+        if existing_branch:
+            return {
+                "todo_id": todo.get("id") or "",
+                "content": content,
+                "current_status": status,
+                "suggested_status": "completed",
+                "confidence": "medium",
+                "evidence": [f"branch: {p}" for p in existing_branch[:5]],
+            }
         if "snapshot" in content.lower() and "schema" in content.lower():
             fixture = repo_root / "tests/fixtures/mcp_tool_schemas_snapshot.json"
             if fixture.is_file():
@@ -166,10 +289,18 @@ def audit_plan_implementation(
     fm = parse_plan_frontmatter(text)
     todos = parse_frontmatter_todos(text)
     rel_source = plan_path.relative_to(repo_root).as_posix()
+    branch = str(fm.get("branch") or "").strip()
+    branch_files = _branch_changed_files(repo_root, branch)
 
     proposals: list[dict[str, Any]] = []
     for todo in todos:
-        proposal = _audit_todo(repo_root, todo)
+        snippet = _todo_plan_snippet(text, todo)
+        proposal = _audit_todo(
+            repo_root,
+            todo,
+            plan_snippet=snippet,
+            branch_files=branch_files,
+        )
         if proposal:
             proposals.append(proposal)
 
@@ -315,6 +446,40 @@ def mark_plan_merge_ready(*, path: str, source: str, confirm: bool = False) -> d
     plan_path.write_text(new_text, encoding="utf-8")
     _refresh_plan_reports(repo_root)
     return {"ok": True, "disposition": "merge-ready", "source": source}
+
+
+def set_plan_disposition(
+    *,
+    path: str,
+    source: str,
+    disposition: str,
+    confirm: bool = False,
+) -> dict[str, Any]:
+    """Set plan frontmatter ``disposition`` to any auditor-valid value."""
+    if not confirm:
+        return {"ok": False, "reason": "confirm=True required"}
+    repo_root = _resolve_root(path)
+    _ensure_scripts_importable(repo_root)
+    from scripts.daily_plan_audit import VALID_DISPOSITIONS
+    from scripts.plan_branch_utils import set_frontmatter_key
+
+    disp = str(disposition or "").strip().lower()
+    if disp not in VALID_DISPOSITIONS:
+        return {
+            "ok": False,
+            "reason": f"Invalid disposition: {disposition}. Valid: {', '.join(VALID_DISPOSITIONS)}",
+        }
+
+    plan_path, text = _load_plan_text(repo_root, source)
+    new_text = set_frontmatter_key(text, "disposition", disp)
+    plan_path.write_text(new_text, encoding="utf-8")
+    _refresh_plan_reports(repo_root)
+    return {
+        "ok": True,
+        "disposition": disp,
+        "source": source,
+        "refresh_hint": "Run /masterplan to sync master index and task board",
+    }
 
 
 def archive_plan(
@@ -497,6 +662,7 @@ def dispatch_plan_board_action(
     dry_run: bool = True,
     proposals: list[dict[str, Any]] | None = None,
     branch: str = "",
+    disposition: str = "",
 ) -> dict[str, Any]:
     """Route plan-board iframe actions through poll_plan_board (host-safe single tool)."""
     from braindrain.mcp_apps.data import build_plan_board_payload
@@ -535,6 +701,13 @@ def dispatch_plan_board_action(
         result = plan_board_handoff(action="continue", source=source, branch=branch)
     elif action_key == "masterplan":
         result = run_masterplan_refresh(path=path)
+    elif action_key in {"set_disposition", "disposition"}:
+        result = set_plan_disposition(
+            path=path,
+            source=source,
+            disposition=disposition,
+            confirm=confirm,
+        )
     else:
         result = {"ok": False, "reason": f"Unknown action: {action_key}"}
 

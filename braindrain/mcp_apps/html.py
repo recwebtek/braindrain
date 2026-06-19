@@ -198,6 +198,129 @@ function sendChatMessage(text) {
   sendNotification("ui/message", { message: text });
 }
 
+async function openExternalLink(url) {
+  return sendRequest("ui/open-link", { url: url }, 8000);
+}
+
+function editorFileUriVariants(absPath) {
+  const normalized = String(absPath || "").replace(/\\/g, "/");
+  if (!normalized) return [];
+  const noLead = normalized.replace(/^\/+/, "");
+  const segments = noLead.split("/").map(encodeURIComponent).join("/");
+  return [
+    "cursor://file/" + segments,
+    "vscode://file/" + segments,
+    "cursor://file" + encodeURI(normalized),
+    "vscode://file" + encodeURI(normalized)
+  ];
+}
+
+function copyTextFallback(text) {
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function tryOpenPlanUri(url) {
+  try {
+    await openExternalLink(url);
+    return true;
+  } catch (_) {}
+  try {
+    const w = window.open(url, "_blank", "noopener,noreferrer");
+    return !!w;
+  } catch (_) {}
+  return false;
+}
+
+function showPlanOpenDialog(abs, rel) {
+  const relAt = "@" + rel;
+  const modal = ensurePlanModal();
+  document.getElementById("plan-modal-title").textContent = "Open plan in Cursor";
+  document.getElementById("plan-modal-body").innerHTML =
+    "<p class='hint'>The plan board runs in a sandboxed iframe — it cannot open files directly. Path copied to clipboard.</p>" +
+    "<label class='modal-label'>Chat @ reference<input id='plan-open-rel' readonly value='" + esc(relAt) + "' /></label>" +
+    "<label class='modal-label'>Absolute path (⌘P)<input id='plan-open-abs' readonly value='" + esc(abs) + "' /></label>" +
+    "<p class='hint' id='plan-open-status'>Use <strong>Send to chat</strong> then click the @ file link, or ⌘P and paste the path.</p>";
+  ["plan-open-rel", "plan-open-abs"].forEach(function(id) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("focus", function() { el.select(); });
+  });
+  const actions = document.getElementById("plan-modal-actions");
+  actions.innerHTML = "";
+  function close() { hidePlanModal(); }
+
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.textContent = "Copy path";
+  copyBtn.onclick = function() {
+    if (copyTextFallback(abs)) copyBtn.textContent = "Copied!";
+  };
+  const chatBtn = document.createElement("button");
+  chatBtn.type = "button";
+  chatBtn.className = "primary";
+  chatBtn.textContent = "Send to chat";
+  chatBtn.onclick = function() {
+    sendChatMessage("Open this plan file in the editor: " + relAt);
+    const st = document.getElementById("plan-open-status");
+    if (st) st.textContent = "Sent to chat — click the @ file link in the new message.";
+    const status = document.getElementById("status");
+    if (status) status.textContent = "Plan open request sent to chat";
+  };
+  const tryBtn = document.createElement("button");
+  tryBtn.type = "button";
+  tryBtn.textContent = "Try deep link";
+  tryBtn.onclick = async function() {
+    tryBtn.disabled = true;
+    for (let i = 0; i < editorFileUriVariants(abs).length; i++) {
+      if (await tryOpenPlanUri(editorFileUriVariants(abs)[i])) {
+        close();
+        return;
+      }
+    }
+    tryBtn.disabled = false;
+    tryBtn.textContent = "Deep link blocked";
+  };
+  const doneBtn = document.createElement("button");
+  doneBtn.type = "button";
+  doneBtn.textContent = "Close";
+  doneBtn.onclick = close;
+  actions.appendChild(copyBtn);
+  actions.appendChild(chatBtn);
+  actions.appendChild(tryBtn);
+  actions.appendChild(doneBtn);
+  modal.classList.remove("hidden");
+  modal.setAttribute("aria-hidden", "false");
+}
+
+async function openPlanInEditor(source, projectRoot, planAbs) {
+  const abs = planAbs || planAbsolutePath(projectRoot, source);
+  const rel = String(source || "").replace(/^\/+/, "");
+  if (!abs || !rel) return;
+  copyTextFallback(abs);
+  showPlanOpenDialog(abs, rel);
+  const status = document.getElementById("status");
+  if (status) status.textContent = "Plan path copied — use dialog to open";
+  for (let i = 0; i < editorFileUriVariants(abs).length; i++) {
+    if (await tryOpenPlanUri(editorFileUriVariants(abs)[i])) {
+      if (status) status.textContent = "Deep link sent — check editor";
+      hidePlanModal();
+      return;
+    }
+  }
+}
+
 async function bootstrap() {
   const status = document.getElementById("status");
   const initParams = {
@@ -293,6 +416,13 @@ tr:hover td { background: color-mix(in srgb, var(--accent) 6%, transparent); }
 .plan-meta code { font-size: 10px; background: var(--bg); padding: 1px 4px; border-radius: 4px; }
 .plan-meta a { color: var(--accent); text-decoration: none; }
 .plan-meta a:hover { text-decoration: underline; }
+.plan-meta a.open-cursor, .rollup button.open-cursor, .rollup button.open-plan-file { color: var(--accent); text-decoration: none; font-weight: 500; background: none; border: none; padding: 0; font: inherit; cursor: pointer; font-size: inherit; }
+.plan-meta a.open-cursor:hover, .rollup button.open-cursor:hover, .rollup button.open-plan-file:hover { text-decoration: underline; }
+.pill.ts-tag { border-color: rgba(139, 92, 246, 0.45); color: var(--muted); font-size: 9px; letter-spacing: 0.02em; }
+.pill.ts-tag.ts-current-month { border-color: #ca8a04; color: #fde047; background: rgba(234, 179, 8, 0.14); }
+.plan-meta .disp-set { display: inline-flex; align-items: center; gap: 4px; }
+.plan-meta select.plan-disposition { font-size: 10px; padding: 2px 4px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg); color: var(--text); max-width: 150px; cursor: pointer; }
+.plan-meta select.plan-disposition:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
 .plan-body { padding: 10px 12px 12px; }
 .section-title { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 10px 0 6px; }
 .section-title:first-child { margin-top: 0; }
@@ -343,6 +473,7 @@ tr:hover td { background: color-mix(in srgb, var(--accent) 6%, transparent); }
 .plan-modal-body ul { margin: 6px 0 0; padding-left: 18px; }
 .modal-label { display: block; font-size: 11px; color: var(--muted); margin-top: 8px; }
 .modal-label textarea { display: block; width: 100%; margin-top: 4px; padding: 8px; font: inherit; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); resize: vertical; }
+.modal-label input[readonly] { display: block; width: 100%; margin-top: 4px; padding: 6px 8px; font: inherit; font-size: 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); }
 .plan-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .plan-modal-actions button { font-size: 11px; border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
 .plan-modal-actions button.primary { background: color-mix(in srgb, var(--warn) 18%, var(--panel)); border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); color: var(--warn); }
@@ -591,11 +722,30 @@ function groupHasPr(group) {
 }
 
 function canCancelPlan(group) {
-  if (gateEnabled(group.action_gates || {}, "cancel_plan")) return true;
-  const disp = String(group.disposition || "").toLowerCase();
-  if (disp === "archived" || disp === "scratched") return false;
-  if (!group.source) return false;
-  return !hasMeaningfulBranch(group.branch) && !groupHasPr(group);
+  return gateEnabled(group.action_gates || {}, "cancel_plan");
+}
+
+function planAbsolutePath(projectRoot, source) {
+  const root = String(projectRoot || "").replace(/\\/g, "/").replace(/\/+$/, "");
+  const rel = String(source || "").replace(/^\/+/, "");
+  if (!rel) return "";
+  if (!root || root === ".") return rel;
+  return root + "/" + rel;
+}
+
+function renderCursorPlanLink(source, planAbs) {
+  if (!source) return "";
+  return `<button type="button" class="open-cursor" data-open-source="${esc(source)}" data-plan-abs="${esc(planAbs || "")}" title="Open plan in Cursor editor">Open in Cursor</button>`;
+}
+
+function renderDispositionSelect(group, options) {
+  const current = String(group.disposition || "active").trim();
+  const src = group.source || "";
+  const opts = (options || []).map(function(d) {
+    const sel = d === current ? " selected" : "";
+    return `<option value="${esc(d)}"${sel}>${esc(d)}</option>`;
+  }).join("");
+  return `<label class="disp-set">Disposition <select class="plan-disposition" data-source="${esc(src)}" data-prev="${esc(current)}" title="Set plan frontmatter disposition">${opts}</select></label>`;
 }
 
 function renderActionButtons(group) {
@@ -616,8 +766,8 @@ function renderActionButtons(group) {
     ${btn("apply_sync", "Apply sync", gateEnabled(gates, "apply_sync"), "", "Apply Recheck proposals to plan frontmatter todos")}
     ${btn("research", "Research", gateEnabled(gates, "research"), "", "Send a deep-research prompt to chat")}
     ${btn("merge_ready", "Merge-ready", gateEnabled(gates, "merge_ready"))}
-    ${btn("archive", "Archive", gateEnabled(gates, "archive"))}
-    ${btn("cancel_plan", "Cancel plan", canCancelPlan(group), "danger", "Cancel outdated plan: scratches disposition, cancels todos, moves to archive")}
+    ${btn("archive", "Archive", gateEnabled(gates, "archive"), "", "Move plan to .plan.archives/ (branch/PR are not deleted)")}
+    ${btn("cancel_plan", "Cancel plan", canCancelPlan(group), "danger", "Scratch plan: cancel todos, move to archive (branch/PR are not deleted)")}
     ${btn("continue", "Continue", gateEnabled(gates, "continue"))}
     <div class="action-result-wrap"><div class="action-result" data-result="${esc(src)}"></div></div>
   </div>`;
@@ -644,6 +794,73 @@ function formatAuditResult(audit) {
     html += '<div class="audit-detail">No todo drift detected.</div>';
   }
   return html;
+}
+
+function renderTimestampTags(group) {
+  const tags = group.timestamp_tags || [];
+  const updatedAt = group.updated_at || "";
+  const now = new Date();
+  const currentYm = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0");
+  const isCurrentMonth = updatedAt.slice(0, 7) === currentYm;
+  return tags.map(function(tag) {
+    const cls = isCurrentMonth && String(tag).startsWith("updated") ? " ts-current-month" : "";
+    return `<span class="pill ts-tag${cls}">${esc(tag)}</span>`;
+  }).join("");
+}
+
+function parseUpdatedMs(iso) {
+  if (!iso) return 0;
+  const t = Date.parse(iso);
+  return isNaN(t) ? 0 : t;
+}
+
+function matchesDateFilter(updatedAt, filter) {
+  if (!filter) return true;
+  const ms = parseUpdatedMs(updatedAt);
+  if (!ms) return false;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (filter === "week") {
+    const weekStart = new Date(today);
+    weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
+    return ms >= weekStart.getTime();
+  }
+  if (filter === "month") {
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    return ms >= monthStart.getTime();
+  }
+  if (filter === "prev-month") {
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    return ms >= prevStart.getTime() && ms < monthStart.getTime();
+  }
+  return true;
+}
+
+function captureOpenCards(root) {
+  const open = {};
+  if (!root) return open;
+  root.querySelectorAll(".plan-card[open]").forEach(function(card) {
+    const src = card.getAttribute("data-source");
+    if (src) open[src] = true;
+  });
+  return open;
+}
+
+function updateApplySyncButton(source, audit) {
+  const root = document.getElementById("root");
+  if (!root || !audit || !audit.proposals || !audit.proposals.length) return;
+  const cards = root.querySelectorAll(".plan-card");
+  let card = null;
+  cards.forEach(function(c) {
+    if (c.getAttribute("data-source") === source) card = c;
+  });
+  if (!card) return;
+  const btn = card.querySelector('.plan-action[data-action="apply_sync"]');
+  if (btn) {
+    btn.disabled = false;
+    btn.removeAttribute("title");
+  }
 }
 
 function renderDashboard(raw) {
@@ -691,8 +908,14 @@ function renderDashboard(raw) {
 
   const dispositionOptions = Array.from(new Set(groups.map(function(g) { return g.disposition || "—"; }))).sort();
   const session = window.__planBoardSession;
-  if (session.showArchived === undefined) session.showArchived = true;
+  if (session.showArchived === undefined) session.showArchived = false;
   session.projectRoot = payload.project_root || session.projectRoot || ".";
+  session.dispositionOptions = payload.disposition_options || session.dispositionOptions || [
+    "active", "meta", "research-needed", "replan-needed", "merge-ready",
+    "needs-fix", "backlogged", "scratched", "implemented", "archived"
+  ];
+  session.filters = session.filters || { disp: "", date: "", prOnly: false };
+  session.openSources = Object.assign({}, session.openSources || {}, captureOpenCards(root));
 
   let controlsHtml = `
     <div class="toolbar">
@@ -701,11 +924,22 @@ function renderDashboard(raw) {
       <label>Disposition
         <select id="disp-filter">
           <option value="">All</option>
-          ${dispositionOptions.map(function(d) { return `<option value="${esc(d)}">${esc(d)}</option>`; }).join("")}
+          ${dispositionOptions.map(function(d) {
+            const sel = session.filters.disp === d ? " selected" : "";
+            return `<option value="${esc(d)}"${sel}>${esc(d)}</option>`;
+          }).join("")}
+        </select>
+      </label>
+      <label>Updated
+        <select id="date-filter">
+          <option value=""${session.filters.date === "" ? " selected" : ""}>Any time</option>
+          <option value="week"${session.filters.date === "week" ? " selected" : ""}>This week</option>
+          <option value="month"${session.filters.date === "month" ? " selected" : ""}>This month</option>
+          <option value="prev-month"${session.filters.date === "prev-month" ? " selected" : ""}>Last month</option>
         </select>
       </label>
       <label><input type="checkbox" id="show-archived"${session.showArchived ? " checked" : ""} /> Show archived</label>
-      <label><input type="checkbox" id="pr-only" /> PR only</label>
+      <label><input type="checkbox" id="pr-only"${session.filters.prOnly ? " checked" : ""} /> PR only</label>
       <button id="expand-all" type="button">Expand all</button>
       <button id="collapse-all" type="button">Collapse all</button>
       <span class="hint" id="filter-count"></span>
@@ -739,7 +973,10 @@ function renderDashboard(raw) {
 
     const src = group.source || "";
     const srcShort = src.split("/").pop() || src;
-    const openAttr = idx < 2 ? " open" : "";
+    const planAbs = group.plan_abs_path || planAbsolutePath(session.projectRoot, src);
+    const updatedAt = group.updated_at || "";
+    const shouldOpen = (session.openSources && session.openSources[src]) || idx < 2;
+    const openAttr = shouldOpen ? " open" : "";
 
     let body = "";
     if (group.overview) {
@@ -759,7 +996,7 @@ function renderDashboard(raw) {
     const archivedClass = group.is_archived ? " is-archived" : "";
     const archivedAttr = group.is_archived ? ' data-archived="1"' : "";
 
-    return `<details class="plan-card${archivedClass}" data-disposition="${esc(group.disposition || "—")}" data-has-pr="${group.pr ? "1" : "0"}" data-source="${esc(src)}"${archivedAttr}${openAttr}>
+    return `<details class="plan-card${archivedClass}" data-disposition="${esc(group.disposition || "—")}" data-has-pr="${group.pr ? "1" : "0"}" data-source="${esc(src)}" data-updated-at="${esc(updatedAt)}"${archivedAttr}${openAttr}>
       <summary>
         <div class="plan-title">
           <span class="plan-title-text">#${esc(group.seq)} — ${esc(group.plan)}</span>
@@ -767,15 +1004,16 @@ function renderDashboard(raw) {
         </div>
         <div class="progress-bar"><span style="width:${pct}%"></span></div>
         <div class="plan-meta">
-          <span class="pill">${esc(group.disposition || "—")}</span>
+          ${renderDispositionSelect(group, session.dispositionOptions)}
           <span class="pill progress">${esc(group.next_verb || "—")}</span>
           <span>Owner: ${esc(group.owner)}</span>
           <span>Priority: ${esc(group.priority)}</span>
           <span>Branch: <code>${esc(group.branch)}</code></span>
           ${group.pr ? `<span>PR: ${renderPrLink(group.pr)}</span>` : ""}
           ${group.parent ? `<span>Parent: ${esc(group.parent)}</span>` : ""}
+          ${renderTimestampTags(group)}
         </div>
-        <div class="rollup">${esc(rollupText)} · ${esc(srcShort)}</div>
+        <div class="rollup">${esc(rollupText)} · ${renderCursorPlanLink(src, planAbs)} · <button type="button" class="open-plan-file" data-open-source="${esc(src)}" data-plan-abs="${esc(planAbs)}" title="Open plan file">${esc(srcShort)}</button></div>
       </summary>
       <div class="plan-body">${body}</div>
     </details>`;
@@ -802,7 +1040,9 @@ function renderDashboard(raw) {
       session.audits[source] = data.action_result;
     }
     if (opts && opts.needsMasterplan) markMasterplanNeeded();
-    if (data.plan_groups) renderDashboard(data);
+    if (data.plan_groups && !(opts && opts.skipBoardRender)) {
+      renderDashboard(data);
+    }
     return result;
   }
 
@@ -822,8 +1062,14 @@ function renderDashboard(raw) {
       }
       if (action === "audit") {
         showActionProgress(resultEl, "Recheck running — scanning todos vs repo files…");
+        session.openSources = Object.assign({}, session.openSources || {}, captureOpenCards(root));
+        if (source) session.openSources[source] = true;
         const data = await pollPlanAction({ action: "audit", source: source, dry_run: true });
-        const audit = applyActionPayload(data, source);
+        const audit = (data && data.action_result) || null;
+        if (audit && source) {
+          session.audits[source] = audit;
+          updateApplySyncButton(source, audit);
+        }
         resultEl.className = "action-result ok";
         resultEl.innerHTML = formatAuditResult(audit);
         return;
@@ -875,7 +1121,12 @@ function renderDashboard(raw) {
         return;
       }
       if (action === "archive") {
-        if (!(await planDialogConfirm("Archive plan?", "Move this plan to .plan.archives/?"))) {
+        const card = root.querySelector('.plan-card[data-source="' + source + '"]');
+        const branchEl = card ? card.querySelector(".plan-meta code") : null;
+        const branchHint = branchEl && branchEl.textContent && branchEl.textContent.trim() !== "—"
+          ? " Branch " + branchEl.textContent.trim() + " will remain in git."
+          : "";
+        if (!(await planDialogConfirm("Archive plan?", "Move this plan to .plan.archives/?" + branchHint))) {
           resultEl.textContent = dismissed;
           return;
         }
@@ -940,7 +1191,9 @@ function renderDashboard(raw) {
   }
 
   root.querySelectorAll(".plan-action").forEach(function(button) {
-    button.addEventListener("click", function() {
+    button.addEventListener("click", function(ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
       if (button.disabled) return;
       const action = button.getAttribute("data-action");
       const source = button.getAttribute("data-source") || "";
@@ -950,21 +1203,85 @@ function renderDashboard(raw) {
     });
   });
 
+  root.querySelectorAll(".open-cursor, .open-plan-file").forEach(function(button) {
+    button.addEventListener("click", function(ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const source = button.getAttribute("data-open-source") || "";
+      const planAbs = button.getAttribute("data-plan-abs") || "";
+      if (source) openPlanInEditor(source, session.projectRoot || ".", planAbs);
+    });
+  });
+
+  root.querySelectorAll(".plan-disposition").forEach(function(select) {
+    select.addEventListener("click", function(ev) { ev.stopPropagation(); });
+    select.addEventListener("mousedown", function(ev) { ev.stopPropagation(); });
+    select.addEventListener("change", async function(ev) {
+      ev.stopPropagation();
+      const source = select.getAttribute("data-source") || "";
+      const prev = select.getAttribute("data-prev") || select.value;
+      const newDisp = select.value;
+      if (!source || newDisp === prev) return;
+      if (!(await planDialogConfirm("Set disposition?", 'Set disposition to "' + newDisp + '" for this plan?'))) {
+        select.value = prev;
+        return;
+      }
+      session.openSources = Object.assign({}, session.openSources || {}, captureOpenCards(root));
+      session.openSources[source] = true;
+      const status = document.getElementById("status");
+      try {
+        if (status) status.textContent = "Updating disposition…";
+        const data = await pollPlanAction({
+          action: "set_disposition",
+          source: source,
+          disposition: newDisp,
+          confirm: true
+        });
+        const res = applyActionPayload(data, source, { needsMasterplan: true });
+        if (res && res.ok) {
+          select.setAttribute("data-prev", newDisp);
+          if (status) status.textContent = "Disposition → " + newDisp + " (run /masterplan to sync board)";
+        } else {
+          select.value = prev;
+          if (status) status.textContent = (res && res.reason) || "Failed to set disposition";
+        }
+      } catch (err) {
+        select.value = prev;
+        if (status) status.textContent = err.message || String(err);
+      }
+    });
+  });
+
+  root.querySelectorAll(".plan-card").forEach(function(card) {
+    card.addEventListener("toggle", function() {
+      const src = card.getAttribute("data-source");
+      if (!src) return;
+      session.openSources = session.openSources || {};
+      if (card.open) session.openSources[src] = true;
+      else delete session.openSources[src];
+    });
+  });
+
   function updateFilters() {
     const disp = document.getElementById("disp-filter");
     const prOnly = document.getElementById("pr-only");
     const showArchived = document.getElementById("show-archived");
+    const dateFilter = document.getElementById("date-filter");
     const wantedDisp = disp ? disp.value : "";
+    const wantedDate = dateFilter ? dateFilter.value : "";
     const onlyPr = prOnly ? !!prOnly.checked : false;
-    const includeArchived = showArchived ? !!showArchived.checked : true;
+    session.filters = { disp: wantedDisp, date: wantedDate, prOnly: onlyPr };
+    const includeArchived = showArchived ? !!showArchived.checked : false;
+    const archivedDispSelected = wantedDisp === "archived" || wantedDisp === "scratched";
     let shown = 0;
     const cards = root.querySelectorAll(".plan-card");
     cards.forEach(function(card) {
       const isArchived = card.getAttribute("data-archived") === "1";
-      const matchesArchived = includeArchived || !isArchived;
+      const matchesArchived = !isArchived || includeArchived || archivedDispSelected;
       const matchesDisp = !wantedDisp || card.getAttribute("data-disposition") === wantedDisp;
       const matchesPr = !onlyPr || card.getAttribute("data-has-pr") === "1";
-      const visible = matchesArchived && matchesDisp && matchesPr;
+      const matchesDate = matchesDateFilter(card.getAttribute("data-updated-at") || "", wantedDate);
+      const visible = matchesArchived && matchesDisp && matchesPr && matchesDate;
       card.style.display = visible ? "" : "none";
       if (visible) shown += 1;
     });
@@ -974,9 +1291,11 @@ function renderDashboard(raw) {
 
   const dispEl = document.getElementById("disp-filter");
   const prEl = document.getElementById("pr-only");
+  const dateEl = document.getElementById("date-filter");
   const archivedEl = document.getElementById("show-archived");
   if (dispEl) dispEl.addEventListener("change", updateFilters);
   if (prEl) prEl.addEventListener("change", updateFilters);
+  if (dateEl) dateEl.addEventListener("change", updateFilters);
   if (archivedEl) {
     archivedEl.addEventListener("change", function() {
       session.showArchived = !!archivedEl.checked;

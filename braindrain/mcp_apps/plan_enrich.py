@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -104,6 +105,36 @@ def _ensure_scripts_importable(repo_root: Path) -> None:
         sys.path.insert(0, root)
 
 
+def _plan_timestamp_meta(plan_path: Path, fm: dict[str, str]) -> dict[str, Any]:
+    """Build updated/created timestamps and display tags from frontmatter or file mtime."""
+    updated = str(fm.get("last_modified_at") or fm.get("updated_at") or "").strip()
+    created = str(fm.get("created_at") or "").strip()
+    if not updated:
+        try:
+            mtime = plan_path.stat().st_mtime
+            updated = datetime.fromtimestamp(mtime, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except OSError:
+            updated = ""
+    tags: list[str] = []
+    if updated:
+        if "T" in updated:
+            display = updated.replace("T", " ").rstrip("Z") + " UTC"
+            tags.append(f"updated {display}")
+        else:
+            tags.append(f"updated {updated[:10] if len(updated) >= 10 else updated}")
+    if created:
+        cdate = created[:10] if len(created) >= 10 else created
+        tags.append(f"created {cdate}")
+    model = str(fm.get("last_modified_by_model") or fm.get("created_by_model") or "").strip()
+    if model:
+        tags.append(f"model {model}")
+    return {
+        "updated_at": updated,
+        "created_at": created,
+        "timestamp_tags": tags,
+    }
+
+
 def load_plan_file_meta(repo_root: Path, source: str) -> dict[str, Any]:
     """Read plan frontmatter todos and scalar fields when the plan file exists."""
     rel = source.lstrip("/")
@@ -142,6 +173,7 @@ def load_plan_file_meta(repo_root: Path, source: str) -> dict[str, Any]:
     pr_url = str(fm.get("pr") or "").strip()
     if pr_url.startswith("http"):
         out["pr"] = {"label": "PR", "url": pr_url}
+    out.update(_plan_timestamp_meta(plan_path, fm))
     return out
 
 
@@ -195,6 +227,17 @@ def enrich_plan_groups(
             merged["overview"] = file_meta["overview"]
         if file_meta.get("parent"):
             merged["parent"] = file_meta["parent"]
+        if file_meta.get("updated_at"):
+            merged["updated_at"] = file_meta["updated_at"]
+        if file_meta.get("created_at"):
+            merged["created_at"] = file_meta["created_at"]
+        if file_meta.get("timestamp_tags"):
+            merged["timestamp_tags"] = file_meta["timestamp_tags"]
+
+        if source:
+            plan_path = resolve_plan_path(repo_root, source)
+            if plan_path.is_file():
+                merged["plan_abs_path"] = str(plan_path.resolve())
 
         merged["action_gates"] = compute_action_gates(merged, repo_root=repo_root)
         enriched.append(merged)
@@ -235,6 +278,9 @@ def enrich_plan_groups(
                     "todos": file_meta.get("todos") or [],
                     "overview": file_meta.get("overview"),
                     "parent": file_meta.get("parent"),
+                    "updated_at": file_meta.get("updated_at"),
+                    "created_at": file_meta.get("created_at"),
+                    "timestamp_tags": file_meta.get("timestamp_tags") or [],
                     "item_rollups": disp.get("item_rollups"),
                     "synthetic_from_pr": True,
                 }

@@ -161,6 +161,20 @@ Plan Build: run `python3 scripts/plan_build_guard.py --plan <path>` before edits
 
 Async MCP tools record observer `tool_call` rows via `asyncio.to_thread` so SQLite writes do not block the event loop.
 
+### MCP Apps (inline dashboards)
+
+Cursor and other MCP App hosts can render interactive `ui://` HTML from braindrain without loading a separate frontend stack.
+
+| Tool | When to use |
+| ---- | ----------- |
+| `show_token_dashboard()` | Inline token savings snapshot (JSON via `get_token_dashboard` stays separate). |
+| `show_plan_board(path="")` | Interactive plan task board from `.braindrain/plan-reports/`. |
+| `poll_plan_board(...)` | **App-only** — refresh board and all plan-board write actions from the iframe (audit, sync, archive, disposition, masterplan). |
+
+**Plan board UI:** filters, per-plan disposition dropdown, Recheck/Apply sync, archive/cancel, timestamp tags, and open-in-editor flow. Full reference: [`braindrain/mcp_apps/PLAN_BOARD_UI.md`](braindrain/mcp_apps/PLAN_BOARD_UI.md).
+
+Restart the braindrain MCP server after `braindrain/mcp_apps/` or registration changes.
+
 
 ### Token Checkpoint Protocol
 
@@ -569,6 +583,7 @@ braindrain/
 │   ├── rerank.py               # optional search_index rerank (lexical / mixedbread / auto)
 │   ├── embeddings_client.py    # local-first embeddings (LM Studio, Ollama, cloud)
 │   ├── embeddings_router.py    # provider priority + quota backoff
+│   ├── mcp_apps/               # MCP Apps ui:// dashboards (token + plan board)
 │   ├── repo_stats.py           # file-count gating for workflows
 │   └── types.py
 ├── config/
