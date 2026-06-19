@@ -177,6 +177,15 @@ function setupSizeReporting() {
   }
 }
 
+async function callTool(name, args) {
+  const result = await sendRequest("tools/call", { name: name, arguments: args || {} }, 120000);
+  return extractData(result);
+}
+
+function sendChatMessage(text) {
+  sendNotification("ui/message", { message: text });
+}
+
 async function bootstrap() {
   const status = document.getElementById("status");
   const initParams = {
@@ -294,6 +303,13 @@ tr:hover td { background: color-mix(in srgb, var(--accent) 6%, transparent); }
 .toolbar label { font-size: 11px; color: var(--muted); display: inline-flex; align-items: center; gap: 4px; }
 .toolbar select, .toolbar button { font-size: 11px; border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: 6px; padding: 4px 6px; }
 .toolbar button { cursor: pointer; }
+.toolbar button:disabled { opacity: 0.45; cursor: not-allowed; }
+.plan-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.plan-actions button { font-size: 10px; border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 6px; padding: 4px 8px; cursor: pointer; }
+.plan-actions button:disabled { opacity: 0.45; cursor: not-allowed; }
+.action-result { font-size: 10px; color: var(--muted); margin-top: 6px; line-height: 1.4; }
+.action-result.ok { color: var(--good); }
+.action-result.err { color: var(--warn); }
 """
 
 
@@ -419,6 +435,35 @@ function renderPrLink(pr) {
   return esc(pr.label);
 }
 
+function gateEnabled(gates, key) {
+  const g = gates && gates[key];
+  return !!(g && g.enabled);
+}
+
+function gateReason(gates, key) {
+  const g = gates && gates[key];
+  return (g && g.reason) ? g.reason : "";
+}
+
+function renderActionButtons(group) {
+  const gates = group.action_gates || {};
+  const src = group.source || "";
+  function btn(action, label, enabled) {
+    const dis = enabled ? "" : " disabled";
+    const title = enabled ? "" : ` title="${esc(gateReason(gates, action))}"`;
+    return `<button type="button" class="plan-action" data-action="${esc(action)}" data-source="${esc(src)}"${dis}${title}>${esc(label)}</button>`;
+  }
+  return `<div class="plan-actions" data-source="${esc(src)}">
+    ${btn("audit", "Recheck", gateEnabled(gates, "audit"))}
+    ${btn("apply_sync", "Apply sync", gateEnabled(gates, "apply_sync"))}
+    ${btn("research", "Research", gateEnabled(gates, "research"))}
+    ${btn("merge_ready", "Merge-ready", gateEnabled(gates, "merge_ready"))}
+    ${btn("archive", "Archive", gateEnabled(gates, "archive"))}
+    ${btn("continue", "Continue", gateEnabled(gates, "continue"))}
+    <div class="action-result" data-result="${esc(src)}"></div>
+  </div>`;
+}
+
 function renderDashboard(raw) {
   const payload = raw && raw.dashboard ? raw.dashboard : raw;
   const root = document.getElementById("root");
@@ -519,8 +564,9 @@ function renderDashboard(raw) {
     if (!body) {
       body = "<p class='hint'>No todo detail available.</p>";
     }
+    body = renderActionButtons(group) + body;
 
-    return `<details class="plan-card" data-disposition="${esc(group.disposition || "—")}" data-has-pr="${group.pr ? "1" : "0"}"${openAttr}>
+    return `<details class="plan-card" data-disposition="${esc(group.disposition || "—")}" data-has-pr="${group.pr ? "1" : "0"}" data-source="${esc(src)}"${openAttr}>
       <summary>
         <div class="plan-title">
           <span class="plan-title-text">#${esc(group.seq)} — ${esc(group.plan)}</span>
@@ -543,6 +589,137 @@ function renderDashboard(raw) {
   });
 
   root.innerHTML = summaryHtml + nextHtml + controlsHtml + allCards.join("");
+
+  const boardState = {
+    projectRoot: payload.project_root || ".",
+    audits: {}
+  };
+
+  async function refreshBoard() {
+    try {
+      const data = await callTool("poll_plan_board", { path: boardState.projectRoot });
+      if (data) renderDashboard(data);
+    } catch (err) {
+      const status = document.getElementById("status");
+      if (status) status.textContent = "Refresh failed: " + (err.message || String(err));
+    }
+  }
+
+  async function runPlanAction(action, source, resultEl) {
+    const path = boardState.projectRoot;
+    resultEl.className = "action-result";
+    resultEl.textContent = "Working…";
+    try {
+      if (action === "research") {
+        const handoff = await callTool("plan_board_handoff", { action: "research", source: source });
+        const msg = (handoff && handoff.message) || ("Research plan " + source);
+        sendChatMessage(msg);
+        resultEl.className = "action-result ok";
+        resultEl.textContent = "Research prompt sent to chat.";
+        return;
+      }
+      if (action === "audit") {
+        const audit = await callTool("audit_plan_implementation", { source: source, path: path, dry_run: true });
+        boardState.audits[source] = audit;
+        const count = (audit && audit.proposals && audit.proposals.length) || 0;
+        resultEl.className = "action-result ok";
+        resultEl.textContent = (audit && audit.summary) || (count + " proposal(s)");
+        await refreshBoard();
+        return;
+      }
+      if (action === "apply_sync") {
+        const audit = boardState.audits[source];
+        if (!audit || !audit.proposals || !audit.proposals.length) {
+          resultEl.className = "action-result err";
+          resultEl.textContent = "Run Recheck first.";
+          return;
+        }
+        if (!window.confirm("Apply " + audit.proposals.length + " todo sync proposal(s)?")) {
+          resultEl.textContent = "Cancelled.";
+          return;
+        }
+        const applied = await callTool("apply_plan_todo_sync", {
+          source: source,
+          path: path,
+          proposals: audit.proposals,
+          confirm: true
+        });
+        if (applied && applied.ok) {
+          resultEl.className = "action-result ok";
+          resultEl.textContent = "Applied: " + (applied.applied || []).join(", ");
+          delete boardState.audits[source];
+          await refreshBoard();
+        } else {
+          resultEl.className = "action-result err";
+          resultEl.textContent = (applied && applied.reason) || "Apply failed";
+        }
+        return;
+      }
+      if (action === "merge_ready") {
+        if (!window.confirm("Mark plan merge-ready?")) {
+          resultEl.textContent = "Cancelled.";
+          return;
+        }
+        const res = await callTool("mark_plan_merge_ready", { source: source, path: path, confirm: true });
+        if (res && res.ok) {
+          resultEl.className = "action-result ok";
+          resultEl.textContent = "Marked merge-ready.";
+          await refreshBoard();
+        } else {
+          resultEl.className = "action-result err";
+          resultEl.textContent = (res && res.reason) || "Failed";
+        }
+        return;
+      }
+      if (action === "archive") {
+        if (!window.confirm("Archive this plan?")) {
+          resultEl.textContent = "Cancelled.";
+          return;
+        }
+        const res = await callTool("archive_plan", { source: source, path: path, confirm: true });
+        if (res && res.ok) {
+          resultEl.className = "action-result ok";
+          resultEl.textContent = "Archived to " + (res.archived_to || "archive");
+          await refreshBoard();
+        } else {
+          resultEl.className = "action-result err";
+          resultEl.textContent = (res && res.reason) || "Failed";
+        }
+        return;
+      }
+      if (action === "continue") {
+        if (!window.confirm("Queue continue build for this plan?")) {
+          resultEl.textContent = "Cancelled.";
+          return;
+        }
+        const res = await callTool("enqueue_plan_continue", { source: source, path: path, confirm: true });
+        if (res && res.ok) {
+          sendChatMessage(res.handoff_message || ("Continue " + source));
+          resultEl.className = "action-result ok";
+          resultEl.textContent = "Queued branch " + (res.branch || "");
+          await refreshBoard();
+        } else {
+          resultEl.className = "action-result err";
+          resultEl.textContent = (res && res.reason) || "Failed";
+        }
+        return;
+      }
+    } catch (err) {
+      resultEl.className = "action-result err";
+      resultEl.textContent = err.message || String(err);
+    }
+  }
+
+  root.querySelectorAll(".plan-action").forEach(function(button) {
+    button.addEventListener("click", function() {
+      if (button.disabled) return;
+      const action = button.getAttribute("data-action");
+      const source = button.getAttribute("data-source") || "";
+      const wrap = button.closest(".plan-actions");
+      const resultEl = wrap ? wrap.querySelector(".action-result") : null;
+      if (action && source && resultEl) runPlanAction(action, source, resultEl);
+    });
+  });
 
   function updateFilters() {
     const disp = document.getElementById("disp-filter");

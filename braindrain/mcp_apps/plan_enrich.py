@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from braindrain.mcp_apps.plan_gates import compute_action_gates
+
 _MASTER_DISPOSITION_ROW_RE = re.compile(
     r"^\|\s*\[([^\]]+)\]\([^)]+\)\s*\|\s*([^|]+)\|\s*`?([^`|]+)`?\s*\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*$",
     re.MULTILINE,
@@ -193,6 +195,7 @@ def enrich_plan_groups(
         if file_meta.get("parent"):
             merged["parent"] = file_meta["parent"]
 
+        merged["action_gates"] = compute_action_gates(merged, repo_root=repo_root)
         enriched.append(merged)
 
     if include_pr_without_open_items:
@@ -235,4 +238,5 @@ def enrich_plan_groups(
                     "synthetic_from_pr": True,
                 }
             )
+            enriched[-1]["action_gates"] = compute_action_gates(enriched[-1], repo_root=repo_root)
     return enriched

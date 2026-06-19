@@ -11,6 +11,12 @@ from fastmcp.resources.types import TextResource
 from fastmcp.tools.base import ToolResult
 
 from braindrain.mcp_apps.constants import (
+    APPLY_PLAN_TODO_SYNC_TOOL,
+    ARCHIVE_PLAN_TOOL,
+    AUDIT_PLAN_IMPLEMENTATION_TOOL,
+    ENQUEUE_PLAN_CONTINUE_TOOL,
+    MARK_PLAN_MERGE_READY_TOOL,
+    PLAN_BOARD_HANDOFF_TOOL,
     PLAN_BOARD_URI,
     POLL_PLAN_BOARD_TOOL,
     POLL_TOKEN_DASHBOARD_TOOL,
@@ -18,6 +24,14 @@ from braindrain.mcp_apps.constants import (
 )
 from braindrain.mcp_apps.data import build_plan_board_payload, build_token_dashboard_payload
 from braindrain.mcp_apps.html import plan_board_html, token_dashboard_html
+from braindrain.mcp_apps.plan_actions import (
+    apply_plan_todo_sync,
+    archive_plan,
+    audit_plan_implementation,
+    enqueue_plan_continue,
+    mark_plan_merge_ready,
+    plan_board_handoff,
+)
 from braindrain.telemetry import TelemetrySession
 
 _TOKEN_APP = AppConfig(
@@ -32,6 +46,7 @@ _PLAN_APP = AppConfig(
 )
 _POLL_APP = AppConfig(resource_uri=TOKEN_DASHBOARD_URI, visibility=["app"])
 _POLL_PLAN_APP = AppConfig(resource_uri=PLAN_BOARD_URI, visibility=["app"])
+_ACTION_APP = AppConfig(resource_uri=PLAN_BOARD_URI, visibility=["app"])
 _RESOURCE_UI = AppConfig(prefers_border=True, domain="ui://braindrain")
 
 
@@ -139,3 +154,148 @@ def register_mcp_app_tools(
         """
         payload = build_plan_board_payload(path=path or default_path)
         return ToolResult(structured_content=payload)
+
+    @tool_decorator(
+        name=AUDIT_PLAN_IMPLEMENTATION_TOOL,
+        app=_ACTION_APP,
+        tags={"mcp-apps", "planning", "audit"},
+    )
+    async def audit_plan_implementation_tool(
+        source: str,
+        path: str = "",
+        dry_run: bool = True,
+    ) -> ToolResult:
+        """
+        App-only: compare plan todos against repo files (read-only audit).
+
+        Args:
+            source: Repo-relative plan path (e.g. `.cursor/plans/foo.plan.md`).
+            path: Project root. Default: server project root.
+            dry_run: Always true for audit; included for API symmetry.
+        """
+        result = audit_plan_implementation(
+            path=path or default_path,
+            source=source,
+            dry_run=dry_run,
+        )
+        return ToolResult(structured_content=result)
+
+    @tool_decorator(
+        name=APPLY_PLAN_TODO_SYNC_TOOL,
+        app=_ACTION_APP,
+        tags={"mcp-apps", "planning", "write"},
+    )
+    async def apply_plan_todo_sync_tool(
+        source: str,
+        proposals: list[dict[str, object]],
+        path: str = "",
+        confirm: bool = False,
+    ) -> ToolResult:
+        """
+        App-only: apply todo status updates from audit proposals.
+
+        Args:
+            source: Repo-relative plan path.
+            proposals: Audit proposal objects with todo_id, suggested_status, confidence.
+            path: Project root. Default: server project root.
+            confirm: Must be true to write frontmatter.
+        """
+        result = apply_plan_todo_sync(
+            path=path or default_path,
+            source=source,
+            proposals=proposals,
+            confirm=confirm,
+        )
+        return ToolResult(structured_content=result)
+
+    @tool_decorator(
+        name=MARK_PLAN_MERGE_READY_TOOL,
+        app=_ACTION_APP,
+        tags={"mcp-apps", "planning", "write"},
+    )
+    async def mark_plan_merge_ready_tool(
+        source: str,
+        path: str = "",
+        confirm: bool = False,
+    ) -> ToolResult:
+        """
+        App-only: set plan disposition to merge-ready when gates pass.
+
+        Args:
+            source: Repo-relative plan path.
+            path: Project root. Default: server project root.
+            confirm: Must be true to write frontmatter.
+        """
+        result = mark_plan_merge_ready(
+            path=path or default_path,
+            source=source,
+            confirm=confirm,
+        )
+        return ToolResult(structured_content=result)
+
+    @tool_decorator(
+        name=ARCHIVE_PLAN_TOOL,
+        app=_ACTION_APP,
+        tags={"mcp-apps", "planning", "write"},
+    )
+    async def archive_plan_tool(
+        source: str,
+        path: str = "",
+        confirm: bool = False,
+    ) -> ToolResult:
+        """
+        App-only: archive a plan to `.plan.archives/` when gates pass.
+
+        Args:
+            source: Repo-relative plan path.
+            path: Project root. Default: server project root.
+            confirm: Must be true to move the plan file.
+        """
+        result = archive_plan(path=path or default_path, source=source, confirm=confirm)
+        return ToolResult(structured_content=result)
+
+    @tool_decorator(
+        name=ENQUEUE_PLAN_CONTINUE_TOOL,
+        app=_ACTION_APP,
+        tags={"mcp-apps", "planning", "gitops"},
+    )
+    async def enqueue_plan_continue_tool(
+        source: str,
+        path: str = "",
+        confirm: bool = False,
+    ) -> ToolResult:
+        """
+        App-only: queue branch-setup and return continue-build handoff text.
+
+        Args:
+            source: Repo-relative plan path.
+            path: Project root. Default: server project root.
+            confirm: Must be true to write gitops queue / branch frontmatter.
+        """
+        result = enqueue_plan_continue(
+            path=path or default_path,
+            source=source,
+            confirm=confirm,
+        )
+        return ToolResult(structured_content=result)
+
+    @tool_decorator(
+        name=PLAN_BOARD_HANDOFF_TOOL,
+        app=_ACTION_APP,
+        tags={"mcp-apps", "planning", "handoff"},
+    )
+    async def plan_board_handoff_tool(
+        action: str,
+        source: str,
+        branch: str = "",
+    ) -> ToolResult:
+        """
+        App-only: build chat handoff message for research or continue actions.
+
+        Args:
+            action: Handoff kind (`research` or `continue`).
+            source: Repo-relative plan path.
+            branch: Optional branch name for continue handoffs.
+        """
+        result = plan_board_handoff(action=action, source=source, branch=branch)
+        return ToolResult(structured_content=result)

@@ -48,6 +48,8 @@ def test_plan_board_html_is_self_contained():
     assert "disp-filter" in html
     assert "expand-all" in html
     assert "collapse-all" in html
+    assert "callTool" in html
+    assert "plan-action" in html
     assert "https://" not in html
 
 
@@ -232,6 +234,8 @@ todos:
     assert enriched[0]["todo_summary"]["total"] == 2
     assert len(enriched[0]["todos"]) == 2
     assert enriched[0]["overview"].startswith("Ship the demo")
+    assert "action_gates" in enriched[0]
+    assert "audit" in enriched[0]["action_gates"]
 
 
 def test_enrich_plan_groups_adds_pr_only_plan(tmp_path: Path):
@@ -285,3 +289,115 @@ def test_mcp_app_resources_registered():
     uris = {str(r.uri) for r in resources}
     assert TOKEN_DASHBOARD_URI in uris
     assert PLAN_BOARD_URI in uris
+
+
+def test_plan_board_html_has_action_bridge():
+    html = plan_board_html()
+    assert "callTool" in html
+    assert "plan-action" in html
+    assert "audit_plan_implementation" in html
+    assert "action_gates" in html or "renderActionButtons" in html
+
+
+def test_compute_action_gates_disables_merge_ready_without_pr(tmp_path: Path):
+    from braindrain.mcp_apps.plan_gates import compute_action_gates
+
+    plan_path = tmp_path / "plans" / "demo.plan.md"
+    plan_path.parent.mkdir(parents=True)
+    plan_path.write_text("---\ndisposition: active\n---\n# Demo\n", encoding="utf-8")
+    group = {
+        "source": "plans/demo.plan.md",
+        "disposition": "active",
+        "branch": "feat/demo",
+        "todo_summary": {"total": 2, "completed": 2, "cancelled": 0},
+    }
+    gates = compute_action_gates(group, repo_root=tmp_path)
+    assert gates["merge_ready"]["enabled"] is False
+    assert "PR" in gates["merge_ready"]["reason"]
+
+
+def test_audit_plan_implementation_detects_existing_file(tmp_path: Path):
+    from braindrain.mcp_apps.plan_actions import audit_plan_implementation
+
+    target = tmp_path / "braindrain" / "demo.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("# demo\n", encoding="utf-8")
+    plan_dir = tmp_path / "plans"
+    plan_dir.mkdir(parents=True)
+    plan_path = plan_dir / "demo.plan.md"
+    plan_path.write_text(
+        """---
+todos:
+  - id: t1
+    content: "Add `braindrain/demo.py` module"
+    status: pending
+disposition: active
+---
+# Demo
+""",
+        encoding="utf-8",
+    )
+    result = audit_plan_implementation(
+        path=str(tmp_path),
+        source="plans/demo.plan.md",
+        dry_run=True,
+    )
+    assert result["proposals"]
+    assert result["proposals"][0]["suggested_status"] == "completed"
+    assert result["action_gates"]["apply_sync"]["enabled"] is True
+
+
+def test_apply_plan_todo_sync_requires_confirm(tmp_path: Path):
+    from braindrain.mcp_apps.plan_actions import apply_plan_todo_sync
+
+    plan_dir = tmp_path / "plans"
+    plan_dir.mkdir(parents=True)
+    plan_path = plan_dir / "demo.plan.md"
+    plan_path.write_text(
+        """---
+todos:
+  - id: t1
+    content: "Ship it"
+    status: pending
+---
+# Demo
+""",
+        encoding="utf-8",
+    )
+    proposals = [
+        {
+            "todo_id": "t1",
+            "suggested_status": "completed",
+            "confidence": "high",
+        }
+    ]
+    blocked = apply_plan_todo_sync(
+        path=str(tmp_path),
+        source="plans/demo.plan.md",
+        proposals=proposals,
+        confirm=False,
+    )
+    assert blocked["ok"] is False
+    applied = apply_plan_todo_sync(
+        path=str(tmp_path),
+        source="plans/demo.plan.md",
+        proposals=proposals,
+        confirm=True,
+    )
+    assert applied["ok"] is True
+    text = plan_path.read_text(encoding="utf-8")
+    assert "status: completed" in text
+
+
+def test_plan_board_action_tools_registered():
+    tools = asyncio.run(mcp.list_tools())
+    names = {t.name for t in tools}
+    for tool_name in (
+        "audit_plan_implementation",
+        "apply_plan_todo_sync",
+        "mark_plan_merge_ready",
+        "archive_plan",
+        "enqueue_plan_continue",
+        "plan_board_handoff",
+    ):
+        assert tool_name in names

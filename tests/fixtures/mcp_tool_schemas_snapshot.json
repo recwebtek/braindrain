@@ -1,5 +1,98 @@
 [
   {
+    "name": "apply_plan_todo_sync",
+    "description": "App-only: apply todo status updates from audit proposals.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "Repo-relative plan path."
+        },
+        "proposals": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array",
+          "description": "Audit proposal objects with todo_id, suggested_status, confidence."
+        },
+        "path": {
+          "default": "",
+          "type": "string",
+          "description": "Project root. Default: server project root."
+        },
+        "confirm": {
+          "default": false,
+          "type": "boolean",
+          "description": "Must be true to write frontmatter."
+        }
+      },
+      "required": [
+        "source",
+        "proposals"
+      ],
+      "type": "object"
+    },
+    "outputSchema": null
+  },
+  {
+    "name": "archive_plan",
+    "description": "App-only: archive a plan to `.plan.archives/` when gates pass.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "Repo-relative plan path."
+        },
+        "path": {
+          "default": "",
+          "type": "string",
+          "description": "Project root. Default: server project root."
+        },
+        "confirm": {
+          "default": false,
+          "type": "boolean",
+          "description": "Must be true to move the plan file."
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "type": "object"
+    },
+    "outputSchema": null
+  },
+  {
+    "name": "audit_plan_implementation",
+    "description": "App-only: compare plan todos against repo files (read-only audit).",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "Repo-relative plan path (e.g. `.cursor/plans/foo.plan.md`)."
+        },
+        "path": {
+          "default": "",
+          "type": "string",
+          "description": "Project root. Default: server project root."
+        },
+        "dry_run": {
+          "default": true,
+          "type": "boolean",
+          "description": "Always true for audit; included for API symmetry."
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "type": "object"
+    },
+    "outputSchema": null
+  },
+  {
     "name": "cognitive_recall",
     "description": "Score and rank durable recall candidates.",
     "parameters": {
@@ -36,6 +129,34 @@
       "additionalProperties": true,
       "type": "object"
     }
+  },
+  {
+    "name": "enqueue_plan_continue",
+    "description": "App-only: queue branch-setup and return continue-build handoff text.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "Repo-relative plan path."
+        },
+        "path": {
+          "default": "",
+          "type": "string",
+          "description": "Project root. Default: server project root."
+        },
+        "confirm": {
+          "default": false,
+          "type": "boolean",
+          "description": "Must be true to write gitops queue / branch frontmatter."
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "type": "object"
+    },
+    "outputSchema": null
   },
   {
     "name": "evaluate_lesson_candidate_tool",
@@ -434,7 +555,7 @@
   },
   {
     "name": "get_token_dashboard",
-    "description": "Compact token-savings dashboard (estimated tokens, Claude-focused).",
+    "description": "Compact token-savings JSON snapshot (estimated tokens, Claude-focused).\n\nFor an inline visual dashboard in MCP Apps hosts (Cursor 2.6+), call\n``show_token_dashboard`` instead \u2014 this tool returns JSON only.",
     "parameters": {
       "additionalProperties": false,
       "properties": {},
@@ -783,8 +904,36 @@
     }
   },
   {
+    "name": "mark_plan_merge_ready",
+    "description": "App-only: set plan disposition to merge-ready when gates pass.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "Repo-relative plan path."
+        },
+        "path": {
+          "default": "",
+          "type": "string",
+          "description": "Project root. Default: server project root."
+        },
+        "confirm": {
+          "default": false,
+          "type": "boolean",
+          "description": "Must be true to write frontmatter."
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "type": "object"
+    },
+    "outputSchema": null
+  },
+  {
     "name": "ping",
-    "description": "Health check - verify BRAINDRAIN is running",
+    "description": "Health check \u2014 verify BRAINDRAIN is running and whether MCP Apps tools are loaded.",
     "parameters": {
       "additionalProperties": false,
       "properties": {},
@@ -794,6 +943,34 @@
       "additionalProperties": true,
       "type": "object"
     }
+  },
+  {
+    "name": "plan_board_handoff",
+    "description": "App-only: build chat handoff message for research or continue actions.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string",
+          "description": "Handoff kind (`research` or `continue`)."
+        },
+        "source": {
+          "type": "string",
+          "description": "Repo-relative plan path."
+        },
+        "branch": {
+          "default": "",
+          "type": "string",
+          "description": "Optional branch name for continue handoffs."
+        }
+      },
+      "required": [
+        "action",
+        "source"
+      ],
+      "type": "object"
+    },
+    "outputSchema": null
   },
   {
     "name": "plan_workflow",
@@ -829,7 +1006,7 @@
       "additionalProperties": false,
       "properties": {
         "path": {
-          "default": ".",
+          "default": "",
           "type": "string",
           "description": "Project root containing `.braindrain/plan-reports/`. Default: cwd."
         }
@@ -845,7 +1022,7 @@
       "additionalProperties": false,
       "properties": {
         "path": {
-          "default": ".",
+          "default": "",
           "type": "string",
           "description": "Project root for checkpoint file resolution. Default: current directory."
         }
@@ -2518,7 +2695,7 @@
       "additionalProperties": false,
       "properties": {
         "path": {
-          "default": ".",
+          "default": "",
           "type": "string",
           "description": "Project root containing `.braindrain/plan-reports/`. Default: cwd."
         }
@@ -2534,7 +2711,7 @@
       "additionalProperties": false,
       "properties": {
         "path": {
-          "default": ".",
+          "default": "",
           "type": "string",
           "description": "Project root for checkpoint file resolution. Default: current directory."
         }
