@@ -9,6 +9,7 @@ from pathlib import Path
 from braindrain.mcp_apps.constants import PLAN_BOARD_URI, TOKEN_DASHBOARD_URI
 from braindrain.mcp_apps.data import (
     _group_plan_rows,
+    _load_archived_plan_groups,
     _parse_master_plan_queue,
     _parse_plan_board_table,
     build_plan_board_payload,
@@ -298,6 +299,8 @@ def test_plan_board_html_has_action_bridge():
     assert "plan-action" in html
     assert "cancel_plan" in html
     assert "run-masterplan" in html
+    assert "show-archived" in html
+    assert "__planBoardSession" in html
     assert "action_gates" in html or "renderActionButtons" in html
 
 
@@ -479,6 +482,44 @@ todos:
     assert applied["ok"] is True
     text = plan_path.read_text(encoding="utf-8")
     assert "status: completed" in text
+
+
+def test_load_archived_plan_groups(tmp_path: Path):
+    archive_dir = tmp_path / ".cursor" / "plans" / ".plan.archives"
+    archive_dir.mkdir(parents=True)
+    (archive_dir / "old.plan.md").write_text(
+        """---
+disposition: scratched
+overview: Cancelled test
+name: Old Plan
+---
+# Old
+""",
+        encoding="utf-8",
+    )
+    groups = _load_archived_plan_groups(tmp_path, existing_sources=set())
+    assert len(groups) == 1
+    assert groups[0]["is_archived"] is True
+    assert groups[0]["disposition"] == "scratched"
+
+
+def test_build_plan_board_includes_archived(tmp_path: Path):
+    reports = tmp_path / ".braindrain" / "plan-reports"
+    reports.mkdir(parents=True)
+    (reports / "plan-task-board.md").write_text(
+        "| Seq | Plan | IDE | Status | Owner | Item | Source | Gaps |\n|-----|------|-----|--------|-------|------|--------|------|\n",
+        encoding="utf-8",
+    )
+    (reports / "master-plan.md").write_text("# Master\n", encoding="utf-8")
+    archive_dir = tmp_path / ".cursor" / "plans" / ".plan.archives"
+    archive_dir.mkdir(parents=True)
+    (archive_dir / "gone.plan.md").write_text(
+        "---\ndisposition: scratched\nname: Gone\n---\n# Gone\n",
+        encoding="utf-8",
+    )
+    payload = build_plan_board_payload(path=str(tmp_path))
+    assert payload["summary"]["archived_count"] >= 1
+    assert any(g.get("is_archived") for g in payload["plan_groups"])
 
 
 def test_plan_board_action_tools_registered():

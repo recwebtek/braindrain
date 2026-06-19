@@ -120,6 +120,67 @@ def _group_plan_rows(
     return grouped
 
 
+def _load_archived_plan_groups(
+    repo_root: Path,
+    *,
+    existing_sources: set[str],
+) -> list[dict[str, Any]]:
+    """Build plan cards for files under ``*/plans/.plan.archives/``."""
+    import sys
+
+    root = str(repo_root.resolve())
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    try:
+        from scripts.plan_branch_utils import parse_plan_frontmatter
+    except ImportError:
+        return []
+
+    groups: list[dict[str, Any]] = []
+    seq = 9000
+    for plans_subdir in (".cursor/plans", ".codex/plans"):
+        archive_dir = repo_root / plans_subdir / ".plan.archives"
+        if not archive_dir.is_dir():
+            continue
+        ide = "cursor" if plans_subdir.startswith(".cursor") else "codex"
+        for plan_path in sorted(archive_dir.glob("*.plan.md")):
+            rel = plan_path.relative_to(repo_root).as_posix()
+            if rel in existing_sources:
+                continue
+            try:
+                text = plan_path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            fm = parse_plan_frontmatter(text)
+            title = str(fm.get("name") or "").strip()
+            if not title:
+                for line in text.splitlines():
+                    if line.startswith("# "):
+                        title = line[2:].strip()
+                        break
+            if not title:
+                title = plan_path.stem.replace(".plan", "")
+            disposition = str(fm.get("disposition") or "archived").strip()
+            groups.append(
+                {
+                    "seq": seq,
+                    "plan": title,
+                    "ide": ide,
+                    "owner": str(fm.get("owner") or fm.get("dri") or "—").strip(),
+                    "priority": str(fm.get("priority") or "—").strip(),
+                    "disposition": disposition,
+                    "branch": str(fm.get("branch") or "—").strip(),
+                    "next_verb": "ARCHIVED",
+                    "source": rel,
+                    "items": [],
+                    "status_counts": {"Blocked": 0, "In Progress": 0, "Outstanding": 0},
+                    "is_archived": True,
+                }
+            )
+            seq += 1
+    return groups
+
+
 def _load_next_actions_preview(path: Path, *, limit: int = 8) -> list[str]:
     if not path.is_file():
         return []
@@ -237,9 +298,18 @@ def build_plan_board_payload(*, path: str | None = None) -> dict[str, Any]:
     board_rows = _parse_plan_board_table(board_md)
     master_by_source = _parse_master_plan_queue(master_md)
     plan_groups = _group_plan_rows(board_rows, master_by_source=master_by_source)
+    active_sources = {str(g.get("source") or "") for g in plan_groups}
+    archived_groups = _load_archived_plan_groups(root, existing_sources=active_sources)
     plan_groups = enrich_plan_groups(plan_groups, repo_root=root, master_md=master_md)
-    blocked_items = sum(g["status_counts"].get("Blocked", 0) for g in plan_groups)
-    outstanding_items = sum(g["status_counts"].get("Outstanding", 0) for g in plan_groups)
+    if archived_groups:
+        archived_groups = enrich_plan_groups(archived_groups, repo_root=root, master_md=master_md)
+        plan_groups.extend(archived_groups)
+        plan_groups.sort(key=lambda g: (0 if g.get("is_archived") else 1, int(g.get("seq") or 9999)))
+    blocked_items = sum(g["status_counts"].get("Blocked", 0) for g in plan_groups if not g.get("is_archived"))
+    outstanding_items = sum(
+        g["status_counts"].get("Outstanding", 0) for g in plan_groups if not g.get("is_archived")
+    )
+    archived_count = sum(1 for g in plan_groups if g.get("is_archived"))
 
     return {
         "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -250,6 +320,8 @@ def build_plan_board_payload(*, path: str | None = None) -> dict[str, Any]:
         "plan_groups": plan_groups,
         "summary": {
             "plan_count": len(plan_groups),
+            "active_plan_count": len(plan_groups) - archived_count,
+            "archived_count": archived_count,
             "item_count": len(board_rows),
             "blocked_items": blocked_items,
             "outstanding_items": outstanding_items,

@@ -323,6 +323,16 @@ tr:hover td { background: color-mix(in srgb, var(--accent) 6%, transparent); }
 .action-result { font-size: 10px; color: var(--muted); margin-top: 6px; line-height: 1.4; }
 .action-result.ok { color: var(--good); }
 .action-result.err { color: var(--warn); }
+.action-progress { height: 4px; background: var(--border); border-radius: 999px; overflow: hidden; margin-top: 6px; min-width: 120px; flex: 1 1 120px; }
+.action-progress > span { display: block; height: 100%; width: 35%; background: var(--accent); border-radius: 999px; animation: action-indeterminate 1s ease-in-out infinite alternate; }
+@keyframes action-indeterminate { from { margin-left: 0; } to { margin-left: 65%; } }
+.action-result-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; margin-top: 6px; }
+.audit-detail { font-size: 10px; color: var(--muted); margin-top: 4px; line-height: 1.4; }
+#run-masterplan.needs-run { box-shadow: 0 0 10px 2px color-mix(in srgb, var(--accent) 55%, transparent); animation: masterplan-glow 2s ease-in-out infinite; }
+@keyframes masterplan-glow { 0%, 100% { box-shadow: 0 0 6px 1px color-mix(in srgb, var(--accent) 40%, transparent); } 50% { box-shadow: 0 0 14px 4px color-mix(in srgb, var(--accent) 65%, transparent); } }
+.plan-card.is-archived { opacity: 0.88; border-style: dashed; }
+.plan-card.is-archived > summary { background: color-mix(in srgb, var(--muted) 6%, transparent); }
+.pill.archived-tag { background: color-mix(in srgb, var(--muted) 25%, var(--border)); color: var(--muted); }
 """
 
 
@@ -403,6 +413,23 @@ function renderDashboard(raw) {
 """
 
 _PLAN_RENDER_JS = r"""
+window.__planBoardSession = window.__planBoardSession || { audits: {}, masterplanNeeded: false };
+
+function markMasterplanNeeded() {
+  window.__planBoardSession.masterplanNeeded = true;
+  updateMasterplanGlow();
+}
+
+function clearMasterplanNeeded() {
+  window.__planBoardSession.masterplanNeeded = false;
+  updateMasterplanGlow();
+}
+
+function updateMasterplanGlow() {
+  const btn = document.getElementById("run-masterplan");
+  if (btn) btn.classList.toggle("needs-run", !!window.__planBoardSession.masterplanNeeded);
+}
+
 function esc(s) {
   if (s == null) return "";
   return String(s)
@@ -480,24 +507,51 @@ function canCancelPlan(group) {
 }
 
 function renderActionButtons(group) {
+  if (group.is_archived) {
+    return `<div class="plan-actions archived-only"><span class="pill archived-tag">Archived</span><span class="hint">Shown from .plan.archives — run /masterplan to sync master index.</span></div>`;
+  }
   const gates = group.action_gates || {};
   const src = group.source || "";
-  function btn(action, label, enabled, extraClass) {
+  function btn(action, label, enabled, extraClass, title) {
     const dis = enabled ? "" : " disabled";
-    const title = enabled ? "" : ` title="${esc(gateReason(gates, action))}"`;
+    const tip = title || (enabled ? "" : gateReason(gates, action));
+    const titleAttr = tip ? ` title="${esc(tip)}"` : "";
     const cls = extraClass ? ` ${extraClass}` : "";
-    return `<button type="button" class="plan-action${cls}" data-action="${esc(action)}" data-source="${esc(src)}"${dis}${title}>${esc(label)}</button>`;
+    return `<button type="button" class="plan-action${cls}" data-action="${esc(action)}" data-source="${esc(src)}"${dis}${titleAttr}>${esc(label)}</button>`;
   }
   return `<div class="plan-actions" data-source="${esc(src)}">
-    ${btn("audit", "Recheck", gateEnabled(gates, "audit"))}
-    ${btn("apply_sync", "Apply sync", gateEnabled(gates, "apply_sync"))}
-    ${btn("research", "Research", gateEnabled(gates, "research"))}
+    ${btn("audit", "Recheck", gateEnabled(gates, "audit"), "", "Compare plan todos against repo files (paths in backticks); proposes frontmatter sync when files exist")}
+    ${btn("apply_sync", "Apply sync", gateEnabled(gates, "apply_sync"), "", "Apply Recheck proposals to plan frontmatter todos")}
+    ${btn("research", "Research", gateEnabled(gates, "research"), "", "Send a deep-research prompt to chat")}
     ${btn("merge_ready", "Merge-ready", gateEnabled(gates, "merge_ready"))}
     ${btn("archive", "Archive", gateEnabled(gates, "archive"))}
-    ${btn("cancel_plan", "Cancel plan", canCancelPlan(group), "danger")}
+    ${btn("cancel_plan", "Cancel plan", canCancelPlan(group), "danger", "Cancel outdated plan: scratches disposition, cancels todos, moves to archive")}
     ${btn("continue", "Continue", gateEnabled(gates, "continue"))}
-    <div class="action-result" data-result="${esc(src)}"></div>
+    <div class="action-result-wrap"><div class="action-result" data-result="${esc(src)}"></div></div>
   </div>`;
+}
+
+function showActionProgress(resultEl, label) {
+  resultEl.className = "action-result";
+  resultEl.innerHTML = esc(label) + '<div class="action-progress"><span></span></div>';
+}
+
+function formatAuditResult(audit) {
+  if (!audit) return "Recheck finished.";
+  const proposals = audit.proposals || [];
+  let html = esc(audit.summary || ("Recheck: " + proposals.length + " proposal(s)"));
+  html += '<div class="audit-detail">Recheck compares todo text to files under this repo (e.g. paths in backticks).</div>';
+  if (proposals.length) {
+    html += '<ul class="audit-detail">';
+    proposals.slice(0, 5).forEach(function(p) {
+      html += "<li>" + esc((p.todo_id || "") + ": " + (p.suggested_status || "") + " (" + (p.confidence || "") + ")") + "</li>";
+    });
+    if (proposals.length > 5) html += "<li>…+" + (proposals.length - 5) + " more</li>";
+    html += "</ul>";
+  } else {
+    html += '<div class="audit-detail">No todo drift detected.</div>';
+  }
+  return html;
 }
 
 function renderDashboard(raw) {
@@ -523,6 +577,7 @@ function renderDashboard(raw) {
       <div class="card"><div class="label">Open items</div><div class="value">${summary.item_count || 0}</div></div>
       <div class="card"><div class="label">Blocked</div><div class="value">${summary.blocked_items || 0}</div></div>
       <div class="card"><div class="label">Outstanding</div><div class="value">${summary.outstanding_items || 0}</div></div>
+      ${summary.archived_count ? `<div class="card"><div class="label">Archived</div><div class="value">${summary.archived_count}</div></div>` : ""}
     </div>`;
 
   let totalTodos = groups.reduce(function(acc, g) {
@@ -553,6 +608,7 @@ function renderDashboard(raw) {
           ${dispositionOptions.map(function(d) { return `<option value="${esc(d)}">${esc(d)}</option>`; }).join("")}
         </select>
       </label>
+      <label><input type="checkbox" id="show-archived" checked /> Show archived</label>
       <label><input type="checkbox" id="pr-only" /> PR only</label>
       <button id="expand-all" type="button">Expand all</button>
       <button id="collapse-all" type="button">Collapse all</button>
@@ -604,7 +660,10 @@ function renderDashboard(raw) {
     }
     body = renderActionButtons(group) + body;
 
-    return `<details class="plan-card" data-disposition="${esc(group.disposition || "—")}" data-has-pr="${group.pr ? "1" : "0"}" data-source="${esc(src)}"${openAttr}>
+    const archivedClass = group.is_archived ? " is-archived" : "";
+    const archivedAttr = group.is_archived ? ' data-archived="1"' : "";
+
+    return `<details class="plan-card${archivedClass}" data-disposition="${esc(group.disposition || "—")}" data-has-pr="${group.pr ? "1" : "0"}" data-source="${esc(src)}"${archivedAttr}${openAttr}>
       <summary>
         <div class="plan-title">
           <span class="plan-title-text">#${esc(group.seq)} — ${esc(group.plan)}</span>
@@ -627,43 +686,34 @@ function renderDashboard(raw) {
   });
 
   root.innerHTML = summaryHtml + nextHtml + controlsHtml + allCards.join("");
+  updateMasterplanGlow();
 
-  const boardState = {
-    projectRoot: payload.project_root || ".",
-    audits: {}
-  };
+  const session = window.__planBoardSession;
 
   async function pollPlanAction(extra) {
-    const params = Object.assign({ path: boardState.projectRoot }, extra || {});
+    const params = Object.assign({ path: session.projectRoot || payload.project_root || "." }, extra || {});
     return callTool("poll_plan_board", params);
   }
 
-  async function refreshBoard() {
-    try {
-      const data = await pollPlanAction({});
-      if (data) renderDashboard(data);
-    } catch (err) {
-      const status = document.getElementById("status");
-      if (status) status.textContent = "Refresh failed: " + (err.message || String(err));
-    }
-  }
+  session.projectRoot = payload.project_root || session.projectRoot || ".";
 
-  function applyActionPayload(data, source) {
+  function applyActionPayload(data, source, opts) {
     if (!data) return null;
     const result = data.action_result || null;
     if (data.action_result && data.action === "audit" && source) {
-      boardState.audits[source] = data.action_result;
+      session.audits[source] = data.action_result;
     }
+    if (opts && opts.needsMasterplan) markMasterplanNeeded();
     if (data.plan_groups) renderDashboard(data);
     return result;
   }
 
   async function runPlanAction(action, source, resultEl) {
-    const path = boardState.projectRoot;
     resultEl.className = "action-result";
-    resultEl.textContent = "Working…";
+    const dismissed = "Not cancelled — dialog dismissed.";
     try {
       if (action === "research") {
+        showActionProgress(resultEl, "Sending research prompt…");
         const data = await pollPlanAction({ action: "research", source: source });
         const handoff = applyActionPayload(data, source) || data;
         const msg = (handoff && handoff.message) || ("Research plan " + source);
@@ -673,35 +723,36 @@ function renderDashboard(raw) {
         return;
       }
       if (action === "audit") {
+        showActionProgress(resultEl, "Recheck running — scanning todos vs repo files…");
         const data = await pollPlanAction({ action: "audit", source: source, dry_run: true });
         const audit = applyActionPayload(data, source);
-        const count = (audit && audit.proposals && audit.proposals.length) || 0;
         resultEl.className = "action-result ok";
-        resultEl.textContent = (audit && audit.summary) || (count + " proposal(s)");
+        resultEl.innerHTML = formatAuditResult(audit);
         return;
       }
       if (action === "apply_sync") {
-        const audit = boardState.audits[source];
+        const audit = session.audits[source];
         if (!audit || !audit.proposals || !audit.proposals.length) {
           resultEl.className = "action-result err";
           resultEl.textContent = "Run Recheck first.";
           return;
         }
-        if (!window.confirm("Apply " + audit.proposals.length + " todo sync proposal(s)?")) {
-          resultEl.textContent = "Cancelled.";
+        if (!window.confirm("Apply " + audit.proposals.length + " todo sync proposal(s) to frontmatter?")) {
+          resultEl.textContent = dismissed;
           return;
         }
+        showActionProgress(resultEl, "Applying todo sync…");
         const data = await pollPlanAction({
           action: "apply_sync",
           source: source,
           proposals: audit.proposals,
           confirm: true
         });
-        const applied = applyActionPayload(data, source);
+        const applied = applyActionPayload(data, source, { needsMasterplan: true });
         if (applied && applied.ok) {
           resultEl.className = "action-result ok";
           resultEl.textContent = "Applied: " + (applied.applied || []).join(", ");
-          delete boardState.audits[source];
+          delete session.audits[source];
         } else {
           resultEl.className = "action-result err";
           resultEl.textContent = (applied && applied.reason) || "Apply failed";
@@ -710,11 +761,12 @@ function renderDashboard(raw) {
       }
       if (action === "merge_ready") {
         if (!window.confirm("Mark plan merge-ready?")) {
-          resultEl.textContent = "Cancelled.";
+          resultEl.textContent = dismissed;
           return;
         }
+        showActionProgress(resultEl, "Updating disposition…");
         const data = await pollPlanAction({ action: "merge_ready", source: source, confirm: true });
-        const res = applyActionPayload(data, source);
+        const res = applyActionPayload(data, source, { needsMasterplan: true });
         if (res && res.ok) {
           resultEl.className = "action-result ok";
           resultEl.textContent = "Marked merge-ready.";
@@ -725,12 +777,13 @@ function renderDashboard(raw) {
         return;
       }
       if (action === "archive") {
-        if (!window.confirm("Archive this plan?")) {
-          resultEl.textContent = "Cancelled.";
+        if (!window.confirm("Archive this plan to .plan.archives/?")) {
+          resultEl.textContent = dismissed;
           return;
         }
+        showActionProgress(resultEl, "Archiving…");
         const data = await pollPlanAction({ action: "archive", source: source, confirm: true });
-        const res = applyActionPayload(data, source);
+        const res = applyActionPayload(data, source, { needsMasterplan: true });
         if (res && res.ok) {
           resultEl.className = "action-result ok";
           resultEl.textContent = "Archived to " + (res.archived_to || "archive");
@@ -741,28 +794,33 @@ function renderDashboard(raw) {
         return;
       }
       if (action === "cancel_plan") {
+        if (!window.confirm(
+          "Cancel this plan?\n\nThis will:\n• Mark pending todos as cancelled\n• Set disposition to scratched\n• Move the file to .plan.archives/\n\nYou can undo only by restoring the file from git."
+        )) {
+          resultEl.className = "action-result";
+          resultEl.textContent = dismissed;
+          return;
+        }
         const note = window.prompt(
           "Cancellation note (shown in plan overview):",
           "Outdated idea — superseded / no longer pursuing"
         );
         if (note === null) {
-          resultEl.textContent = "Cancelled.";
+          resultEl.className = "action-result";
+          resultEl.textContent = "Not cancelled — no note entered.";
           return;
         }
-        if (!window.confirm("Cancel plan, mark todos cancelled, and move to archive?")) {
-          resultEl.textContent = "Cancelled.";
-          return;
-        }
+        showActionProgress(resultEl, "Cancelling plan…");
         const data = await pollPlanAction({
           action: "cancel_plan",
           source: source,
           confirm: true,
           cancel_note: note
         });
-        const res = applyActionPayload(data, source);
+        const res = applyActionPayload(data, source, { needsMasterplan: true });
         if (res && res.ok) {
           resultEl.className = "action-result ok";
-          resultEl.textContent = "Cancelled → " + (res.archived_to || "archive");
+          resultEl.textContent = "Plan cancelled → " + (res.archived_to || "archive");
         } else {
           resultEl.className = "action-result err";
           resultEl.textContent = (res && res.reason) || "Failed";
@@ -771,11 +829,12 @@ function renderDashboard(raw) {
       }
       if (action === "continue") {
         if (!window.confirm("Queue continue build for this plan?")) {
-          resultEl.textContent = "Cancelled.";
+          resultEl.textContent = dismissed;
           return;
         }
+        showActionProgress(resultEl, "Queueing branch…");
         const data = await pollPlanAction({ action: "continue", source: source, confirm: true });
-        const res = applyActionPayload(data, source);
+        const res = applyActionPayload(data, source, { needsMasterplan: true });
         if (res && res.ok) {
           sendChatMessage(res.handoff_message || ("Continue " + source));
           resultEl.className = "action-result ok";
@@ -806,14 +865,18 @@ function renderDashboard(raw) {
   function updateFilters() {
     const disp = document.getElementById("disp-filter");
     const prOnly = document.getElementById("pr-only");
+    const showArchived = document.getElementById("show-archived");
     const wantedDisp = disp ? disp.value : "";
     const onlyPr = prOnly ? !!prOnly.checked : false;
+    const includeArchived = showArchived ? !!showArchived.checked : true;
     let shown = 0;
     const cards = root.querySelectorAll(".plan-card");
     cards.forEach(function(card) {
+      const isArchived = card.getAttribute("data-archived") === "1";
+      const matchesArchived = includeArchived || !isArchived;
       const matchesDisp = !wantedDisp || card.getAttribute("data-disposition") === wantedDisp;
       const matchesPr = !onlyPr || card.getAttribute("data-has-pr") === "1";
-      const visible = matchesDisp && matchesPr;
+      const visible = matchesArchived && matchesDisp && matchesPr;
       card.style.display = visible ? "" : "none";
       if (visible) shown += 1;
     });
@@ -823,8 +886,10 @@ function renderDashboard(raw) {
 
   const dispEl = document.getElementById("disp-filter");
   const prEl = document.getElementById("pr-only");
+  const archivedEl = document.getElementById("show-archived");
   if (dispEl) dispEl.addEventListener("change", updateFilters);
   if (prEl) prEl.addEventListener("change", updateFilters);
+  if (archivedEl) archivedEl.addEventListener("change", updateFilters);
   updateFilters();
 
   const masterplanBtn = document.getElementById("run-masterplan");
@@ -839,7 +904,10 @@ function renderDashboard(raw) {
         if (masterplanStatus) {
           masterplanStatus.textContent = res.summary || (res.ok ? "Done" : "Failed");
         }
-        if (data && data.plan_groups) renderDashboard(data);
+        if (data && data.plan_groups) {
+          clearMasterplanNeeded();
+          renderDashboard(data);
+        }
       } catch (err) {
         if (masterplanStatus) masterplanStatus.textContent = err.message || String(err);
       } finally {
