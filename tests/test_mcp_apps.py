@@ -301,6 +301,9 @@ def test_plan_board_html_has_action_bridge():
     assert "run-masterplan" in html
     assert "show-archived" in html
     assert "__planBoardSession" in html
+    assert "planDialogCancelPlan" in html
+    assert "plan-modal" in html
+    assert "window.confirm" not in html
     assert "action_gates" in html or "renderActionButtons" in html
 
 

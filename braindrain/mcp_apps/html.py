@@ -333,6 +333,19 @@ tr:hover td { background: color-mix(in srgb, var(--accent) 6%, transparent); }
 .plan-card.is-archived { opacity: 0.88; border-style: dashed; }
 .plan-card.is-archived > summary { background: color-mix(in srgb, var(--muted) 6%, transparent); }
 .pill.archived-tag { background: color-mix(in srgb, var(--muted) 25%, var(--border)); color: var(--muted); }
+.plan-modal { position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center; }
+.plan-modal.hidden { display: none; }
+.plan-modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.55); }
+.plan-modal-panel { position: relative; z-index: 1; width: min(420px, calc(100vw - 24px)); background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.35); }
+.plan-modal-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+.plan-modal-body { font-size: 12px; line-height: 1.45; color: var(--text); margin-bottom: 12px; }
+.plan-modal-body p { margin: 0 0 8px; }
+.plan-modal-body ul { margin: 6px 0 0; padding-left: 18px; }
+.modal-label { display: block; font-size: 11px; color: var(--muted); margin-top: 8px; }
+.modal-label textarea { display: block; width: 100%; margin-top: 4px; padding: 8px; font: inherit; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); resize: vertical; }
+.plan-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.plan-modal-actions button { font-size: 11px; border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+.plan-modal-actions button.primary { background: color-mix(in srgb, var(--warn) 18%, var(--panel)); border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); color: var(--warn); }
 """
 
 
@@ -428,6 +441,85 @@ function clearMasterplanNeeded() {
 function updateMasterplanGlow() {
   const btn = document.getElementById("run-masterplan");
   if (btn) btn.classList.toggle("needs-run", !!window.__planBoardSession.masterplanNeeded);
+}
+
+function ensurePlanModal() {
+  let modal = document.getElementById("plan-modal");
+  if (modal) return modal;
+  modal = document.createElement("div");
+  modal.id = "plan-modal";
+  modal.className = "plan-modal hidden";
+  modal.setAttribute("aria-hidden", "true");
+  modal.innerHTML = '<div class="plan-modal-backdrop"></div><div class="plan-modal-panel"><div class="plan-modal-title" id="plan-modal-title"></div><div class="plan-modal-body" id="plan-modal-body"></div><div class="plan-modal-actions" id="plan-modal-actions"></div></div>';
+  document.body.appendChild(modal);
+  modal.querySelector(".plan-modal-backdrop").addEventListener("click", function() {
+    if (modal._resolve) modal._resolve(false);
+    hidePlanModal();
+  });
+  return modal;
+}
+
+function hidePlanModal() {
+  const modal = document.getElementById("plan-modal");
+  if (!modal) return;
+  modal.classList.add("hidden");
+  modal.setAttribute("aria-hidden", "true");
+  modal._resolve = null;
+}
+
+function planDialogConfirm(title, message) {
+  return new Promise(function(resolve) {
+    const modal = ensurePlanModal();
+    modal._resolve = resolve;
+    document.getElementById("plan-modal-title").textContent = title;
+    document.getElementById("plan-modal-body").textContent = message;
+    const actions = document.getElementById("plan-modal-actions");
+    actions.innerHTML = "";
+    const noBtn = document.createElement("button");
+    noBtn.type = "button";
+    noBtn.textContent = "Dismiss";
+    noBtn.onclick = function() { hidePlanModal(); resolve(false); };
+    const yesBtn = document.createElement("button");
+    yesBtn.type = "button";
+    yesBtn.className = "primary";
+    yesBtn.textContent = "Confirm";
+    yesBtn.onclick = function() { hidePlanModal(); resolve(true); };
+    actions.appendChild(noBtn);
+    actions.appendChild(yesBtn);
+    modal.classList.remove("hidden");
+    modal.setAttribute("aria-hidden", "false");
+  });
+}
+
+function planDialogCancelPlan() {
+  return new Promise(function(resolve) {
+    const modal = ensurePlanModal();
+    modal._resolve = function(v) { resolve(v); };
+    document.getElementById("plan-modal-title").textContent = "Cancel this plan?";
+    document.getElementById("plan-modal-body").innerHTML =
+      "<p>This will:</p><ul><li>Mark pending todos as cancelled</li><li>Set disposition to <code>scratched</code></li><li>Move the file to <code>.plan.archives/</code></li></ul>" +
+      "<label class='modal-label'>Cancellation note (shown in overview)<textarea id='plan-modal-note' rows='3'>Outdated idea — superseded / no longer pursuing</textarea></label>";
+    const actions = document.getElementById("plan-modal-actions");
+    actions.innerHTML = "";
+    const noBtn = document.createElement("button");
+    noBtn.type = "button";
+    noBtn.textContent = "Keep plan";
+    noBtn.onclick = function() { hidePlanModal(); resolve({ confirmed: false }); };
+    const yesBtn = document.createElement("button");
+    yesBtn.type = "button";
+    yesBtn.className = "primary";
+    yesBtn.textContent = "Cancel plan";
+    yesBtn.onclick = function() {
+      const noteEl = document.getElementById("plan-modal-note");
+      const note = noteEl ? noteEl.value.trim() : "";
+      hidePlanModal();
+      resolve({ confirmed: true, note: note || "Cancelled plan" });
+    };
+    actions.appendChild(noBtn);
+    actions.appendChild(yesBtn);
+    modal.classList.remove("hidden");
+    modal.setAttribute("aria-hidden", "false");
+  });
 }
 
 function esc(s) {
@@ -598,6 +690,10 @@ function renderDashboard(raw) {
   }
 
   const dispositionOptions = Array.from(new Set(groups.map(function(g) { return g.disposition || "—"; }))).sort();
+  const session = window.__planBoardSession;
+  if (session.showArchived === undefined) session.showArchived = true;
+  session.projectRoot = payload.project_root || session.projectRoot || ".";
+
   let controlsHtml = `
     <div class="toolbar">
       <button id="run-masterplan" type="button">Run /masterplan</button>
@@ -608,7 +704,7 @@ function renderDashboard(raw) {
           ${dispositionOptions.map(function(d) { return `<option value="${esc(d)}">${esc(d)}</option>`; }).join("")}
         </select>
       </label>
-      <label><input type="checkbox" id="show-archived" checked /> Show archived</label>
+      <label><input type="checkbox" id="show-archived"${session.showArchived ? " checked" : ""} /> Show archived</label>
       <label><input type="checkbox" id="pr-only" /> PR only</label>
       <button id="expand-all" type="button">Expand all</button>
       <button id="collapse-all" type="button">Collapse all</button>
@@ -688,14 +784,16 @@ function renderDashboard(raw) {
   root.innerHTML = summaryHtml + nextHtml + controlsHtml + allCards.join("");
   updateMasterplanGlow();
 
-  const session = window.__planBoardSession;
-
   async function pollPlanAction(extra) {
-    const params = Object.assign({ path: session.projectRoot || payload.project_root || "." }, extra || {});
+    const params = Object.assign({ path: session.projectRoot || "." }, extra || {});
     return callTool("poll_plan_board", params);
   }
 
-  session.projectRoot = payload.project_root || session.projectRoot || ".";
+  async function refreshBoardFromServer() {
+    const data = await pollPlanAction({});
+    if (data && data.plan_groups) renderDashboard(data);
+    return data;
+  }
 
   function applyActionPayload(data, source, opts) {
     if (!data) return null;
@@ -737,7 +835,7 @@ function renderDashboard(raw) {
           resultEl.textContent = "Run Recheck first.";
           return;
         }
-        if (!window.confirm("Apply " + audit.proposals.length + " todo sync proposal(s) to frontmatter?")) {
+        if (!(await planDialogConfirm("Apply todo sync?", "Apply " + audit.proposals.length + " todo sync proposal(s) to frontmatter?"))) {
           resultEl.textContent = dismissed;
           return;
         }
@@ -760,7 +858,7 @@ function renderDashboard(raw) {
         return;
       }
       if (action === "merge_ready") {
-        if (!window.confirm("Mark plan merge-ready?")) {
+        if (!(await planDialogConfirm("Mark merge-ready?", "Set disposition to merge-ready for this plan?"))) {
           resultEl.textContent = dismissed;
           return;
         }
@@ -777,7 +875,7 @@ function renderDashboard(raw) {
         return;
       }
       if (action === "archive") {
-        if (!window.confirm("Archive this plan to .plan.archives/?")) {
+        if (!(await planDialogConfirm("Archive plan?", "Move this plan to .plan.archives/?"))) {
           resultEl.textContent = dismissed;
           return;
         }
@@ -794,20 +892,10 @@ function renderDashboard(raw) {
         return;
       }
       if (action === "cancel_plan") {
-        if (!window.confirm(
-          "Cancel this plan?\n\nThis will:\n• Mark pending todos as cancelled\n• Set disposition to scratched\n• Move the file to .plan.archives/\n\nYou can undo only by restoring the file from git."
-        )) {
+        const dialog = await planDialogCancelPlan();
+        if (!dialog || !dialog.confirmed) {
           resultEl.className = "action-result";
           resultEl.textContent = dismissed;
-          return;
-        }
-        const note = window.prompt(
-          "Cancellation note (shown in plan overview):",
-          "Outdated idea — superseded / no longer pursuing"
-        );
-        if (note === null) {
-          resultEl.className = "action-result";
-          resultEl.textContent = "Not cancelled — no note entered.";
           return;
         }
         showActionProgress(resultEl, "Cancelling plan…");
@@ -815,7 +903,7 @@ function renderDashboard(raw) {
           action: "cancel_plan",
           source: source,
           confirm: true,
-          cancel_note: note
+          cancel_note: dialog.note || ""
         });
         const res = applyActionPayload(data, source, { needsMasterplan: true });
         if (res && res.ok) {
@@ -828,7 +916,7 @@ function renderDashboard(raw) {
         return;
       }
       if (action === "continue") {
-        if (!window.confirm("Queue continue build for this plan?")) {
+        if (!(await planDialogConfirm("Continue build?", "Queue branch-setup and continue build for this plan?"))) {
           resultEl.textContent = dismissed;
           return;
         }
@@ -889,8 +977,26 @@ function renderDashboard(raw) {
   const archivedEl = document.getElementById("show-archived");
   if (dispEl) dispEl.addEventListener("change", updateFilters);
   if (prEl) prEl.addEventListener("change", updateFilters);
-  if (archivedEl) archivedEl.addEventListener("change", updateFilters);
+  if (archivedEl) {
+    archivedEl.addEventListener("change", function() {
+      session.showArchived = !!archivedEl.checked;
+      if (session.showArchived) {
+        refreshBoardFromServer().catch(function(err) {
+          const status = document.getElementById("status");
+          if (status) status.textContent = "Refresh failed: " + (err.message || String(err));
+          updateFilters();
+        });
+      } else {
+        updateFilters();
+      }
+    });
+  }
   updateFilters();
+
+  if (!session.boardHydrated) {
+    session.boardHydrated = true;
+    refreshBoardFromServer().catch(function() {});
+  }
 
   const masterplanBtn = document.getElementById("run-masterplan");
   const masterplanStatus = document.getElementById("masterplan-status");
