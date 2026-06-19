@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from braindrain.mcp_apps.plan_gates import compute_action_gates
+from braindrain.mcp_apps.plan_paths import resolve_plan_path
 
 _MASTER_DISPOSITION_ROW_RE = re.compile(
     r"^\|\s*\[([^\]]+)\]\([^)]+\)\s*\|\s*([^|]+)\|\s*`?([^`|]+)`?\s*\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]+)\|\s*$",
@@ -106,7 +107,7 @@ def _ensure_scripts_importable(repo_root: Path) -> None:
 def load_plan_file_meta(repo_root: Path, source: str) -> dict[str, Any]:
     """Read plan frontmatter todos and scalar fields when the plan file exists."""
     rel = source.lstrip("/")
-    plan_path = repo_root / rel
+    plan_path = resolve_plan_path(repo_root, rel)
     if not plan_path.is_file():
         return {}
 

@@ -458,6 +458,27 @@ function gateReason(gates, key) {
   return (g && g.reason) ? g.reason : "";
 }
 
+function hasMeaningfulBranch(branch) {
+  const b = String(branch || "").trim().toLowerCase();
+  return b && b !== "—" && b !== "-" && b !== "none" && b !== "n/a";
+}
+
+function groupHasPr(group) {
+  const pr = group && group.pr;
+  if (!pr) return false;
+  if (pr.url && String(pr.url).indexOf("http") === 0) return true;
+  const label = String(pr.label || "").trim().toLowerCase();
+  return label && label !== "none" && label !== "—" && label !== "-";
+}
+
+function canCancelPlan(group) {
+  if (gateEnabled(group.action_gates || {}, "cancel_plan")) return true;
+  const disp = String(group.disposition || "").toLowerCase();
+  if (disp === "archived" || disp === "scratched") return false;
+  if (!group.source) return false;
+  return !hasMeaningfulBranch(group.branch) && !groupHasPr(group);
+}
+
 function renderActionButtons(group) {
   const gates = group.action_gates || {};
   const src = group.source || "";
@@ -473,7 +494,7 @@ function renderActionButtons(group) {
     ${btn("research", "Research", gateEnabled(gates, "research"))}
     ${btn("merge_ready", "Merge-ready", gateEnabled(gates, "merge_ready"))}
     ${btn("archive", "Archive", gateEnabled(gates, "archive"))}
-    ${btn("cancel_plan", "Cancel plan", gateEnabled(gates, "cancel_plan"), "danger")}
+    ${btn("cancel_plan", "Cancel plan", canCancelPlan(group), "danger")}
     ${btn("continue", "Continue", gateEnabled(gates, "continue"))}
     <div class="action-result" data-result="${esc(src)}"></div>
   </div>`;
@@ -524,6 +545,8 @@ function renderDashboard(raw) {
   const dispositionOptions = Array.from(new Set(groups.map(function(g) { return g.disposition || "—"; }))).sort();
   let controlsHtml = `
     <div class="toolbar">
+      <button id="run-masterplan" type="button">Run /masterplan</button>
+      <span class="hint" id="masterplan-status"></span>
       <label>Disposition
         <select id="disp-filter">
           <option value="">All</option>
@@ -803,6 +826,27 @@ function renderDashboard(raw) {
   if (dispEl) dispEl.addEventListener("change", updateFilters);
   if (prEl) prEl.addEventListener("change", updateFilters);
   updateFilters();
+
+  const masterplanBtn = document.getElementById("run-masterplan");
+  const masterplanStatus = document.getElementById("masterplan-status");
+  if (masterplanBtn) {
+    masterplanBtn.addEventListener("click", async function() {
+      masterplanBtn.disabled = true;
+      if (masterplanStatus) masterplanStatus.textContent = "Running…";
+      try {
+        const data = await pollPlanAction({ action: "masterplan" });
+        const res = (data && data.action_result) || {};
+        if (masterplanStatus) {
+          masterplanStatus.textContent = res.summary || (res.ok ? "Done" : "Failed");
+        }
+        if (data && data.plan_groups) renderDashboard(data);
+      } catch (err) {
+        if (masterplanStatus) masterplanStatus.textContent = err.message || String(err);
+      } finally {
+        masterplanBtn.disabled = false;
+      }
+    });
+  }
 
   const expandBtn = document.getElementById("expand-all");
   const collapseBtn = document.getElementById("collapse-all");

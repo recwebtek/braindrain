@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+_EMPTY_BRANCH = {"", "—", "-", "none", "n/a", "null"}
+
 
 def _gate(enabled: bool, reason: str = "") -> dict[str, Any]:
     return {"enabled": enabled, "reason": reason if not enabled else ""}
@@ -20,6 +22,21 @@ def _todo_summary_all_done(summary: dict[str, Any] | None) -> bool:
     return done >= total
 
 
+def _has_meaningful_branch(branch: str) -> bool:
+    return branch.strip().lower() not in _EMPTY_BRANCH
+
+
+def _group_has_pr(group: dict[str, Any]) -> bool:
+    pr = group.get("pr")
+    if not pr:
+        return False
+    url = str(pr.get("url") or "").strip()
+    if url.startswith("http"):
+        return True
+    label = str(pr.get("label") or "").strip().lower()
+    return label not in {"", "none", "—", "-", "n/a", "null"}
+
+
 def compute_action_gates(
     group: dict[str, Any],
     *,
@@ -32,17 +49,15 @@ def compute_action_gates(
     plan_exists = bool(plan_path and plan_path.is_file())
 
     disposition = str(group.get("disposition") or "active").strip().lower()
-    pr = group.get("pr") or {}
-    pr_url = str(pr.get("url") or "").strip()
-    has_pr = bool(pr_url)
     pr_state = (pr_state or "none").lower()
+    has_pr = _group_has_pr(group)
     if has_pr and pr_state == "none":
         pr_state = "open"
 
     summary = group.get("todo_summary") or {}
     all_done = _todo_summary_all_done(summary)
     branch = str(group.get("branch") or "").strip()
-    has_branch = branch not in {"", "—", "-"}
+    has_branch = _has_meaningful_branch(branch)
 
     merge_ready = (
         plan_exists
@@ -89,14 +104,33 @@ def compute_action_gates(
     else:
         continue_reason = "" if has_branch else "Branch will be created on continue"
 
-    force_cancel = plan_exists and disposition not in {"archived", "scratched"}
+    # Cancel/scratch: any open plan without branch and without PR (UI + server).
+    cancel_ok = (
+        bool(source)
+        and disposition not in {"archived", "scratched"}
+        and not has_branch
+        and not has_pr
+    )
+    if not cancel_ok:
+        if disposition in {"archived", "scratched"}:
+            cancel_reason = f"Already {disposition}"
+        elif has_branch:
+            cancel_reason = "Plan has a branch — use Archive after merge-ready"
+        elif has_pr:
+            cancel_reason = "Plan has a PR — use Archive after merge"
+        elif not source:
+            cancel_reason = "No plan source path"
+        else:
+            cancel_reason = "Cannot cancel this plan"
+    else:
+        cancel_reason = ""
 
     return {
         "audit": _gate(plan_exists, "Plan file missing"),
         "apply_sync": _gate(False, "Run audit first"),
-        "research": _gate(plan_exists, "Plan file missing"),
+        "research": _gate(bool(source), "Plan file missing"),
         "merge_ready": _gate(merge_ready, merge_reason),
         "archive": _gate(archive_ok, archive_reason),
-        "cancel_plan": _gate(force_cancel, "Already archived or scratched"),
+        "cancel_plan": _gate(cancel_ok, cancel_reason),
         "continue": _gate(continue_ok, continue_reason),
     }

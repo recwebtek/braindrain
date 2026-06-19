@@ -297,6 +297,7 @@ def test_plan_board_html_has_action_bridge():
     assert "pollPlanAction" in html
     assert "plan-action" in html
     assert "cancel_plan" in html
+    assert "run-masterplan" in html
     assert "action_gates" in html or "renderActionButtons" in html
 
 
@@ -362,6 +363,32 @@ overview: Old idea
     assert "disposition: scratched" in text
     assert "Superseded by new approach" in text
     assert "status: cancelled" in text
+
+
+def test_compute_action_gates_enables_cancel_without_branch_or_pr():
+    from braindrain.mcp_apps.plan_gates import compute_action_gates
+
+    group = {
+        "source": ".cursor/plans/ai-shell.plan.md",
+        "disposition": "replan-needed",
+        "branch": "—",
+        "todo_summary": {"total": 9, "completed": 0, "cancelled": 0},
+    }
+    gates = compute_action_gates(group, repo_root=Path("/tmp"))
+    assert gates["cancel_plan"]["enabled"] is True
+
+
+def test_compute_action_gates_disables_cancel_with_branch():
+    from braindrain.mcp_apps.plan_gates import compute_action_gates
+
+    group = {
+        "source": ".cursor/plans/demo.plan.md",
+        "disposition": "active",
+        "branch": "feat/demo",
+        "todo_summary": {"total": 2, "completed": 0, "cancelled": 0},
+    }
+    gates = compute_action_gates(group, repo_root=Path("/tmp"))
+    assert gates["cancel_plan"]["enabled"] is False
 
 
 def test_compute_action_gates_disables_merge_ready_without_pr(tmp_path: Path):

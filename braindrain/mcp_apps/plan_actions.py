@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from braindrain.mcp_apps.plan_gates import compute_action_gates
+from braindrain.mcp_apps.plan_paths import resolve_plan_path
 
 _PATH_RE = re.compile(
     r"`([^`]+)`|"
@@ -42,7 +43,7 @@ def _resolve_root(path: str) -> Path:
 
 
 def _plan_path(repo_root: Path, source: str) -> Path:
-    return repo_root / source.lstrip("/")
+    return resolve_plan_path(repo_root, source)
 
 
 def _load_plan_text(repo_root: Path, source: str) -> tuple[Path, str]:
@@ -201,25 +202,39 @@ def audit_plan_implementation(
     }
 
 
-def _refresh_plan_reports(repo_root: Path) -> None:
+def _refresh_plan_reports(repo_root: Path, *, trigger: str = "plan-board-sync") -> dict[str, Any]:
     script = repo_root / "scripts" / "daily_plan_audit.py"
     if not script.is_file():
-        return
+        return {"ok": False, "reason": "daily_plan_audit.py not found"}
     python = "/usr/bin/python3"
-    subprocess.run(
+    proc = subprocess.run(
         [
             python,
             str(script),
             "--repo-root",
             str(repo_root),
             "--trigger",
-            "plan-board-sync",
+            trigger,
         ],
         cwd=repo_root,
         capture_output=True,
-        timeout=120,
+        text=True,
+        timeout=180,
         check=False,
     )
+    ok = proc.returncode == 0
+    return {
+        "ok": ok,
+        "summary": "Planning reports refreshed" if ok else "Masterplan run failed",
+        "trigger": trigger,
+        "stderr_tail": (proc.stderr or "")[-400:] if not ok else "",
+    }
+
+
+def run_masterplan_refresh(*, path: str) -> dict[str, Any]:
+    """Regenerate .braindrain/plan-reports/ (same as /masterplan, read-only)."""
+    repo_root = _resolve_root(path)
+    return _refresh_plan_reports(repo_root, trigger="manual-masterplan-command")
 
 
 def apply_plan_todo_sync(
@@ -518,6 +533,8 @@ def dispatch_plan_board_action(
         result = plan_board_handoff(action="research", source=source, branch=branch)
     elif action_key == "handoff_continue":
         result = plan_board_handoff(action="continue", source=source, branch=branch)
+    elif action_key == "masterplan":
+        result = run_masterplan_refresh(path=path)
     else:
         result = {"ok": False, "reason": f"Unknown action: {action_key}"}
 
