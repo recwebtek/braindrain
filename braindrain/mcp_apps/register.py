@@ -28,6 +28,7 @@ from braindrain.mcp_apps.plan_actions import (
     apply_plan_todo_sync,
     archive_plan,
     audit_plan_implementation,
+    dispatch_plan_board_action,
     enqueue_plan_continue,
     mark_plan_merge_ready,
     plan_board_handoff,
@@ -145,14 +146,46 @@ def register_mcp_app_tools(
         app=_POLL_APP,
         tags={"mcp-apps", "planning", "dashboard"},
     )
-    async def poll_plan_board(path: str = "") -> ToolResult:
+    async def poll_plan_board(
+        path: str = "",
+        action: str = "",
+        source: str = "",
+        confirm: bool = False,
+        force: bool = False,
+        cancel_note: str = "",
+        dry_run: bool = True,
+        proposals: list[dict[str, object]] | None = None,
+        branch: str = "",
+    ) -> ToolResult:
         """
         App-only refresh for the plan board iframe (not for the model).
 
+        When ``action`` is set, dispatches plan-board mutations (audit, sync, archive,
+        continue) and returns refreshed board payload plus ``action_result``.
+
         Args:
             path: Project root containing `.braindrain/plan-reports/`. Default: cwd.
+            action: Optional action key (audit, apply_sync, merge_ready, archive,
+                cancel_plan, continue, research).
+            source: Repo-relative plan path for action dispatch.
+            confirm: Required true for write actions.
+            force: Force cancel/archive (sets disposition scratched + overview note).
+            cancel_note: Overview note when force cancelling a plan.
+            dry_run: Audit read-only flag (default true).
+            proposals: Todo sync proposals for apply_sync.
+            branch: Optional branch hint for handoff actions.
         """
-        payload = build_plan_board_payload(path=path or default_path)
+        payload = dispatch_plan_board_action(
+            path=path or default_path,
+            action=action,
+            source=source,
+            confirm=confirm,
+            force=force,
+            cancel_note=cancel_note,
+            dry_run=dry_run,
+            proposals=proposals,
+            branch=branch,
+        )
         return ToolResult(structured_content=payload)
 
     @tool_decorator(
@@ -242,6 +275,8 @@ def register_mcp_app_tools(
         source: str,
         path: str = "",
         confirm: bool = False,
+        force: bool = False,
+        cancel_note: str = "",
     ) -> ToolResult:
         """
         App-only: archive a plan to `.plan.archives/` when gates pass.
@@ -250,8 +285,16 @@ def register_mcp_app_tools(
             source: Repo-relative plan path.
             path: Project root. Default: server project root.
             confirm: Must be true to move the plan file.
+            force: Skip gates; mark scratched, cancel todos, set overview note.
+            cancel_note: Overview text when force cancelling.
         """
-        result = archive_plan(path=path or default_path, source=source, confirm=confirm)
+        result = archive_plan(
+            path=path or default_path,
+            source=source,
+            confirm=confirm,
+            force=force,
+            cancel_note=cancel_note,
+        )
         return ToolResult(structured_content=result)
 
     @tool_decorator(

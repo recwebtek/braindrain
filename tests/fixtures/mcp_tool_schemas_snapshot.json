@@ -55,6 +55,16 @@
           "default": false,
           "type": "boolean",
           "description": "Must be true to move the plan file."
+        },
+        "force": {
+          "default": false,
+          "type": "boolean",
+          "description": "Skip gates; mark scratched, cancel todos, set overview note."
+        },
+        "cancel_note": {
+          "default": "",
+          "type": "string",
+          "description": "Overview text when force cancelling."
         }
       },
       "required": [
@@ -1001,7 +1011,7 @@
   },
   {
     "name": "poll_plan_board",
-    "description": "App-only refresh for the plan board iframe (not for the model).",
+    "description": "App-only refresh for the plan board iframe (not for the model).\n\nWhen ``action`` is set, dispatches plan-board mutations (audit, sync, archive,\ncontinue) and returns refreshed board payload plus ``action_result``.",
     "parameters": {
       "additionalProperties": false,
       "properties": {
@@ -1009,6 +1019,57 @@
           "default": "",
           "type": "string",
           "description": "Project root containing `.braindrain/plan-reports/`. Default: cwd."
+        },
+        "action": {
+          "default": "",
+          "type": "string",
+          "description": "Optional action key (audit, apply_sync, merge_ready, archive,\ncancel_plan, continue, research)."
+        },
+        "source": {
+          "default": "",
+          "type": "string",
+          "description": "Repo-relative plan path for action dispatch."
+        },
+        "confirm": {
+          "default": false,
+          "type": "boolean",
+          "description": "Required true for write actions."
+        },
+        "force": {
+          "default": false,
+          "type": "boolean",
+          "description": "Force cancel/archive (sets disposition scratched + overview note)."
+        },
+        "cancel_note": {
+          "default": "",
+          "type": "string",
+          "description": "Overview note when force cancelling a plan."
+        },
+        "dry_run": {
+          "default": true,
+          "type": "boolean",
+          "description": "Audit read-only flag (default true)."
+        },
+        "proposals": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Todo sync proposals for apply_sync."
+        },
+        "branch": {
+          "default": "",
+          "type": "string",
+          "description": "Optional branch hint for handoff actions."
         }
       },
       "type": "object"

@@ -178,8 +178,20 @@ function setupSizeReporting() {
 }
 
 async function callTool(name, args) {
-  const result = await sendRequest("tools/call", { name: name, arguments: args || {} }, 120000);
-  return extractData(result);
+  try {
+    const result = await sendRequest("tools/call", { name: name, arguments: args || {} }, 120000);
+    if (result && result.isError) {
+      const msg = (result.content && result.content[0] && result.content[0].text) || "Tool call failed";
+      throw new Error(msg);
+    }
+    return extractData(result);
+  } catch (err) {
+    if (err && typeof err === "object" && err.message) throw err;
+    if (err && typeof err === "object" && err.code === -32602) {
+      throw new Error(err.message || "Invalid tool call");
+    }
+    throw err;
+  }
 }
 
 function sendChatMessage(text) {
@@ -306,6 +318,7 @@ tr:hover td { background: color-mix(in srgb, var(--accent) 6%, transparent); }
 .toolbar button:disabled { opacity: 0.45; cursor: not-allowed; }
 .plan-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
 .plan-actions button { font-size: 10px; border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 6px; padding: 4px 8px; cursor: pointer; }
+.plan-actions button.danger { border-color: color-mix(in srgb, var(--warn) 40%, var(--border)); color: var(--warn); }
 .plan-actions button:disabled { opacity: 0.45; cursor: not-allowed; }
 .action-result { font-size: 10px; color: var(--muted); margin-top: 6px; line-height: 1.4; }
 .action-result.ok { color: var(--good); }
@@ -448,10 +461,11 @@ function gateReason(gates, key) {
 function renderActionButtons(group) {
   const gates = group.action_gates || {};
   const src = group.source || "";
-  function btn(action, label, enabled) {
+  function btn(action, label, enabled, extraClass) {
     const dis = enabled ? "" : " disabled";
     const title = enabled ? "" : ` title="${esc(gateReason(gates, action))}"`;
-    return `<button type="button" class="plan-action" data-action="${esc(action)}" data-source="${esc(src)}"${dis}${title}>${esc(label)}</button>`;
+    const cls = extraClass ? ` ${extraClass}` : "";
+    return `<button type="button" class="plan-action${cls}" data-action="${esc(action)}" data-source="${esc(src)}"${dis}${title}>${esc(label)}</button>`;
   }
   return `<div class="plan-actions" data-source="${esc(src)}">
     ${btn("audit", "Recheck", gateEnabled(gates, "audit"))}
@@ -459,6 +473,7 @@ function renderActionButtons(group) {
     ${btn("research", "Research", gateEnabled(gates, "research"))}
     ${btn("merge_ready", "Merge-ready", gateEnabled(gates, "merge_ready"))}
     ${btn("archive", "Archive", gateEnabled(gates, "archive"))}
+    ${btn("cancel_plan", "Cancel plan", gateEnabled(gates, "cancel_plan"), "danger")}
     ${btn("continue", "Continue", gateEnabled(gates, "continue"))}
     <div class="action-result" data-result="${esc(src)}"></div>
   </div>`;
@@ -595,14 +610,29 @@ function renderDashboard(raw) {
     audits: {}
   };
 
+  async function pollPlanAction(extra) {
+    const params = Object.assign({ path: boardState.projectRoot }, extra || {});
+    return callTool("poll_plan_board", params);
+  }
+
   async function refreshBoard() {
     try {
-      const data = await callTool("poll_plan_board", { path: boardState.projectRoot });
+      const data = await pollPlanAction({});
       if (data) renderDashboard(data);
     } catch (err) {
       const status = document.getElementById("status");
       if (status) status.textContent = "Refresh failed: " + (err.message || String(err));
     }
+  }
+
+  function applyActionPayload(data, source) {
+    if (!data) return null;
+    const result = data.action_result || null;
+    if (data.action_result && data.action === "audit" && source) {
+      boardState.audits[source] = data.action_result;
+    }
+    if (data.plan_groups) renderDashboard(data);
+    return result;
   }
 
   async function runPlanAction(action, source, resultEl) {
@@ -611,7 +641,8 @@ function renderDashboard(raw) {
     resultEl.textContent = "Working…";
     try {
       if (action === "research") {
-        const handoff = await callTool("plan_board_handoff", { action: "research", source: source });
+        const data = await pollPlanAction({ action: "research", source: source });
+        const handoff = applyActionPayload(data, source) || data;
         const msg = (handoff && handoff.message) || ("Research plan " + source);
         sendChatMessage(msg);
         resultEl.className = "action-result ok";
@@ -619,12 +650,11 @@ function renderDashboard(raw) {
         return;
       }
       if (action === "audit") {
-        const audit = await callTool("audit_plan_implementation", { source: source, path: path, dry_run: true });
-        boardState.audits[source] = audit;
+        const data = await pollPlanAction({ action: "audit", source: source, dry_run: true });
+        const audit = applyActionPayload(data, source);
         const count = (audit && audit.proposals && audit.proposals.length) || 0;
         resultEl.className = "action-result ok";
         resultEl.textContent = (audit && audit.summary) || (count + " proposal(s)");
-        await refreshBoard();
         return;
       }
       if (action === "apply_sync") {
@@ -638,17 +668,17 @@ function renderDashboard(raw) {
           resultEl.textContent = "Cancelled.";
           return;
         }
-        const applied = await callTool("apply_plan_todo_sync", {
+        const data = await pollPlanAction({
+          action: "apply_sync",
           source: source,
-          path: path,
           proposals: audit.proposals,
           confirm: true
         });
+        const applied = applyActionPayload(data, source);
         if (applied && applied.ok) {
           resultEl.className = "action-result ok";
           resultEl.textContent = "Applied: " + (applied.applied || []).join(", ");
           delete boardState.audits[source];
-          await refreshBoard();
         } else {
           resultEl.className = "action-result err";
           resultEl.textContent = (applied && applied.reason) || "Apply failed";
@@ -660,11 +690,11 @@ function renderDashboard(raw) {
           resultEl.textContent = "Cancelled.";
           return;
         }
-        const res = await callTool("mark_plan_merge_ready", { source: source, path: path, confirm: true });
+        const data = await pollPlanAction({ action: "merge_ready", source: source, confirm: true });
+        const res = applyActionPayload(data, source);
         if (res && res.ok) {
           resultEl.className = "action-result ok";
           resultEl.textContent = "Marked merge-ready.";
-          await refreshBoard();
         } else {
           resultEl.className = "action-result err";
           resultEl.textContent = (res && res.reason) || "Failed";
@@ -676,11 +706,40 @@ function renderDashboard(raw) {
           resultEl.textContent = "Cancelled.";
           return;
         }
-        const res = await callTool("archive_plan", { source: source, path: path, confirm: true });
+        const data = await pollPlanAction({ action: "archive", source: source, confirm: true });
+        const res = applyActionPayload(data, source);
         if (res && res.ok) {
           resultEl.className = "action-result ok";
           resultEl.textContent = "Archived to " + (res.archived_to || "archive");
-          await refreshBoard();
+        } else {
+          resultEl.className = "action-result err";
+          resultEl.textContent = (res && res.reason) || "Failed";
+        }
+        return;
+      }
+      if (action === "cancel_plan") {
+        const note = window.prompt(
+          "Cancellation note (shown in plan overview):",
+          "Outdated idea — superseded / no longer pursuing"
+        );
+        if (note === null) {
+          resultEl.textContent = "Cancelled.";
+          return;
+        }
+        if (!window.confirm("Cancel plan, mark todos cancelled, and move to archive?")) {
+          resultEl.textContent = "Cancelled.";
+          return;
+        }
+        const data = await pollPlanAction({
+          action: "cancel_plan",
+          source: source,
+          confirm: true,
+          cancel_note: note
+        });
+        const res = applyActionPayload(data, source);
+        if (res && res.ok) {
+          resultEl.className = "action-result ok";
+          resultEl.textContent = "Cancelled → " + (res.archived_to || "archive");
         } else {
           resultEl.className = "action-result err";
           resultEl.textContent = (res && res.reason) || "Failed";
@@ -692,12 +751,12 @@ function renderDashboard(raw) {
           resultEl.textContent = "Cancelled.";
           return;
         }
-        const res = await callTool("enqueue_plan_continue", { source: source, path: path, confirm: true });
+        const data = await pollPlanAction({ action: "continue", source: source, confirm: true });
+        const res = applyActionPayload(data, source);
         if (res && res.ok) {
           sendChatMessage(res.handoff_message || ("Continue " + source));
           resultEl.className = "action-result ok";
           resultEl.textContent = "Queued branch " + (res.branch || "");
-          await refreshBoard();
         } else {
           resultEl.className = "action-result err";
           resultEl.textContent = (res && res.reason) || "Failed";

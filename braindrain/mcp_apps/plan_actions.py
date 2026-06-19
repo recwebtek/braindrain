@@ -302,25 +302,50 @@ def mark_plan_merge_ready(*, path: str, source: str, confirm: bool = False) -> d
     return {"ok": True, "disposition": "merge-ready", "source": source}
 
 
-def archive_plan(*, path: str, source: str, confirm: bool = False) -> dict[str, Any]:
+def archive_plan(
+    *,
+    path: str,
+    source: str,
+    confirm: bool = False,
+    force: bool = False,
+    cancel_note: str = "",
+) -> dict[str, Any]:
     """Archive a single plan file to .plan.archives/."""
     if not confirm:
         return {"ok": False, "reason": "confirm=True required"}
     repo_root = _resolve_root(path)
-    audit = audit_plan_implementation(path=str(repo_root), source=source, dry_run=True)
-    gates = audit.get("action_gates") or {}
-    if not gates.get("archive", {}).get("enabled"):
-        return {
-            "ok": False,
-            "reason": gates.get("archive", {}).get("reason") or "archive gate failed",
-        }
+    if not force:
+        audit = audit_plan_implementation(path=str(repo_root), source=source, dry_run=True)
+        gates = audit.get("action_gates") or {}
+        if not gates.get("archive", {}).get("enabled"):
+            return {
+                "ok": False,
+                "reason": gates.get("archive", {}).get("reason") or "archive gate failed",
+            }
 
     _ensure_scripts_importable(repo_root)
-    from scripts.plan_branch_utils import set_frontmatter_key
+    from scripts.plan_branch_utils import (
+        parse_frontmatter_todos,
+        render_frontmatter_todos,
+        set_frontmatter_key,
+        set_frontmatter_yaml_block,
+    )
 
     plan_path, text = _load_plan_text(repo_root, source)
-    updated = set_frontmatter_key(text, "disposition", "archived")
-    updated = set_frontmatter_key(updated, "archived", "true")
+    if force:
+        note = (cancel_note or "").strip() or "Cancelled — outdated or superseded plan."
+        todos = parse_frontmatter_todos(text)
+        for todo in todos:
+            status = str(todo.get("status") or "pending").lower()
+            if status in {"pending", "in_progress"}:
+                todo["status"] = "cancelled"
+        text = set_frontmatter_yaml_block(text, "todos", render_frontmatter_todos(todos))
+        text = set_frontmatter_key(text, "disposition", "scratched")
+        text = set_frontmatter_key(text, "overview", note)
+        updated = set_frontmatter_key(text, "archived", "true")
+    else:
+        updated = set_frontmatter_key(text, "disposition", "archived")
+        updated = set_frontmatter_key(updated, "archived", "true")
     plan_path.write_text(updated, encoding="utf-8")
 
     archive_dir = plan_path.parent / ".plan.archives"
@@ -335,6 +360,8 @@ def archive_plan(*, path: str, source: str, confirm: bool = False) -> dict[str, 
     return {
         "ok": True,
         "archived_to": new_rel,
+        "disposition": "scratched" if force else "archived",
+        "cancel_note": cancel_note if force else "",
         "refresh_hint": "Run /masterplan to sync master index and links",
     }
 
@@ -442,3 +469,61 @@ def plan_board_handoff(*, action: str, source: str, branch: str = "") -> dict[st
     else:
         message = f"Plan board action `{action}` for `{source}`."
     return {"message": message, "action": action, "source": source}
+
+
+def dispatch_plan_board_action(
+    *,
+    path: str,
+    action: str = "",
+    source: str = "",
+    confirm: bool = False,
+    force: bool = False,
+    cancel_note: str = "",
+    dry_run: bool = True,
+    proposals: list[dict[str, Any]] | None = None,
+    branch: str = "",
+) -> dict[str, Any]:
+    """Route plan-board iframe actions through poll_plan_board (host-safe single tool)."""
+    from braindrain.mcp_apps.data import build_plan_board_payload
+
+    action_key = (action or "").strip().lower()
+    if not action_key:
+        return build_plan_board_payload(path=path)
+
+    result: dict[str, Any]
+    if action_key == "audit":
+        result = audit_plan_implementation(path=path, source=source, dry_run=dry_run)
+    elif action_key == "apply_sync":
+        result = apply_plan_todo_sync(
+            path=path,
+            source=source,
+            proposals=proposals or [],
+            confirm=confirm,
+        )
+    elif action_key == "merge_ready":
+        result = mark_plan_merge_ready(path=path, source=source, confirm=confirm)
+    elif action_key == "archive":
+        result = archive_plan(path=path, source=source, confirm=confirm, force=force)
+    elif action_key in {"cancel_plan", "force_archive"}:
+        result = archive_plan(
+            path=path,
+            source=source,
+            confirm=confirm,
+            force=True,
+            cancel_note=cancel_note,
+        )
+    elif action_key == "continue":
+        result = enqueue_plan_continue(path=path, source=source, confirm=confirm)
+    elif action_key == "research":
+        result = plan_board_handoff(action="research", source=source, branch=branch)
+    elif action_key == "handoff_continue":
+        result = plan_board_handoff(action="continue", source=source, branch=branch)
+    else:
+        result = {"ok": False, "reason": f"Unknown action: {action_key}"}
+
+    payload = build_plan_board_payload(path=path)
+    payload["action_result"] = result
+    payload["action"] = action_key
+    if source:
+        payload["action_source"] = source
+    return payload

@@ -89,11 +89,14 @@ def compute_action_gates(
     else:
         continue_reason = "" if has_branch else "Branch will be created on continue"
 
+    force_cancel = plan_exists and disposition not in {"archived", "scratched"}
+
     return {
         "audit": _gate(plan_exists, "Plan file missing"),
         "apply_sync": _gate(False, "Run audit first"),
         "research": _gate(plan_exists, "Plan file missing"),
         "merge_ready": _gate(merge_ready, merge_reason),
         "archive": _gate(archive_ok, archive_reason),
+        "cancel_plan": _gate(force_cancel, "Already archived or scratched"),
         "continue": _gate(continue_ok, continue_reason),
     }

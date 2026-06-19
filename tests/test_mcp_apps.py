@@ -294,9 +294,74 @@ def test_mcp_app_resources_registered():
 def test_plan_board_html_has_action_bridge():
     html = plan_board_html()
     assert "callTool" in html
+    assert "pollPlanAction" in html
     assert "plan-action" in html
-    assert "audit_plan_implementation" in html
+    assert "cancel_plan" in html
     assert "action_gates" in html or "renderActionButtons" in html
+
+
+def test_dispatch_plan_board_action_audit(tmp_path: Path):
+    from braindrain.mcp_apps.plan_actions import dispatch_plan_board_action
+
+    target = tmp_path / "braindrain" / "demo.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("# demo\n", encoding="utf-8")
+    plan_dir = tmp_path / "plans"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "demo.plan.md").write_text(
+        """---
+todos:
+  - id: t1
+    content: "Add `braindrain/demo.py`"
+    status: pending
+---
+# Demo
+""",
+        encoding="utf-8",
+    )
+    payload = dispatch_plan_board_action(
+        path=str(tmp_path),
+        action="audit",
+        source="plans/demo.plan.md",
+    )
+    assert payload.get("plan_groups") is not None
+    assert payload["action_result"]["proposals"]
+
+
+def test_force_cancel_archive_plan(tmp_path: Path):
+    from braindrain.mcp_apps.plan_actions import archive_plan
+
+    plan_dir = tmp_path / "plans"
+    plan_dir.mkdir(parents=True)
+    plan_path = plan_dir / "old.plan.md"
+    plan_path.write_text(
+        """---
+todos:
+  - id: t1
+    content: "Do thing"
+    status: pending
+disposition: replan-needed
+overview: Old idea
+---
+# Old
+""",
+        encoding="utf-8",
+    )
+    result = archive_plan(
+        path=str(tmp_path),
+        source="plans/old.plan.md",
+        confirm=True,
+        force=True,
+        cancel_note="Superseded by new approach",
+    )
+    assert result["ok"] is True
+    assert result["disposition"] == "scratched"
+    archived = plan_dir / ".plan.archives" / "old.plan.md"
+    assert archived.is_file()
+    text = archived.read_text(encoding="utf-8")
+    assert "disposition: scratched" in text
+    assert "Superseded by new approach" in text
+    assert "status: cancelled" in text
 
 
 def test_compute_action_gates_disables_merge_ready_without_pr(tmp_path: Path):
