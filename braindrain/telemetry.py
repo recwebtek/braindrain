@@ -63,9 +63,10 @@ def estimate_claude_tokens(text: str) -> int:
 # Paths: /Users/..., /Volumes/..., /home/..., /root/...
 _PATH_RE = re.compile(r"(/Users/|/Volumes/|/home/|/root/)([^\s'\",;]+)")
 # API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_), Google AI (AIza),
-# AWS (AKIA/ASIA), Slack (xoxb/xoxp/...)
+# AWS (AKIA/ASIA), Slack (xoxb/xoxp/...), GitHub (ghp_), GitLab (glpat-), npm (npm_),
+# Stripe (sk_live/sk_test)
 _KEY_RE = re.compile(
-    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,}|A[KS]IA[A-Z0-9]{16,}|xox[bparc]-[a-zA-Z0-9-]{12,})",
+    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,}|A[KS]IA[A-Z0-9]{16,}|xox[bparc]-[a-zA-Z0-9-]{12,}|ghp_[a-zA-Z0-9]{36,}|glpat-[a-zA-Z0-9\-]{20,}|npm_[a-zA-Z0-9]{36,}|sk_(?:live|test)_[a-zA-Z0-9]{24,})",
     re.IGNORECASE,
 )
 # Generic secrets: password=value, "secret": "value", api_key: token
@@ -105,6 +106,68 @@ def _is_sensitive_dict_key(key: str) -> bool:
     if normalized in _SENSITIVE_KEY_EXACT:
         return True
     return any(normalized.endswith(suffix) for suffix in _SENSITIVE_KEY_SUFFIXES)
+
+
+def sanitize(data: Any) -> Any:
+    """Recursive redaction of sensitive paths, API keys, and generic secrets."""
+
+    def _do_sanitize(val: Any) -> Any:
+        if isinstance(val, str):
+            # Optimization: skip regex overhead when no redaction markers are present.
+            # Broad checks first (faster than lower()), then specific sensitive markers.
+            if (
+                "/Users/" not in val
+                and "/Volumes/" not in val
+                and "/home/" not in val
+                and "/root/" not in val
+            ):
+                val_lower = val.lower()
+                if (
+                    "sk-" not in val_lower
+                    and "sk_live" not in val_lower
+                    and "sk_test" not in val_lower
+                    and "gsk_" not in val_lower
+                    and "hf_" not in val_lower
+                    and "aiza" not in val_lower
+                    and "akia" not in val_lower
+                    and "asia" not in val_lower
+                    and "xox" not in val_lower
+                    and "ghp_" not in val_lower
+                    and "glpat-" not in val_lower
+                    and "npm_" not in val_lower
+                    and "password" not in val_lower
+                    and "secret" not in val_lower
+                    and "token" not in val_lower
+                    and "apikey" not in val_lower
+                    and "api_key" not in val_lower
+                    and "pass" not in val_lower
+                ):
+                    return val
+
+            val = _PATH_RE.sub(r"\1[REDACTED_PATH]", val)
+            val = _KEY_RE.sub("[REDACTED_KEY]", val)
+            val = _GENERIC_SECRET_RE.sub(r"\1\2\1\3\4[REDACTED_SECRET]\4", val)
+            return val
+        if isinstance(val, dict):
+            sanitized_dict: dict[Any, Any] = {}
+            for key, value in val.items():
+                sanitized_key = _do_sanitize(key)
+                if isinstance(key, str) and _is_sensitive_dict_key(key):
+                    sanitized_dict[sanitized_key] = "[REDACTED_SECRET]"
+                    continue
+                sanitized_dict[sanitized_key] = _do_sanitize(value)
+            return sanitized_dict
+        if isinstance(val, list):
+            return [_do_sanitize(item) for item in val]
+        if isinstance(val, tuple):
+            if len(val) >= 2 and isinstance(val[0], str) and _is_sensitive_dict_key(val[0]):
+                head = tuple(_do_sanitize(item) for item in val[:1])
+                tail = tuple(_do_sanitize(item) for item in val[2:])
+                return head + ("[REDACTED_SECRET]",) + tail
+            return tuple(_do_sanitize(item) for item in val)
+        return val
+
+    return _do_sanitize(data)
 
 
 # Machine-local debug reports (under .braindrain/, never committed).
@@ -157,78 +220,13 @@ class TelemetrySession:
                 self.log_file.parent.mkdir(parents=True, exist_ok=True)
 
     def sanitize(self, data: Any) -> Any:
-        """Public entry point for recursive redaction of sensitive telemetry data."""
-        return self._sanitize_data(data)
+        """Instance-level delegation to the module-level sanitize function."""
+        return sanitize(data)
 
-    def _sanitize_data(self, data: Any) -> Any:
-        """Recursive redaction of sensitive paths, API keys, and generic secrets."""
-
-        def _do_sanitize(val: Any) -> Any:
-            if isinstance(val, str):
-                # Optimization: skip regex overhead when no redaction markers are present.
-                # Broad checks first (faster than lower()), then specific sensitive markers.
-                if (
-                    "/Users/" not in val
-                    and "/Volumes/" not in val
-                    and "/home/" not in val
-                    and "/root/" not in val
-                ):
-                    val_lower = val.lower()
-                    if (
-                        "sk-" not in val_lower
-                        and "gsk_" not in val_lower
-                        and "hf_" not in val_lower
-                        and "aiza" not in val_lower
-                        and "akia" not in val_lower
-                        and "asia" not in val_lower
-                        and "xox" not in val_lower
-                        and "password" not in val_lower
-                        and "secret" not in val_lower
-                        and "token" not in val_lower
-                        and "apikey" not in val_lower
-                        and "api_key" not in val_lower
-                        and "pass" not in val_lower
-                    ):
-                        return val
-
-                val = _PATH_RE.sub(r"\1[REDACTED_PATH]", val)
-                val = _KEY_RE.sub("[REDACTED_KEY]", val)
-                val = _GENERIC_SECRET_RE.sub(r"\1\2\1\3\4[REDACTED_SECRET]\4", val)
-                return val
-            if isinstance(val, dict):
-                sanitized: dict[Any, Any] = {}
-                for key, value in val.items():
-                    sanitized_key = _do_sanitize(key)
-                    if (
-                        isinstance(key, str)
-                        and _is_sensitive_dict_key(key)
-                        and isinstance(value, str)
-                    ):
-                        sanitized[sanitized_key] = "[REDACTED_SECRET]"
-                        continue
-                    sanitized[sanitized_key] = _do_sanitize(value)
-                return sanitized
-            if isinstance(val, list):
-                return [_do_sanitize(item) for item in val]
-            if isinstance(val, tuple):
-                if (
-                    len(val) >= 2
-                    and isinstance(val[0], str)
-                    and _is_sensitive_dict_key(val[0])
-                    and isinstance(val[1], str)
-                ):
-                    head = tuple(_do_sanitize(item) for item in val[:1])
-                    tail = tuple(_do_sanitize(item) for item in val[2:])
-                    return head + ("[REDACTED_SECRET]",) + tail
-                return tuple(_do_sanitize(item) for item in val)
-            return val
-
-        return _do_sanitize(data)
-
-    def _append_jsonl(self, obj: dict[str, Any]) -> None:
+    def _append_jsonl(self, obj: dict[str, Any], sanitize: bool = True) -> None:
         self._ensure_parent()
         # Ensure all data written to disk is sanitized
-        sanitized_obj = self._sanitize_data(obj)
+        sanitized_obj = self.sanitize(obj) if sanitize else obj
         try:
             with open(self.log_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(sanitized_obj, ensure_ascii=False) + "\n")
@@ -253,8 +251,8 @@ class TelemetrySession:
         """
         from datetime import datetime
 
-        sanitized_error = self._sanitize_data(error)
-        sanitized_context = self._sanitize_data(context or {})
+        sanitized_error = self.sanitize(error)
+        sanitized_context = self.sanitize(context or {})
 
         event = {
             "ts": time.time(),
@@ -332,8 +330,8 @@ class TelemetrySession:
             "meta": meta or {},
         }
         # Sanitize event before returning and before appending to JSONL
-        sanitized_event = self._sanitize_data(event)
-        self._append_jsonl(sanitized_event)
+        sanitized_event = self.sanitize(event)
+        self._append_jsonl(sanitized_event, sanitize=False)
         return sanitized_event
 
     def snapshot(self) -> dict[str, Any]:
