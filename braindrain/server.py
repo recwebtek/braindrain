@@ -918,15 +918,16 @@ def record_observer_event(
         metadata: Optional extra structured fields for the event.
         timestamp: Unix timestamp; default is current time.
     """
+    # Sanitize inputs to prevent sensitive data (API keys, local paths) from leaking into event logs
     event = BrainEvent(
         timestamp=float(timestamp or datetime.now().timestamp()),
         session_id=session_id,
         event_type=event_type,
         tool_name=tool_name,
-        files_touched=files_touched or [],
+        files_touched=telemetry.sanitize(files_touched or []),
         token_cost=token_cost,
         duration_ms=duration_ms,
-        metadata=metadata or {},
+        metadata=telemetry.sanitize(metadata or {}),
     )
     return _get_observer_store().record_event(event)
 
@@ -1142,8 +1143,9 @@ def store_fact(
         evidence_refs: Optional file paths, URLs, or index handles supporting the record.
         metadata: Optional extra structured fields stored with the record.
     """
+    # Sanitize content and metadata to prevent leakage of secrets or local paths into durable memory
     return _get_wiki_brain().store_fact(
-        content=content,
+        content=telemetry.sanitize(content),
         record_class=record_class,
         title=title,
         source=source,
@@ -1152,7 +1154,7 @@ def store_fact(
         confidence=confidence,
         tags=tags or [],
         evidence_refs=evidence_refs or [],
-        metadata=metadata or {},
+        metadata=telemetry.sanitize(metadata or {}),
     )
 
 
@@ -1228,11 +1230,12 @@ def record_memory_metric(
         source: Provenance label. Default: manual.
         metadata: Optional extra fields attached to the metric event.
     """
+    # Sanitize metadata to prevent leakage of secrets into system metrics
     return _get_wiki_brain().record_metric(
         metric_type,
         value=value,
         source=source,
-        metadata=metadata or {},
+        metadata=telemetry.sanitize(metadata or {}),
     )
 
 
