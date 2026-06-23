@@ -918,6 +918,8 @@ def record_observer_event(
         metadata: Optional extra structured fields for the event.
         timestamp: Unix timestamp; default is current time.
     """
+    # Ensure sensitive information in metadata is redacted
+    sanitized_metadata = telemetry.sanitize(metadata or {})
     event = BrainEvent(
         timestamp=float(timestamp or datetime.now().timestamp()),
         session_id=session_id,
@@ -926,7 +928,7 @@ def record_observer_event(
         files_touched=files_touched or [],
         token_cost=token_cost,
         duration_ms=duration_ms,
-        metadata=metadata or {},
+        metadata=sanitized_metadata,
     )
     return _get_observer_store().record_event(event)
 
@@ -1142,6 +1144,8 @@ def store_fact(
         evidence_refs: Optional file paths, URLs, or index handles supporting the record.
         metadata: Optional extra structured fields stored with the record.
     """
+    # Ensure sensitive information in fact metadata is redacted
+    sanitized_metadata = telemetry.sanitize(metadata or {})
     return _get_wiki_brain().store_fact(
         content=content,
         record_class=record_class,
@@ -1152,7 +1156,7 @@ def store_fact(
         confidence=confidence,
         tags=tags or [],
         evidence_refs=evidence_refs or [],
-        metadata=metadata or {},
+        metadata=sanitized_metadata,
     )
 
 
@@ -1228,11 +1232,13 @@ def record_memory_metric(
         source: Provenance label. Default: manual.
         metadata: Optional extra fields attached to the metric event.
     """
+    # Ensure sensitive information in metric metadata is redacted
+    sanitized_metadata = telemetry.sanitize(metadata or {})
     return _get_wiki_brain().record_metric(
         metric_type,
         value=value,
         source=source,
-        metadata=metadata or {},
+        metadata=sanitized_metadata,
     )
 
 

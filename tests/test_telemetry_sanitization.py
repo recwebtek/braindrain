@@ -67,6 +67,21 @@ def test_sanitizes_dict_keys_and_tuples(tmp_path: Path) -> None:
     assert sanitized["items"][0][1] == "[REDACTED_SECRET]"
 
 
+def test_redacts_non_string_sensitive_values(tmp_path: Path) -> None:
+    session = _session(tmp_path)
+    payload = {
+        "password": 123456,
+        "api_key": None,
+        "token": {"secret": True},
+        "nested": [("credentials", 999)],
+    }
+    sanitized = session.sanitize(payload)
+    assert sanitized["password"] == "[REDACTED_SECRET]"
+    assert sanitized["api_key"] == "[REDACTED_SECRET]"
+    assert sanitized["token"] == "[REDACTED_SECRET]"
+    assert sanitized["nested"][0][1] == "[REDACTED_SECRET]"
+
+
 def test_record_persists_sanitized_jsonl(tmp_path: Path) -> None:
     session = _session(tmp_path)
     session.record(
