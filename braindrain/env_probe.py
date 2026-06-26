@@ -9,6 +9,7 @@ Result is cached to ~/.braindrain/env_context.json.
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import os
 import platform
@@ -482,7 +483,7 @@ def _get_nested(d: dict, dot_path: str) -> Any:
 
 def probe_app_configs() -> dict[str, Any]:
     """
-    Check each known IDE/agent config location.
+    Check each known IDE/agent config location in parallel.
     Returns a dict keyed by app_key with:
       - exists: bool
       - path: str
@@ -491,16 +492,16 @@ def probe_app_configs() -> dict[str, Any]:
     """
     results: dict[str, Any] = {}
 
-    for app_key, display_name, config_path_str, mcp_key in _APP_CONFIG_PROBES:
+    def _probe_one(probe_info: tuple[str, str, str, str]):
+        app_key, display_name, config_path_str, mcp_key = probe_info
         path = Path(config_path_str).expanduser()
         if not path.exists():
-            results[app_key] = {
+            return app_key, {
                 "name": display_name,
                 "config_path": str(path),
                 "exists": False,
                 "mcp_servers": [],
             }
-            continue
 
         parsed = _read_toml_file(path) if app_key == "codex_cli" else _read_json_file(path)
         mcp_block = _get_nested(parsed, mcp_key) if parsed else None
@@ -513,7 +514,7 @@ def probe_app_configs() -> dict[str, Any]:
                 if isinstance(v, dict) and not v.get("disabled", False)
             ]
 
-        results[app_key] = {
+        return app_key, {
             "name": display_name,
             "config_path": str(path),
             "exists": True,
@@ -525,20 +526,23 @@ def probe_app_configs() -> dict[str, Any]:
             ],
         }
 
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(_APP_CONFIG_PROBES)) as pool:
+        for app_key, res in pool.map(_probe_one, _APP_CONFIG_PROBES):
+            results[app_key] = res
+
     return results
 
 
 def run_probe() -> dict[str, Any]:
     """Execute all probe commands + app config discovery, return raw results dict."""
-    import concurrent.futures
-
     raw: dict[str, Any] = {
         "probe_timestamp": datetime.now(UTC).isoformat(),
         "platform_python": platform.platform(),
     }
 
     # Run all shell commands in parallel (all have 5s timeouts)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as pool:
+    # Increased max_workers to allow more concurrent subprocesses.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=64) as pool:
         futures = {}
         for key, cmd in _PROBE_COMMANDS:
             if callable(cmd):
@@ -554,7 +558,7 @@ def run_probe() -> dict[str, Any]:
             except Exception:
                 raw[key] = None
 
-    # App config discovery runs separately (file I/O, not subprocess)
+    # App config discovery runs separately (parallel file I/O)
     raw["_app_configs"] = probe_app_configs()
 
     return raw
@@ -682,9 +686,10 @@ def _parse_running_notable(raw: dict[str, Any]) -> dict[str, Any]:
 def _parse_python_interpreters(raw: dict[str, Any]) -> list[dict[str, str]]:
     """
     Build a list of all Python interpreters found, with their versions.
-    Deduplicates by resolved real path.
+    Deduplicates by resolved real path. Runs version checks in parallel.
     """
     interpreters: list[dict[str, str]] = []
+    candidate_paths: list[tuple[str, str]] = []  # (path, real_path)
     seen_paths: set[str] = set()
 
     all_raw = raw.get("python_all") or ""
@@ -692,23 +697,38 @@ def _parse_python_interpreters(raw: dict[str, Any]) -> list[dict[str, str]]:
         line = line.strip()
         if not line:
             continue
-        real = str(Path(line).resolve())
-        if real in seen_paths:
+        try:
+            real = str(Path(line).resolve())
+            if real in seen_paths:
+                continue
+            seen_paths.add(real)
+            candidate_paths.append((line, real))
+        except Exception:
             continue
-        seen_paths.add(real)
-        # Get version for this specific interpreter
-        ver = _run(f"{shlex.quote(line)} --version 2>/dev/null") or "unknown"
-        interpreters.append({"path": line, "real_path": real, "version": ver})
 
     # Always include the venv Python if we can find it (common project patterns)
     for venv_candidate in ["~/.venv/bin/python3", ".venv/bin/python3"]:
         venv_path = Path(venv_candidate).expanduser()
         if venv_path.exists():
-            real = str(venv_path.resolve())
-            if real not in seen_paths:
-                seen_paths.add(real)
-                ver = _run(f"{shlex.quote(str(venv_path))} --version 2>/dev/null") or "unknown"
-                interpreters.append({"path": str(venv_path), "real_path": real, "version": ver})
+            try:
+                real = str(venv_path.resolve())
+                if real not in seen_paths:
+                    seen_paths.add(real)
+                    candidate_paths.append((str(venv_path), real))
+            except Exception:
+                continue
+
+    if not candidate_paths:
+        return []
+
+    # Get versions for all interpreters in parallel
+    def _get_ver(path_info: tuple[str, str]) -> dict[str, str]:
+        path, real = path_info
+        ver = _run(f"{shlex.quote(path)} --version 2>/dev/null") or "unknown"
+        return {"path": path, "real_path": real, "version": ver.strip()}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(candidate_paths)) as pool:
+        interpreters = list(pool.map(_get_ver, candidate_paths))
 
     return interpreters
 
