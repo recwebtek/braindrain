@@ -1367,3 +1367,9 @@ def token_dashboard_html() -> str:
 
 def plan_board_html() -> str:
     return _html_page("Braindrain Plan Board", _PLAN_RENDER_JS)
+
+
+def sigint_map_html() -> str:
+    from braindrain.mcp_apps.sigint_html import sigint_map_html as _sigint_html
+
+    return _sigint_html()
