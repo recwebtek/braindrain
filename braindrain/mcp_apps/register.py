@@ -19,11 +19,14 @@ from braindrain.mcp_apps.constants import (
     PLAN_BOARD_HANDOFF_TOOL,
     PLAN_BOARD_URI,
     POLL_PLAN_BOARD_TOOL,
+    POLL_SIGINT_MAP_TOOL,
     POLL_TOKEN_DASHBOARD_TOOL,
+    SIGINT_MAP_URI,
     TOKEN_DASHBOARD_URI,
 )
 from braindrain.mcp_apps.data import build_plan_board_payload, build_token_dashboard_payload
-from braindrain.mcp_apps.html import plan_board_html, token_dashboard_html
+from braindrain.mcp_apps.html import plan_board_html, sigint_map_html, token_dashboard_html
+from braindrain.mcp_apps.sigint_data import build_sigint_map_payload
 from braindrain.mcp_apps.plan_actions import (
     apply_plan_todo_sync,
     archive_plan,
@@ -45,8 +48,14 @@ _PLAN_APP = AppConfig(
     prefers_border=True,
     visibility=["model", "app"],
 )
+_SIGINT_APP = AppConfig(
+    resource_uri=SIGINT_MAP_URI,
+    prefers_border=True,
+    visibility=["model", "app"],
+)
 _POLL_APP = AppConfig(resource_uri=TOKEN_DASHBOARD_URI, visibility=["app"])
 _POLL_PLAN_APP = AppConfig(resource_uri=PLAN_BOARD_URI, visibility=["app"])
+_POLL_SIGINT_APP = AppConfig(resource_uri=SIGINT_MAP_URI, visibility=["app"])
 _ACTION_APP = AppConfig(resource_uri=PLAN_BOARD_URI, visibility=["app"])
 _RESOURCE_UI = AppConfig(prefers_border=True, domain="ui://braindrain")
 
@@ -70,6 +79,16 @@ def register_mcp_app_resources(mcp: FastMCP) -> None:
             name="Braindrain Plan Board",
             description="Inline plan task board from .braindrain/plan-reports/.",
             text=plan_board_html(),
+            mime_type=UI_MIME_TYPE,
+            meta=ui_meta,
+        )
+    )
+    mcp.add_resource(
+        TextResource(
+            uri=SIGINT_MAP_URI,  # type: ignore[arg-type]
+            name="Braindrain SIGINT Map",
+            description="Operational topology graph for active agent/MCP session intelligence.",
+            text=sigint_map_html(),
             mime_type=UI_MIME_TYPE,
             meta=ui_meta,
         )
@@ -345,3 +364,58 @@ def register_mcp_app_tools(
         """
         result = plan_board_handoff(action=action, source=source, branch=branch)
         return ToolResult(structured_content=result)
+
+    @tool_decorator(
+        app=_SIGINT_APP,
+        tags={"mcp-apps", "observer", "dashboard"},
+    )
+    async def show_sigint_map(
+        path: str = "",
+        session_id: str = "",
+        limit: int = 500,
+    ) -> ToolResult:
+        """
+        Open an operational topology graph inline in the chat (MCP App).
+
+        Renders session → braindrain tools, hooks, plans, and configured external MCP
+        peers from native observer events and project config. Read-only v1.
+
+        Args:
+            path: Project root for plan/MCP config resolution. Default: server project root.
+            session_id: Observer session id (default: env or latest events).
+            limit: Max observer events to load (default 500).
+        """
+        payload = build_sigint_map_payload(
+            path or default_path,
+            session_id=session_id or None,
+            limit=limit,
+        )
+        return ToolResult(
+            content="SIGINT map ready.",
+            structured_content=payload,
+        )
+
+    @tool_decorator(
+        name=POLL_SIGINT_MAP_TOOL,
+        app=_POLL_SIGINT_APP,
+        tags={"mcp-apps", "observer", "dashboard"},
+    )
+    async def poll_sigint_map(
+        path: str = "",
+        session_id: str = "",
+        limit: int = 500,
+    ) -> ToolResult:
+        """
+        App-only refresh for the SIGINT map iframe (not for the model).
+
+        Args:
+            path: Project root. Default: server project root.
+            session_id: Observer session id override.
+            limit: Max observer events to load.
+        """
+        payload = build_sigint_map_payload(
+            path or default_path,
+            session_id=session_id or None,
+            limit=limit,
+        )
+        return ToolResult(structured_content=payload)
