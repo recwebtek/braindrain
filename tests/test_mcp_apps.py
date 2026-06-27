@@ -6,7 +6,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from braindrain.mcp_apps.constants import PLAN_BOARD_URI, TOKEN_DASHBOARD_URI
+from braindrain.mcp_apps.constants import PLAN_BOARD_URI, SIGINT_MAP_URI, TOKEN_DASHBOARD_URI
 from braindrain.mcp_apps.data import (
     _group_plan_rows,
     _load_archived_plan_groups,
@@ -20,7 +20,9 @@ from braindrain.mcp_apps.plan_enrich import (
     enrich_plan_groups,
     parse_master_disposition_tables,
 )
-from braindrain.mcp_apps.html import plan_board_html, token_dashboard_html
+from braindrain.mcp_apps.html import plan_board_html, sigint_map_html, token_dashboard_html
+from braindrain.mcp_apps.sigint_data import build_sigint_map_payload
+from braindrain.observer import BrainEvent, ObserverStore
 from braindrain.server import mcp
 from braindrain.telemetry import telemetry_from_config
 
@@ -734,3 +736,97 @@ def test_plan_board_action_tools_registered():
         "plan_board_handoff",
     ):
         assert tool_name in names
+
+
+def test_sigint_map_html_is_self_contained():
+    html = sigint_map_html()
+    assert "SIGINT Map" in html
+    assert "renderDashboard" in html
+    assert "poll_sigint_map" in html
+    assert "sigint-svg" in html
+    assert "ui/initialize" in html
+    assert "https://" not in html
+
+
+def test_build_sigint_map_payload_with_fixture_events(tmp_path: Path):
+    db_path = tmp_path / "events.db"
+    store = ObserverStore(db_path=db_path)
+    store.record_event(
+        BrainEvent(
+            timestamp=1_700_000_000.0,
+            session_id="sigint-test",
+            event_type="tool_call",
+            tool_name="get_token_dashboard",
+            metadata={"project_root": str(tmp_path)},
+        )
+    )
+    store.record_event(
+        BrainEvent(
+            timestamp=1_700_000_100.0,
+            session_id="sigint-test",
+            event_type="session_end",
+            metadata={"hook": "stop", "branch": "feat/sigint", "repo_root": str(tmp_path)},
+        )
+    )
+    (tmp_path / ".cursor").mkdir()
+    (tmp_path / ".cursor" / "mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "user-braindrain": {"serverName": "braindrain"},
+                    "cursor-ide-browser": {"serverName": "cursor-ide-browser"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    payload = build_sigint_map_payload(tmp_path, session_id="sigint-test", observer_db=db_path)
+    assert payload["session_id"] == "sigint-test"
+    assert payload["stats"]["events"] == 2
+    assert payload["stats"]["tools"] == 1
+    types = {n["type"] for n in payload["nodes"]}
+    assert "session" in types
+    assert "braindrain_hub" in types
+    assert "braindrain_tool" in types
+    assert "hook" in types
+    assert "external_mcp" in types
+    assert any(e["type"] == "tool_call" for e in payload["edges"])
+    assert len(payload["log"]) == 2
+
+
+def test_mcp_sigint_tools_registered_with_ui_meta():
+    tools = asyncio.run(mcp.list_tools())
+    by_name = {t.name: t for t in tools}
+    assert "show_sigint_map" in by_name
+    sigint_tool = by_name["show_sigint_map"]
+    meta = getattr(sigint_tool, "meta", None) or {}
+    ui = meta.get("ui") or meta.get("_meta", {}).get("ui")
+    if ui is None:
+        dumped = sigint_tool.model_dump() if hasattr(sigint_tool, "model_dump") else {}
+        ui = (dumped.get("meta") or {}).get("ui")
+    assert ui is not None
+    resource_uri = ui.get("resourceUri") or ui.get("resource_uri")
+    assert resource_uri == SIGINT_MAP_URI
+
+
+def test_show_sigint_map_tool_result_shape():
+    from fastmcp import Client
+
+    async def _run():
+        async with Client(mcp) as client:
+            return await client.call_tool("show_sigint_map", {})
+
+    result = asyncio.run(_run())
+    assert result.content
+    text = getattr(result.content[0], "text", "")
+    assert text == "SIGINT map ready."
+    structured = result.structured_content or {}
+    assert "nodes" in structured
+    assert "edges" in structured
+    assert "stats" in structured
+
+
+def test_mcp_sigint_resource_registered():
+    resources = asyncio.run(mcp.list_resources())
+    uris = {str(r.uri) for r in resources}
+    assert SIGINT_MAP_URI in uris

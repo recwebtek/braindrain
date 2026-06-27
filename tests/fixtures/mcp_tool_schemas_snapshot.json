@@ -1082,6 +1082,32 @@
     "outputSchema": null
   },
   {
+    "name": "poll_sigint_map",
+    "description": "App-only refresh for the SIGINT map iframe (not for the model).",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "default": "",
+          "type": "string",
+          "description": "Project root. Default: server project root."
+        },
+        "session_id": {
+          "default": "",
+          "type": "string",
+          "description": "Observer session id override."
+        },
+        "limit": {
+          "default": 500,
+          "type": "integer",
+          "description": "Max observer events to load."
+        }
+      },
+      "type": "object"
+    },
+    "outputSchema": null
+  },
+  {
     "name": "poll_token_dashboard",
     "description": "App-only refresh for the token dashboard iframe (not for the model).",
     "parameters": {
@@ -2764,6 +2790,32 @@
           "default": "",
           "type": "string",
           "description": "Project root containing `.braindrain/plan-reports/`. Default: cwd."
+        }
+      },
+      "type": "object"
+    },
+    "outputSchema": null
+  },
+  {
+    "name": "show_sigint_map",
+    "description": "Open an operational topology graph inline in the chat (MCP App).\n\nRenders session \u2192 braindrain tools, hooks, plans, and configured external MCP\npeers from native observer events and project config. Read-only v1.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "default": "",
+          "type": "string",
+          "description": "Project root for plan/MCP config resolution. Default: server project root."
+        },
+        "session_id": {
+          "default": "",
+          "type": "string",
+          "description": "Observer session id (default: env or latest events)."
+        },
+        "limit": {
+          "default": 500,
+          "type": "integer",
+          "description": "Max observer events to load (default 500)."
         }
       },
       "type": "object"
