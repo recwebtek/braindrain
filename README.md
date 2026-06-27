@@ -169,9 +169,13 @@ Cursor and other MCP App hosts can render interactive `ui://` HTML from braindra
 | ---- | ----------- |
 | `show_token_dashboard()` | Inline token savings snapshot (JSON via `get_token_dashboard` stays separate). |
 | `show_plan_board(path="")` | Interactive plan task board from `.braindrain/plan-reports/`. |
+| `show_sigint_map(path="", session_id="")` | Operational topology graph (session, tools, hooks, plans, external MCP peers). |
 | `poll_plan_board(...)` | **App-only** — refresh board and all plan-board write actions from the iframe (audit, sync, archive, disposition, masterplan). |
+| `poll_sigint_map(...)` | **App-only** — refresh SIGINT map graph from the iframe (8s auto-poll). |
 
 **Plan board UI:** filters, per-plan disposition dropdown, Recheck/Apply sync, archive/cancel, timestamp tags, and open-in-editor flow. Full reference: [`braindrain/mcp_apps/PLAN_BOARD_UI.md`](braindrain/mcp_apps/PLAN_BOARD_UI.md).
+
+**SIGINT map UI:** SVG force graph of active-session ops intelligence from observer events + project config. Full reference: [`braindrain/mcp_apps/SIGINT_MAP_UI.md`](braindrain/mcp_apps/SIGINT_MAP_UI.md).
 
 Restart the braindrain MCP server after `braindrain/mcp_apps/` or registration changes.
 
@@ -583,7 +587,7 @@ braindrain/
 │   ├── rerank.py               # optional search_index rerank (lexical / mixedbread / auto)
 │   ├── embeddings_client.py    # local-first embeddings (LM Studio, Ollama, cloud)
 │   ├── embeddings_router.py    # provider priority + quota backoff
-│   ├── mcp_apps/               # MCP Apps ui:// dashboards (token + plan board)
+│   ├── mcp_apps/               # MCP Apps ui:// dashboards (token, plan board, SIGINT map)
 │   ├── repo_stats.py           # file-count gating for workflows
 │   └── types.py
 ├── config/
