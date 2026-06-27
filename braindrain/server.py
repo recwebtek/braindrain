@@ -371,6 +371,7 @@ observe_mcp_tool = make_observe_mcp_tool(
     observer_store_getter=_get_observer_store,
     hash_args_enabled=_observer_hash_args,
     wrap_tool=_should_wrap_tool,
+    project_root_getter=lambda: str(_project_root),
 )
 
 _original_mcp_tool = mcp.tool

@@ -86,6 +86,7 @@ def _build_tool_call_event(
     session_id: str | None,
     hash_tool_args: bool,
     args_hash_payload: Any,
+    project_root: str | None = None,
 ) -> BrainEvent:
     obs_meta: dict[str, Any] = {
         "module": module,
@@ -93,6 +94,8 @@ def _build_tool_call_event(
         "tokens_in_actual_est": actual_tokens,
         "tokens_saved_est": saved_tokens,
     }
+    if project_root:
+        obs_meta["project_root"] = project_root
     if hash_tool_args and args_hash_payload is not None:
         obs_meta["args_hash"] = hash_args(args_hash_payload)
 
@@ -129,6 +132,7 @@ def record_tool_io(
     duration_ms: int = 0,
     hash_tool_args: bool = True,
     args_hash_payload: Any = None,
+    project_root: str | None = None,
 ) -> dict[str, Any]:
     """Record telemetry and optional observer tool_call event (sync MCP tools)."""
     event_meta = dict(meta or {})
@@ -156,6 +160,7 @@ def record_tool_io(
             session_id=session_id,
             hash_tool_args=hash_tool_args,
             args_hash_payload=args_hash_payload,
+            project_root=project_root,
         )
         _persist_observer_event(observer_store, brain_event)
 
@@ -179,6 +184,7 @@ async def record_tool_io_async(
     duration_ms: int = 0,
     hash_tool_args: bool = True,
     args_hash_payload: Any = None,
+    project_root: str | None = None,
 ) -> dict[str, Any]:
     """Record telemetry and observer tool_call event without blocking the event loop."""
     event_meta = dict(meta or {})
@@ -206,6 +212,7 @@ async def record_tool_io_async(
             session_id=session_id,
             hash_tool_args=hash_tool_args,
             args_hash_payload=args_hash_payload,
+            project_root=project_root,
         )
         await _persist_observer_event_async(observer_store, brain_event)
 
@@ -224,6 +231,7 @@ def make_observe_mcp_tool(
     hash_args_enabled: Callable[[], bool],
     wrap_tool: Callable[[str], bool],
     module_for: Callable[[str], str] | None = None,
+    project_root_getter: Callable[[], str | None] | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Factory for the MCP tool observer decorator."""
 
@@ -254,6 +262,7 @@ def make_observe_mcp_tool(
             duration_ms = int((time.perf_counter() - start) * 1000)
             raw_text = _extract_raw_text(fn, args, kwargs)
             actual_text = _serialize_for_tokens(result)
+            project_root = project_root_getter() if project_root_getter else None
 
             await record_tool_io_async(
                 telemetry,
@@ -266,6 +275,7 @@ def make_observe_mcp_tool(
                 duration_ms=duration_ms,
                 hash_tool_args=hash_args_enabled(),
                 args_hash_payload={"args": args, "kwargs": kwargs},
+                project_root=project_root,
             )
 
             if tool_name == "get_env_context" and isinstance(result, dict) and result.get("cached"):
@@ -290,6 +300,7 @@ def make_observe_mcp_tool(
             duration_ms = int((time.perf_counter() - start) * 1000)
             raw_text = _extract_raw_text(fn, args, kwargs)
             actual_text = _serialize_for_tokens(result)
+            project_root = project_root_getter() if project_root_getter else None
 
             record_tool_io(
                 telemetry,
@@ -302,6 +313,7 @@ def make_observe_mcp_tool(
                 duration_ms=duration_ms,
                 hash_tool_args=hash_args_enabled(),
                 args_hash_payload={"args": args, "kwargs": kwargs},
+                project_root=project_root,
             )
 
             if tool_name == "get_env_context" and isinstance(result, dict) and result.get("cached"):
