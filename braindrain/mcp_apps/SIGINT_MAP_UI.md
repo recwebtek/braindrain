@@ -18,7 +18,7 @@ Default project root is the braindrain server workspace unless you pass `path`.
 | `show_sigint_map` | Opens the inline MCP App; returns graph payload + UI resource |
 | `poll_sigint_map` | **App-only** refresh for the iframe (not for the model) |
 | `braindrain/mcp_apps/sigint_data.py` | `build_sigint_map_payload()` — nodes, edges, event log |
-| `braindrain/mcp_apps/sigint_html.py` | SVG force graph, inspector panel, poll loop |
+| `braindrain/mcp_apps/sigint_html.py` | SVG orbital tree graph, type filters, inspector panel, poll loop |
 | `braindrain/observer.py` | SQLite event store (`~/.braindrain/events.db`) |
 | `config/templates/cursor/hooks/on-stop-observe.sh` | `session_end` rows with hook branch/repo metadata |
 
@@ -48,7 +48,9 @@ No LLM-inferred edges — deterministic from stored events + config only.
 
 ## UI behavior
 
-- **Force layout** on SVG `<g>` groups; node color by `type`.
+- **Orbital tree layout** on a larger canvas (960×520): session at center, type-specific rings with **even sibling spread** per branch (Plans / External MCP arcs). Sector labels mark each branch.
+- **Pan & zoom**: scroll wheel, drag background, **+ / − / Fit / 1:1** controls; viewport persists across polls. Double-click a node to focus.
+- **Type filters**: toggle chips above the graph show/hide node types and their edges; filter state persists across 8s polls.
 - **Inspector** (right panel): selected node metadata + last related events.
 - **Log strip**: last 20 observer events (AI Signal Engine–style agent log).
 - **Empty state**: “No session events yet — run a braindrain tool or end a Cursor turn (stop hook).”

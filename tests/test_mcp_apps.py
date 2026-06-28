@@ -744,6 +744,11 @@ def test_sigint_map_html_is_self_contained():
     assert "renderDashboard" in html
     assert "poll_sigint_map" in html
     assert "sigint-svg" in html
+    assert "sigint-filters" in html
+    assert "orbitalPosition" in html
+    assert "typeFilters" in html
+    assert "sigint-zoom-in" in html
+    assert "bindZoomPan" in html
     assert "ui/initialize" in html
     assert "https://" not in html
 
