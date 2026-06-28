@@ -918,15 +918,19 @@ def record_observer_event(
         metadata: Optional extra structured fields for the event.
         timestamp: Unix timestamp; default is current time.
     """
+    # Redact sensitive information from files_touched and metadata
+    sanitized_files = telemetry.sanitize(files_touched or [])
+    sanitized_meta = telemetry.sanitize(metadata or {})
+
     event = BrainEvent(
         timestamp=float(timestamp or datetime.now().timestamp()),
         session_id=session_id,
         event_type=event_type,
         tool_name=tool_name,
-        files_touched=files_touched or [],
+        files_touched=sanitized_files,
         token_cost=token_cost,
         duration_ms=duration_ms,
-        metadata=metadata or {},
+        metadata=sanitized_meta,
     )
     return _get_observer_store().record_event(event)
 
@@ -1228,11 +1232,14 @@ def record_memory_metric(
         source: Provenance label. Default: manual.
         metadata: Optional extra fields attached to the metric event.
     """
+    # Redact sensitive information from metadata
+    sanitized_meta = telemetry.sanitize(metadata or {})
+
     return _get_wiki_brain().record_metric(
         metric_type,
         value=value,
         source=source,
-        metadata=metadata or {},
+        metadata=sanitized_meta,
     )
 
 
