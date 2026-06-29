@@ -61,6 +61,7 @@ CRUSH.md
 tests/*
 !tests/conftest.py
 !tests/test_workspace_primer_hooks.py
+!tests/test_ruler_toml_v03.py
 !tests/test_scriptlib.py
 !tests/test_env_probe_codex.py
 !tests/test_plan_auditor_master.py
