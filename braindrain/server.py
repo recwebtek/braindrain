@@ -926,7 +926,7 @@ def record_observer_event(
         files_touched=files_touched or [],
         token_cost=token_cost,
         duration_ms=duration_ms,
-        metadata=metadata or {},
+        metadata=telemetry.sanitize(metadata or {}),
     )
     return _get_observer_store().record_event(event)
 
