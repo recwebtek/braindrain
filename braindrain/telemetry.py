@@ -199,11 +199,7 @@ class TelemetrySession:
                 sanitized: dict[Any, Any] = {}
                 for key, value in val.items():
                     sanitized_key = _do_sanitize(key)
-                    if (
-                        isinstance(key, str)
-                        and _is_sensitive_dict_key(key)
-                        and isinstance(value, str)
-                    ):
+                    if isinstance(key, str) and _is_sensitive_dict_key(key):
                         sanitized[sanitized_key] = "[REDACTED_SECRET]"
                         continue
                     sanitized[sanitized_key] = _do_sanitize(value)
@@ -215,7 +211,6 @@ class TelemetrySession:
                     len(val) >= 2
                     and isinstance(val[0], str)
                     and _is_sensitive_dict_key(val[0])
-                    and isinstance(val[1], str)
                 ):
                     head = tuple(_do_sanitize(item) for item in val[:1])
                     tail = tuple(_do_sanitize(item) for item in val[2:])
