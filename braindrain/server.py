@@ -283,6 +283,15 @@ def _get_wiki_brain() -> WikiBrain:
         consolidation_similarity=float(
             forgetting_cfg.get("consolidation_similarity", 0.92) or 0.92
         ),
+        salience_threshold=float((wiki_cfg.get("gating", {}) or {}).get("salience_threshold", 0.0) or 0.0),
+        max_active_records=int((wiki_cfg.get("bounds", {}) or {}).get("max_active_records", 0) or 0),
+        associative_edges_enabled=bool((wiki_cfg.get("associative_graph", {}) or {}).get("enabled", False)),
+        edge_similarity_threshold=float(
+            (wiki_cfg.get("associative_graph", {}) or {}).get("similarity_threshold", 0.8) or 0.8
+        ),
+        hybrid_embeddings_enabled=bool((wiki_cfg.get("hybrid_retrieval", {}) or {}).get("enabled", False)),
+        embeddings_cfg=(config.get("embeddings", {}) or {}),
+        dense_recall_weight=float((wiki_cfg.get("hybrid_retrieval", {}) or {}).get("dense_weight", 0.2) or 0.2),
     )
     return _wiki_brain
 

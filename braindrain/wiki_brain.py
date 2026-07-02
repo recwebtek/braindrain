@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from braindrain.embeddings_client import embed_texts
+
 
 @dataclass
 class BrainRecord:
@@ -71,6 +73,13 @@ class WikiBrain:
         decay_half_life_days: float = 90.0,
         prune_threshold: float = 0.05,
         consolidation_similarity: float = 0.92,
+        salience_threshold: float = 0.0,
+        max_active_records: int = 0,
+        associative_edges_enabled: bool = False,
+        edge_similarity_threshold: float = 0.8,
+        hybrid_embeddings_enabled: bool = False,
+        embeddings_cfg: dict[str, Any] | None = None,
+        dense_recall_weight: float = 0.2,
     ) -> None:
         self.db_path = Path(db_path).expanduser()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -81,6 +90,13 @@ class WikiBrain:
         self.decay_half_life_days = decay_half_life_days
         self.prune_threshold = prune_threshold
         self.consolidation_similarity = consolidation_similarity
+        self.salience_threshold = salience_threshold
+        self.max_active_records = max(0, int(max_active_records))
+        self.associative_edges_enabled = associative_edges_enabled
+        self.edge_similarity_threshold = edge_similarity_threshold
+        self.hybrid_embeddings_enabled = hybrid_embeddings_enabled
+        self.embeddings_cfg = embeddings_cfg or {}
+        self.dense_recall_weight = min(max(float(dense_recall_weight), 0.0), 1.0)
         self._fts_available = True
         self._power_available: bool | None = None
         self._init_schema()
@@ -170,6 +186,24 @@ class WikiBrain:
                 )
             except sqlite3.OperationalError:
                 self._fts_available = False
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS brain_record_edges (
+                    edge_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    src_record_id TEXT NOT NULL,
+                    dst_record_id TEXT NOT NULL,
+                    relation TEXT NOT NULL,
+                    weight REAL NOT NULL DEFAULT 0.0,
+                    created_at REAL NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_brain_record_edges_src
+                ON brain_record_edges(src_record_id, created_at DESC)
+                """
+            )
 
     def store_record(self, record: BrainRecord) -> dict[str, Any]:
         payload = record.to_dict()
@@ -179,6 +213,18 @@ class WikiBrain:
         if not payload["created_at"]:
             payload["created_at"] = now
         payload["updated_at"] = now
+        salience = self._salience_score(
+            importance=float(payload["importance"] or 0.0),
+            confidence=float(payload["confidence"] or 0.0),
+            content=payload["content"],
+        )
+        if salience < self.salience_threshold:
+            return {
+                "record_id": payload["record_id"],
+                "status": "rejected_low_salience",
+                "salience": round(salience, 6),
+                "salience_threshold": self.salience_threshold,
+            }
 
         contradiction = self.detect_contradiction(
             content=payload["content"],
@@ -270,6 +316,10 @@ class WikiBrain:
                         payload["status"],
                     ),
                 )
+            if self.max_active_records > 0:
+                self._enforce_max_active_records(conn)
+            if self.associative_edges_enabled:
+                self._update_associative_edges(conn, payload)
 
         return {
             "record_id": payload["record_id"],
@@ -388,6 +438,19 @@ class WikiBrain:
                 }
             )
         ranked.sort(key=lambda item: item["score"], reverse=True)
+        if self.hybrid_embeddings_enabled and ranked:
+            dense_scores = self._dense_similarity_map(query=query, ranked_candidates=ranked[:50])
+            if dense_scores:
+                lexical_weight = 1.0 - self.dense_recall_weight
+                for row in ranked:
+                    record_id = row["record"]["record_id"]
+                    dense = dense_scores.get(record_id, 0.0)
+                    lexical = row["score"]
+                    row["signal_breakdown"]["dense"] = round(dense, 6)
+                    row["score"] = round(
+                        (lexical * lexical_weight) + (dense * self.dense_recall_weight), 6
+                    )
+                ranked.sort(key=lambda item: item["score"], reverse=True)
         top = ranked[:limit]
         # Batch update access timestamps to avoid N+1 connection overhead
         self._mark_accessed_batch([item["record"]["record_id"] for item in top], now=now)
@@ -578,6 +641,97 @@ class WikiBrain:
 
     def _recency_score(self, anchor: float, now: float) -> float:
         return self._half_life(anchor, now, self.recency_half_life_days)
+
+    def _salience_score(self, *, importance: float, confidence: float, content: str) -> float:
+        length_bonus = min(len(content or "") / 500.0, 1.0)
+        return (max(0.0, min(1.0, importance)) * 0.5) + (
+            max(0.0, min(1.0, confidence)) * 0.4
+        ) + (length_bonus * 0.1)
+
+    def _enforce_max_active_records(self, conn: sqlite3.Connection) -> None:
+        row = conn.execute(
+            "SELECT COUNT(*) AS count FROM brain_records WHERE status = 'active'"
+        ).fetchone()
+        total = int(row["count"]) if row else 0
+        overflow = total - self.max_active_records
+        if overflow <= 0:
+            return
+        conn.execute(
+            """
+            UPDATE brain_records
+            SET status = 'forgotten'
+            WHERE record_id IN (
+                SELECT record_id
+                FROM brain_records
+                WHERE status = 'active'
+                ORDER BY (importance * confidence * (1.0 + (access_count * 0.05))) ASC, updated_at ASC
+                LIMIT ?
+            )
+            """,
+            (overflow,),
+        )
+
+    def _update_associative_edges(self, conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
+        src_id = payload["record_id"]
+        src_text = f"{payload.get('title', '')} {payload.get('content', '')}".strip()
+        candidates = conn.execute(
+            """
+            SELECT record_id, title, content
+            FROM brain_records
+            WHERE status = 'active' AND record_id != ?
+            ORDER BY updated_at DESC
+            LIMIT 50
+            """,
+            (src_id,),
+        ).fetchall()
+        now = time.time()
+        for candidate in candidates:
+            dst_id = candidate["record_id"]
+            dst_text = f"{candidate['title']} {candidate['content']}".strip()
+            score = self._similarity(src_text, dst_text)
+            if score < self.edge_similarity_threshold:
+                continue
+            conn.execute(
+                """
+                INSERT INTO brain_record_edges (src_record_id, dst_record_id, relation, weight, created_at)
+                VALUES (?, ?, 'semantic_similarity', ?, ?)
+                """,
+                (src_id, dst_id, float(score), now),
+            )
+
+    def _dense_similarity_map(
+        self,
+        *,
+        query: str,
+        ranked_candidates: list[dict[str, Any]],
+    ) -> dict[str, float]:
+        texts = [query]
+        ids: list[str] = []
+        for row in ranked_candidates:
+            record = row.get("record") or {}
+            ids.append(str(record.get("record_id")))
+            texts.append(f"{record.get('title', '')} {record.get('content', '')}".strip())
+        resp = embed_texts(texts, embeddings_cfg=self.embeddings_cfg)
+        if not resp.get("ok"):
+            return {}
+        vectors = resp.get("embeddings") or []
+        if len(vectors) != len(texts):
+            return {}
+        query_vec = vectors[0]
+        out: dict[str, float] = {}
+        for idx, record_id in enumerate(ids, start=1):
+            out[record_id] = self._cosine_similarity(query_vec, vectors[idx])
+        return out
+
+    def _cosine_similarity(self, a: list[float], b: list[float]) -> float:
+        if not a or not b or len(a) != len(b):
+            return 0.0
+        dot = sum(x * y for x, y in zip(a, b))
+        mag_a = math.sqrt(sum(x * x for x in a))
+        mag_b = math.sqrt(sum(y * y for y in b))
+        if mag_a == 0.0 or mag_b == 0.0:
+            return 0.0
+        return max(0.0, min(1.0, dot / (mag_a * mag_b)))
 
     def _row_to_record(self, row: sqlite3.Row) -> BrainRecord:
         return BrainRecord(

@@ -217,10 +217,36 @@ class WikiBrainForgettingConfig(_ExtraIgnoreModel):
     consolidation_similarity: float = 0.92
 
 
+class WikiBrainGatingConfig(_ExtraIgnoreModel):
+    salience_threshold: float = 0.0
+
+
+class WikiBrainBoundsConfig(_ExtraIgnoreModel):
+    max_active_records: int = 0
+
+
+class WikiBrainAssociativeGraphConfig(_ExtraIgnoreModel):
+    enabled: bool = False
+    similarity_threshold: float = 0.8
+
+
+class WikiBrainHybridRetrievalConfig(_ExtraIgnoreModel):
+    enabled: bool = False
+    dense_weight: float = 0.2
+
+
 class WikiBrainConfig(_ExtraIgnoreModel):
     storage_path: str = "~/.braindrain/wiki-brain/brain.db"
     recall: WikiBrainRecallConfig = Field(default_factory=WikiBrainRecallConfig)
     forgetting: WikiBrainForgettingConfig = Field(default_factory=WikiBrainForgettingConfig)
+    gating: WikiBrainGatingConfig = Field(default_factory=WikiBrainGatingConfig)
+    bounds: WikiBrainBoundsConfig = Field(default_factory=WikiBrainBoundsConfig)
+    associative_graph: WikiBrainAssociativeGraphConfig = Field(
+        default_factory=WikiBrainAssociativeGraphConfig
+    )
+    hybrid_retrieval: WikiBrainHybridRetrievalConfig = Field(
+        default_factory=WikiBrainHybridRetrievalConfig
+    )
 
 
 class LessonsPromotionConfig(_ExtraIgnoreModel):
