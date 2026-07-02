@@ -164,7 +164,9 @@ def test_associative_edges_written_when_enabled(tmp_path: Path) -> None:
         edge_similarity_threshold=0.5,
     )
     wb.store_fact(content="deploy api runbook", title="Deploy API", importance=0.8, confidence=0.8)
-    wb.store_fact(content="deploy api checklist", title="Deploy API", importance=0.8, confidence=0.8)
+    wb.store_fact(
+        content="deploy api checklist", title="Deploy API", importance=0.8, confidence=0.8
+    )
     with wb._connect() as conn:
         row = conn.execute("SELECT COUNT(*) AS count FROM brain_record_edges").fetchone()
     assert int(row["count"]) >= 1
