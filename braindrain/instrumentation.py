@@ -14,6 +14,7 @@ from collections.abc import Callable
 from typing import Any, Protocol
 
 from braindrain.observer import BrainEvent, ObserverStore
+from braindrain.otel import emit_tool_span
 from braindrain.telemetry import TelemetrySession
 
 
@@ -198,6 +199,16 @@ def record_tool_io(
         )
         _persist_observer_event(observer_store, brain_event)
 
+    emit_tool_span(
+        tool_name=tool_name,
+        module=module,
+        duration_ms=duration_ms,
+        status="ok",
+        raw_tokens=raw_tokens,
+        actual_tokens=actual_tokens,
+        saved_tokens=saved_tokens,
+    )
+
     return {
         "raw_tokens": raw_tokens,
         "actual_tokens": actual_tokens,
@@ -250,6 +261,16 @@ async def record_tool_io_async(
         )
         await _persist_observer_event_async(observer_store, brain_event)
 
+    emit_tool_span(
+        tool_name=tool_name,
+        module=module,
+        duration_ms=duration_ms,
+        status="ok",
+        raw_tokens=raw_tokens,
+        actual_tokens=actual_tokens,
+        saved_tokens=saved_tokens,
+    )
+
     return {
         "raw_tokens": raw_tokens,
         "actual_tokens": actual_tokens,
@@ -298,7 +319,25 @@ def make_observe_mcp_tool(
             )
 
             start = time.perf_counter()
-            result = await fn(*args, **kwargs)
+            try:
+                result = await fn(*args, **kwargs)
+            except Exception as exc:
+                duration_ms = int((time.perf_counter() - start) * 1000)
+                telemetry.emit_stderr_event(
+                    "tool_error",
+                    "MCP tool invocation failed",
+                    tool_name=tool_name,
+                    duration_ms=duration_ms,
+                    error=str(exc),
+                )
+                emit_tool_span(
+                    tool_name=tool_name,
+                    module=_module(tool_name),
+                    duration_ms=duration_ms,
+                    status="error",
+                    extra={"error": str(exc)},
+                )
+                raise
             if _result_instrumented(result):
                 return result
 
@@ -319,6 +358,12 @@ def make_observe_mcp_tool(
                 hash_tool_args=hash_args_enabled(),
                 args_hash_payload={"args": args, "kwargs": kwargs},
                 project_root=project_root,
+            )
+            telemetry.emit_stderr_event(
+                "tool_call",
+                "MCP tool invocation completed",
+                tool_name=tool_name,
+                duration_ms=duration_ms,
             )
 
             if tool_name == "get_env_context" and isinstance(result, dict) and result.get("cached"):
@@ -345,7 +390,25 @@ def make_observe_mcp_tool(
             )
 
             start = time.perf_counter()
-            result = fn(*args, **kwargs)
+            try:
+                result = fn(*args, **kwargs)
+            except Exception as exc:
+                duration_ms = int((time.perf_counter() - start) * 1000)
+                telemetry.emit_stderr_event(
+                    "tool_error",
+                    "MCP tool invocation failed",
+                    tool_name=tool_name,
+                    duration_ms=duration_ms,
+                    error=str(exc),
+                )
+                emit_tool_span(
+                    tool_name=tool_name,
+                    module=_module(tool_name),
+                    duration_ms=duration_ms,
+                    status="error",
+                    extra={"error": str(exc)},
+                )
+                raise
             if _result_instrumented(result):
                 return result
 
@@ -366,6 +429,12 @@ def make_observe_mcp_tool(
                 hash_tool_args=hash_args_enabled(),
                 args_hash_payload={"args": args, "kwargs": kwargs},
                 project_root=project_root,
+            )
+            telemetry.emit_stderr_event(
+                "tool_call",
+                "MCP tool invocation completed",
+                tool_name=tool_name,
+                duration_ms=duration_ms,
             )
 
             if tool_name == "get_env_context" and isinstance(result, dict) and result.get("cached"):
