@@ -349,7 +349,11 @@ class WorkflowEngine:
             "provider": str(getattr(tier, "provider", "")),
             "model": str(getattr(tier, "model", "")),
             "summary": content,
-            "result": {"workflow": payload.get("workflow"), "generated_at": payload.get("generated_at"), "text": content},
+            "result": {
+                "workflow": payload.get("workflow"),
+                "generated_at": payload.get("generated_at"),
+                "text": content,
+            },
         }
 
     async def _maybe_route(

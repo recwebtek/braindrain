@@ -69,7 +69,9 @@ def test_task_manager_tracks_completion() -> None:
     manager = TaskManager()
 
     async def _run() -> None:
-        record = await manager.submit(task_type="unit", runner=lambda: asyncio.sleep(0, result={"ok": True}))
+        record = await manager.submit(
+            task_type="unit", runner=lambda: asyncio.sleep(0, result={"ok": True})
+        )
         assert record.status in {"queued", "running"}
         await asyncio.sleep(0.01)
         state = await manager.as_dict(record.task_id)

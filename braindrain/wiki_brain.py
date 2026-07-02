@@ -644,9 +644,11 @@ class WikiBrain:
 
     def _salience_score(self, *, importance: float, confidence: float, content: str) -> float:
         length_bonus = min(len(content or "") / 500.0, 1.0)
-        return (max(0.0, min(1.0, importance)) * 0.5) + (
-            max(0.0, min(1.0, confidence)) * 0.4
-        ) + (length_bonus * 0.1)
+        return (
+            (max(0.0, min(1.0, importance)) * 0.5)
+            + (max(0.0, min(1.0, confidence)) * 0.4)
+            + (length_bonus * 0.1)
+        )
 
     def _enforce_max_active_records(self, conn: sqlite3.Connection) -> None:
         row = conn.execute(
