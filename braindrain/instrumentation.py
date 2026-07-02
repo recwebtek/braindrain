@@ -8,6 +8,7 @@ import hashlib
 import inspect
 import json
 import os
+import threading
 import time
 from collections.abc import Callable
 from typing import Any, Protocol
@@ -30,7 +31,40 @@ def hash_args(payload: Any) -> str:
 
 
 def _default_session_id() -> str:
-    return os.environ.get("BRAINDRAIN_SESSION_ID", "mcp-default")
+    return os.environ.get("BRAINDRAIN_SESSION_ID", f"mcp-{int(_PROCESS_START_TS)}")
+
+
+_PROCESS_START_TS = time.time()
+_SESSION_START_LOCK = threading.Lock()
+_SESSION_START_EMITTED: set[str] = set()
+
+
+def _resolve_session_id(session_id: str | None) -> str:
+    return session_id or _default_session_id()
+
+
+def _emit_session_start_if_needed(
+    *,
+    observer_store: ObserverStore,
+    session_id: str,
+    project_root: str | None = None,
+) -> None:
+    with _SESSION_START_LOCK:
+        if session_id in _SESSION_START_EMITTED:
+            return
+        _SESSION_START_EMITTED.add(session_id)
+
+    metadata: dict[str, Any] = {}
+    if project_root:
+        metadata["project_root"] = project_root
+    observer_store.record_event(
+        BrainEvent(
+            timestamp=time.time(),
+            session_id=session_id,
+            event_type="session_start",
+            metadata=metadata,
+        )
+    )
 
 
 def _serialize_for_tokens(value: Any, *, max_chars: int = 200_000) -> str:
@@ -101,7 +135,7 @@ def _build_tool_call_event(
 
     return BrainEvent(
         timestamp=time.time(),
-        session_id=session_id or _default_session_id(),
+        session_id=_resolve_session_id(session_id),
         event_type="tool_call",
         tool_name=tool_name,
         token_cost=raw_tokens + actual_tokens,
@@ -254,6 +288,15 @@ def make_observe_mcp_tool(
             if not observer_enabled() or not wrap_tool(tool_name):
                 return await fn(*args, **kwargs)
 
+            observer_store = observer_store_getter()
+            project_root = project_root_getter() if project_root_getter else None
+            session_id = _resolve_session_id(None)
+            _emit_session_start_if_needed(
+                observer_store=observer_store,
+                session_id=session_id,
+                project_root=project_root,
+            )
+
             start = time.perf_counter()
             result = await fn(*args, **kwargs)
             if _result_instrumented(result):
@@ -262,7 +305,6 @@ def make_observe_mcp_tool(
             duration_ms = int((time.perf_counter() - start) * 1000)
             raw_text = _extract_raw_text(fn, args, kwargs)
             actual_text = _serialize_for_tokens(result)
-            project_root = project_root_getter() if project_root_getter else None
 
             await record_tool_io_async(
                 telemetry,
@@ -271,7 +313,8 @@ def make_observe_mcp_tool(
                 actual_text=actual_text,
                 module=_module(tool_name),
                 meta={"duration_ms": duration_ms},
-                observer_store=observer_store_getter(),
+                observer_store=observer_store,
+                session_id=session_id,
                 duration_ms=duration_ms,
                 hash_tool_args=hash_args_enabled(),
                 args_hash_payload={"args": args, "kwargs": kwargs},
@@ -292,6 +335,15 @@ def make_observe_mcp_tool(
             if not observer_enabled() or not wrap_tool(tool_name):
                 return fn(*args, **kwargs)
 
+            observer_store = observer_store_getter()
+            project_root = project_root_getter() if project_root_getter else None
+            session_id = _resolve_session_id(None)
+            _emit_session_start_if_needed(
+                observer_store=observer_store,
+                session_id=session_id,
+                project_root=project_root,
+            )
+
             start = time.perf_counter()
             result = fn(*args, **kwargs)
             if _result_instrumented(result):
@@ -300,7 +352,6 @@ def make_observe_mcp_tool(
             duration_ms = int((time.perf_counter() - start) * 1000)
             raw_text = _extract_raw_text(fn, args, kwargs)
             actual_text = _serialize_for_tokens(result)
-            project_root = project_root_getter() if project_root_getter else None
 
             record_tool_io(
                 telemetry,
@@ -309,7 +360,8 @@ def make_observe_mcp_tool(
                 actual_text=actual_text,
                 module=_module(tool_name),
                 meta={"duration_ms": duration_ms},
-                observer_store=observer_store_getter(),
+                observer_store=observer_store,
+                session_id=session_id,
                 duration_ms=duration_ms,
                 hash_tool_args=hash_args_enabled(),
                 args_hash_payload={"args": args, "kwargs": kwargs},

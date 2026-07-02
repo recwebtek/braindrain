@@ -564,6 +564,27 @@
     }
   },
   {
+    "name": "get_task_status",
+    "description": "Poll status/result for an async task.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "description": "Task id returned by async_mode-enabled tools."
+        }
+      },
+      "required": [
+        "task_id"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    }
+  },
+  {
     "name": "get_token_dashboard",
     "description": "Compact token-savings JSON snapshot (estimated tokens, Claude-focused).\n\nFor an inline visual dashboard in MCP Apps hosts (Cursor 2.6+), call\n``show_token_dashboard`` instead \u2014 this tool returns JSON only.",
     "parameters": {
@@ -1203,6 +1224,11 @@
           "default": "core",
           "type": "string",
           "description": "Bundle manifest to use from config/bundles/<name>.yaml."
+        },
+        "async_mode": {
+          "default": false,
+          "type": "boolean",
+          "description": "When True, queue background execution and return a task id."
         }
       },
       "type": "object"
@@ -1896,6 +1922,11 @@
           "default": false,
           "type": "boolean",
           "description": "When True, run even if interval guard would skip. Default: False."
+        },
+        "async_mode": {
+          "default": false,
+          "type": "boolean",
+          "description": "When True, queue background execution and return a task id."
         }
       },
       "type": "object"
@@ -1920,6 +1951,11 @@
           "default": null,
           "type": "object",
           "description": "Workflow-specific argument dict (see hub_config workflows input_examples)."
+        },
+        "async_mode": {
+          "default": false,
+          "type": "boolean",
+          "description": "When True, queue background execution and return a task id."
         }
       },
       "required": [

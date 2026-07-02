@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 from braindrain.config import Config
+from braindrain.task_manager import TaskManager
 from braindrain.telemetry import telemetry_from_config
 from braindrain.workflow_engine import WorkflowEngine
 
@@ -62,3 +63,17 @@ def test_run_workflow_executes_steps_and_routes(tmp_path):
     index_step = summary["steps"][-1]
     assert index_step["step"] == "jcodemunch.index"
     assert index_step["routed"] is True
+
+
+def test_task_manager_tracks_completion() -> None:
+    manager = TaskManager()
+
+    async def _run() -> None:
+        record = await manager.submit(task_type="unit", runner=lambda: asyncio.sleep(0, result={"ok": True}))
+        assert record.status in {"queued", "running"}
+        await asyncio.sleep(0.01)
+        state = await manager.as_dict(record.task_id)
+        assert state["status"] == "completed"
+        assert state["result"] == {"ok": True}
+
+    asyncio.run(_run())

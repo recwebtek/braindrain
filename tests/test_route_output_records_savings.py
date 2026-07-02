@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from braindrain.instrumentation import record_tool_io
 from braindrain.telemetry import TelemetrySession
+from braindrain.tools.tokens import search_index_impl
 
 
 def test_route_output_style_savings_in_dashboard_snapshot(tmp_path: Path) -> None:
@@ -36,3 +39,28 @@ def test_route_output_style_savings_in_dashboard_snapshot(tmp_path: Path) -> Non
     assert route_stats["calls"] == 1
     assert route_stats["tokens_saved_est"] > 0
     assert snapshot["module_attribution"]["output_sandbox"] > 0
+
+
+def test_search_index_uses_local_fallback_when_context_mode_missing() -> None:
+    fallback_calls: list[tuple[str, int]] = []
+
+    def fallback_search(*, query: str, limit: int) -> list[dict]:
+        fallback_calls.append((query, limit))
+        return [{"title": "fallback result", "content": "hello"}]
+
+    result = asyncio.run(
+        search_index_impl(
+            get_context_mode_client=lambda: None,
+            config=SimpleNamespace(
+                get=lambda key, default=None: default,
+                data=SimpleNamespace(embeddings={}),
+            ),
+            query="hello",
+            limit=3,
+            fallback_search=fallback_search,
+        )
+    )
+
+    assert result["fallback"] == "wiki_brain_fts"
+    assert result["results"][0]["title"] == "fallback result"
+    assert fallback_calls == [("hello", 3)]
