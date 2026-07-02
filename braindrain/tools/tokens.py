@@ -98,10 +98,24 @@ async def route_output_impl(
 
 
 async def search_index_impl(
-    get_context_mode_client, config, query: str, limit: int = 5, rerank: bool | None = None
+    get_context_mode_client,
+    config,
+    query: str,
+    limit: int = 5,
+    rerank: bool | None = None,
+    fallback_search=None,
 ) -> dict:
     client = get_context_mode_client()
     if client is None:
+        if fallback_search is not None:
+            fallback_results = fallback_search(query=query, limit=limit)
+            return {
+                "query": query,
+                "limit": limit,
+                "results": fallback_results,
+                "rerank": {"requested": False, "applied": False},
+                "fallback": "wiki_brain_fts",
+            }
         return {"error": "context_mode is not configured; cannot search"}
     try:
         results = await client.search(query=query, limit=limit)
@@ -122,4 +136,14 @@ async def search_index_impl(
             )
         return {"query": query, "limit": limit, "results": results, "rerank": rerank_meta}
     except MCPProtocolError as e:
+        if fallback_search is not None:
+            fallback_results = fallback_search(query=query, limit=limit)
+            return {
+                "query": query,
+                "limit": limit,
+                "results": fallback_results,
+                "rerank": {"requested": False, "applied": False},
+                "fallback": "wiki_brain_fts",
+                "warning": f"context-mode unavailable: {e}",
+            }
         return {"error": f"context-mode search failed: {e}"}

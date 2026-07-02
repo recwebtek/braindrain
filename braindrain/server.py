@@ -1,5 +1,6 @@
 """BRAINDRAIN MCP Server - FastMCP implementation"""
 
+import asyncio
 import json
 import os
 import sys
@@ -81,6 +82,7 @@ from braindrain.session import SessionStore
 from braindrain.session_compaction import (
     retrieval_hint,
 )
+from braindrain.task_manager import TaskManager
 from braindrain.telemetry import telemetry_from_config
 from braindrain.token_checkpoints import append_checkpoint as _append_token_checkpoint
 from braindrain.tool_registry import ToolRegistry
@@ -141,6 +143,7 @@ _observer_store: ObserverStore | None = None
 _session_store: SessionStore | None = None
 _wiki_brain: WikiBrain | None = None
 _dream_engine: DreamEngine | None = None
+_task_manager: TaskManager | None = None
 
 
 def _provenance_settings() -> dict:
@@ -319,6 +322,32 @@ def _get_dream_engine() -> DreamEngine:
     return _dream_engine
 
 
+def _get_task_manager() -> TaskManager:
+    global _task_manager
+    if _task_manager is not None:
+        return _task_manager
+    _task_manager = TaskManager()
+    return _task_manager
+
+
+def _search_index_fallback(query: str, limit: int) -> list[dict]:
+    """Fallback search when context-mode is unavailable."""
+    records = _get_wiki_brain().query_records(query=query, limit=limit, include_superseded=False)
+    results: list[dict] = []
+    for record in records:
+        results.append(
+            {
+                "record_id": record.record_id,
+                "title": record.title,
+                "content": record.content,
+                "record_class": record.record_class,
+                "source": record.source,
+                "updated_at": record.updated_at,
+            }
+        )
+    return results
+
+
 _DEFAULT_HOT_TOOLS = frozenset(
     {
         "route_output",
@@ -448,7 +477,7 @@ async def list_workflows() -> dict:
 
 
 @mcp.tool()
-async def run_workflow(name: str, args: dict = None) -> dict:
+async def run_workflow(name: str, args: dict = None, async_mode: bool = False) -> dict:
     """
     Execute a workflow in an isolated sandbox. Returns only final summary.
     Intermediate data NEVER enters your context window.
@@ -456,7 +485,28 @@ async def run_workflow(name: str, args: dict = None) -> dict:
     Args:
         name: Workflow id from list_workflows() (e.g. ingest_codebase, refactor_prep).
         args: Workflow-specific argument dict (see hub_config workflows input_examples).
+        async_mode: When True, queue background execution and return a task id.
     """
+    if async_mode:
+        manager = _get_task_manager()
+        record = await manager.submit(
+            task_type="run_workflow",
+            runner=lambda: workflow_tools.run_workflow_impl(
+                config=config,
+                telemetry=telemetry,
+                get_workflow_engine=_get_workflow_engine,
+                init_project_memory_fn=init_project_memory,
+                prime_workspace_fn=prime_workspace,
+                name=name,
+                args=args,
+            ),
+        )
+        return {
+            "status": "queued",
+            "task_id": record.task_id,
+            "task_type": record.task_type,
+            "poll_tool": "get_task_status",
+        }
     return await workflow_tools.run_workflow_impl(
         config=config,
         telemetry=telemetry,
@@ -466,6 +516,17 @@ async def run_workflow(name: str, args: dict = None) -> dict:
         name=name,
         args=args,
     )
+
+
+@mcp.tool()
+async def get_task_status(task_id: str) -> dict:
+    """
+    Poll status/result for an async task.
+
+    Args:
+        task_id: Task id returned by async_mode-enabled tools.
+    """
+    return await _get_task_manager().as_dict(task_id)
 
 
 @mcp.tool()
@@ -560,6 +621,7 @@ async def search_index(query: str, limit: int = 5, rerank: bool | None = None) -
         query=query,
         limit=limit,
         rerank=rerank,
+        fallback_search=_search_index_fallback,
     )
 
 
@@ -1024,15 +1086,33 @@ def get_provider_context_policy() -> dict:
 
 
 @mcp.tool()
-def run_dream(mode: str = "full", force: bool = False) -> dict:
+async def run_dream(mode: str = "full", force: bool = False, async_mode: bool = False) -> dict:
     """
     Run Light/REM/Deep memory consolidation.
 
     Args:
         mode: Dream cycle mode — light | rem | deep | full. Default: full.
         force: When True, run even if interval guard would skip. Default: False.
+        async_mode: When True, queue background execution and return a task id.
     """
-    return _get_dream_engine().run(mode=mode, force=force, trigger="mcp")
+    if async_mode:
+        manager = _get_task_manager()
+        record = await manager.submit(
+            task_type="run_dream",
+            runner=lambda: asyncio.to_thread(
+                _get_dream_engine().run,
+                mode=mode,
+                force=force,
+                trigger="mcp",
+            ),
+        )
+        return {
+            "status": "queued",
+            "task_id": record.task_id,
+            "task_type": record.task_type,
+            "poll_tool": "get_task_status",
+        }
+    return await asyncio.to_thread(_get_dream_engine().run, mode=mode, force=force, trigger="mcp")
 
 
 @mcp.tool()
@@ -1431,6 +1511,7 @@ async def prime_workspace(
     codex_agent_targets: list[str] | None = None,
     compact_mcp_response: bool = True,
     bundle: str = "core",
+    async_mode: bool = False,
 ) -> dict:
     """
     Prime a project/workspace for AI agent use.
@@ -1462,6 +1543,7 @@ async def prime_workspace(
         compact_mcp_response: If True (default), return a smaller dict so the MCP
             client is less likely to hit ClosedResourceError on large tool results.
         bundle: Bundle manifest to use from config/bundles/<name>.yaml.
+        async_mode: When True, queue background execution and return a task id.
 
     After priming:
     - Agents that support project-local MCP configs will have braindrain wired.
@@ -1472,6 +1554,33 @@ async def prime_workspace(
     - Project memory is initialized under .braindrain/ (gitignored).
     - Call get_env_context() to populate the live env block.
     """
+    if async_mode:
+        manager = _get_task_manager()
+        record = await manager.submit(
+            task_type="prime_workspace",
+            runner=lambda: workspace_tools.prime_workspace_impl(
+                prime_workspace_fn=_prime_workspace,
+                compact_prime_result_for_mcp=compact_prime_result_for_mcp,
+                telemetry=telemetry,
+                path=path,
+                agents=agents,
+                dry_run=dry_run,
+                sync_templates=sync_templates,
+                sync_subagents=sync_subagents,
+                all_agents=all_agents,
+                local_only=local_only,
+                patch_user_cursor_mcp=patch_user_cursor_mcp,
+                codex_agent_targets=codex_agent_targets,
+                compact_mcp_response=compact_mcp_response,
+                bundle=bundle,
+            ),
+        )
+        return {
+            "status": "queued",
+            "task_id": record.task_id,
+            "task_type": record.task_type,
+            "poll_tool": "get_task_status",
+        }
     return await workspace_tools.prime_workspace_impl(
         prime_workspace_fn=_prime_workspace,
         compact_prime_result_for_mcp=compact_prime_result_for_mcp,
