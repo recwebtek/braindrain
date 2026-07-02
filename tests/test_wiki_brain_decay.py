@@ -133,3 +133,53 @@ def test_forget_below_threshold_marks_only_low_importance_records(tmp_path: Path
     assert statuses["keep"] == "active"
     assert statuses["drop-a"] == "forgotten"
     assert statuses["drop-b"] == "forgotten"
+
+
+def test_salience_gate_rejects_low_signal_records(tmp_path: Path) -> None:
+    wb = WikiBrain(tmp_path / "brain.db", salience_threshold=0.75)
+    out = wb.store_fact(
+        content="tiny",
+        importance=0.1,
+        confidence=0.1,
+    )
+    assert out["status"] == "rejected_low_salience"
+
+
+def test_max_active_records_enforces_bounded_store(tmp_path: Path) -> None:
+    wb = WikiBrain(tmp_path / "brain.db", max_active_records=2)
+    wb.store_fact(content="A", importance=0.8, confidence=0.8)
+    wb.store_fact(content="B", importance=0.7, confidence=0.7)
+    wb.store_fact(content="C", importance=0.6, confidence=0.6)
+    with wb._connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS count FROM brain_records WHERE status = 'active'"
+        ).fetchone()
+    assert int(row["count"]) == 2
+
+
+def test_associative_edges_written_when_enabled(tmp_path: Path) -> None:
+    wb = WikiBrain(
+        tmp_path / "brain.db",
+        associative_edges_enabled=True,
+        edge_similarity_threshold=0.5,
+    )
+    wb.store_fact(content="deploy api runbook", title="Deploy API", importance=0.8, confidence=0.8)
+    wb.store_fact(
+        content="deploy api checklist", title="Deploy API", importance=0.8, confidence=0.8
+    )
+    with wb._connect() as conn:
+        row = conn.execute("SELECT COUNT(*) AS count FROM brain_record_edges").fetchone()
+    assert int(row["count"]) >= 1
+
+
+def test_hybrid_recall_falls_back_without_embeddings_provider(tmp_path: Path) -> None:
+    wb = WikiBrain(
+        tmp_path / "brain.db",
+        hybrid_embeddings_enabled=True,
+        embeddings_cfg={},
+    )
+    wb.store_fact(content="OAuth refresh tokens policy", importance=0.9, confidence=0.9)
+    wb.store_fact(content="Database migration checklist", importance=0.6, confidence=0.7)
+    out = wb.cognitive_recall(query="OAuth policy", limit=2)
+    assert len(out) >= 1
+    assert "score" in out[0]

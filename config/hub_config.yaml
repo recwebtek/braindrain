@@ -325,6 +325,16 @@ wiki_brain:
     decay_half_life_days: 90.0
     prune_threshold: 0.05
     consolidation_similarity: 0.92
+  gating:
+    salience_threshold: 0.0
+  bounds:
+    max_active_records: 0
+  associative_graph:
+    enabled: false
+    similarity_threshold: 0.8
+  hybrid_retrieval:
+    enabled: false
+    dense_weight: 0.2
 
 # ─── LESSONS (critique-backed playbook promotion) ──────────────
 lessons:
