@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 import os
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -208,6 +210,48 @@ print(out)
         }
 
 
+def _openai_compat_chat_completion(
+    *,
+    api_base: str,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    max_tokens: int,
+    api_key: str = "",
+) -> str | None:
+    base = (api_base or "").rstrip("/")
+    if not base:
+        return None
+    url = f"{base}/chat/completions"
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "max_tokens": max_tokens,
+        "temperature": 0.1,
+    }
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
+    choices = data.get("choices") if isinstance(data, dict) else None
+    if not isinstance(choices, list) or not choices:
+        return None
+    message = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, str) or not content.strip():
+        return None
+    return content.strip()
+
+
 def _step_tool_name(step: Any) -> str:
     if isinstance(step, dict):
         step_name = str(step.get("name", ""))
@@ -257,6 +301,56 @@ class WorkflowEngine:
         self._config = config
         self._telemetry = telemetry
         self._get_context_mode_client = context_mode_client_getter
+
+    def _should_use_model_tiers(self) -> bool:
+        return bool(self._config.get("modules.workflow_engine.use_model_tiers", False))
+
+    def _model_tier_summary(self, *, workflow, payload: dict[str, Any]) -> dict[str, Any] | None:
+        if not self._should_use_model_tiers():
+            return None
+        models = getattr(self._config.data, "models", {}) or {}
+        tier = models.get(str(workflow.model))
+        if tier is None:
+            return None
+
+        summary_obj = _summary_object_from_payload(payload)
+        system_prompt = (
+            "You summarize workflow execution for operators. Keep JSON shape with keys "
+            "`workflow`, `generated_at`, `steps` and concise step diagnostics."
+        )
+        user_prompt = _safe_json_dumps(summary_obj)
+        api_key = ""
+        if getattr(tier, "provider", "") not in {"lm_studio", "ollama"}:
+            api_key = os.environ.get("OPENAI_API_KEY", "")
+        content = _openai_compat_chat_completion(
+            api_base=str(getattr(tier, "api_base", "") or ""),
+            model=str(getattr(tier, "model", "") or ""),
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            max_tokens=min(int(getattr(tier, "max_tokens", 2048) or 2048), 1200),
+            api_key=api_key,
+        )
+        if not content:
+            return None
+        try:
+            parsed = json.loads(content)
+            if isinstance(parsed, dict):
+                return {
+                    "mode": "model_tier",
+                    "provider": str(getattr(tier, "provider", "")),
+                    "model": str(getattr(tier, "model", "")),
+                    "summary": content,
+                    "result": parsed,
+                }
+        except json.JSONDecodeError:
+            pass
+        return {
+            "mode": "model_tier_text",
+            "provider": str(getattr(tier, "provider", "")),
+            "model": str(getattr(tier, "model", "")),
+            "summary": content,
+            "result": {"workflow": payload.get("workflow"), "generated_at": payload.get("generated_at"), "text": content},
+        }
 
     async def _maybe_route(
         self, *, tool_name: str, step: str, output_obj: Any, intent: str
@@ -419,16 +513,23 @@ class WorkflowEngine:
         sandbox_summary = _summarize_in_sandbox(
             payload=raw_payload, max_chars=min(8000, wf.token_budget * 4)
         )
+        model_summary = self._model_tier_summary(workflow=wf, payload=raw_payload)
+        final_summary = model_summary or sandbox_summary
 
         # Telemetry attribution: raw vs returned (estimated)
         raw_text = _safe_json_dumps(raw_payload)
-        actual_text = _safe_json_dumps(sandbox_summary)
+        actual_text = _safe_json_dumps(final_summary)
         self._telemetry.record(
             tool_name="run_workflow",
             raw_text=raw_text,
             actual_text=actual_text,
             module="workflow_engine",
-            meta={"workflow": name, "steps": wf.steps, "sandbox_mode": sandbox_summary.get("mode")},
+            meta={
+                "workflow": name,
+                "steps": wf.steps,
+                "sandbox_mode": sandbox_summary.get("mode"),
+                "model_summary_mode": (model_summary or {}).get("mode") if model_summary else None,
+            },
         )
 
         return {
@@ -439,9 +540,15 @@ class WorkflowEngine:
                 "mode": sandbox_summary.get("mode"),
                 "bytes_in": sandbox_summary.get("bytes_in"),
             },
-            "result": json.loads(sandbox_summary["summary"])
-            if sandbox_summary.get("summary", "").startswith("{")
-            else sandbox_summary,
+            "model_summary": {
+                "enabled": bool(model_summary),
+                "mode": (model_summary or {}).get("mode"),
+                "provider": (model_summary or {}).get("provider"),
+                "model": (model_summary or {}).get("model"),
+            },
+            "result": json.loads(final_summary["summary"])
+            if final_summary.get("summary", "").startswith("{")
+            else final_summary.get("result", final_summary),
         }
 
     def plan(self, *, name: str, args: dict[str, Any]) -> dict[str, Any]:

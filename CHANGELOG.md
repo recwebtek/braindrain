@@ -8,6 +8,10 @@ The format is based on keeping a clear, user-facing history. Version in `VERSION
 
 ### For users
 
+- **Async long-running MCP tasks**: `run_workflow`, `run_dream`, and `prime_workspace` now support `async_mode=true`; poll with `get_task_status(task_id)`.
+- **Observability upgrade**: MCP tool wrappers now emit structured stderr events and optional OpenTelemetry spans (`BRAINDRAIN_OTEL_ENABLED=1` by default when OTel API is available).
+- **Memory-engineering controls**: `wiki_brain` now supports salience gating, bounded active-record retention, associative graph edges, and optional hybrid dense+lexical recall scaffolding.
+- **Workflow model-tier wiring**: workflow execution can optionally use configured `models.tier_*` for summary generation when `modules.workflow_engine.use_model_tiers=true`.
 - **CI badge**: GitHub Actions runs ruff + pytest on push and pull requests (see README Contributing section).
 - **`braindrain-hub-pr` skill**: `prime_workspace` deploys bundle-listed Cursor skills from `config/templates/cursor-skills/` (included in `core` and `full` bundles). Documents hub-vs-consumer PR workflow in `docs/skill-braindrain-hub-pr.md`.
 - **Scriptlib modularization**: scriptlib now treats project-local `.scriptlib/` and shared `~/.braindrain/scriptlib` as distinct layers, with promotion-only flow into the shared personal catalog.
@@ -18,6 +22,10 @@ The format is based on keeping a clear, user-facing history. Version in `VERSION
 
 ### For contributors
 
+- Added `braindrain/task_manager.py` for in-process async task lifecycle handling and polling contracts.
+- Added `braindrain/otel.py` optional OpenTelemetry bridge and instrumentation integration for success/error spans.
+- Extended `WikiBrain` schema/behavior with salience thresholds, bounded retention, associative edges, and embedding-assisted recall fallback paths.
+- Extended workflow/config schema with `workflow_engine.use_model_tiers` support and model-tier summary fallback behavior.
 - **Config schema validation (P1a)**: `braindrain/config_schema.py` validates `config/hub_config.yaml` at startup with Pydantic v2 models (`modules`, `mcp_tools`, `workflows`, `models`, memory stack, `dreaming.weights`, `cost_tracking`, `provenance`, `planning_auditor`). Unknown top-level keys warn; `livingdash:` is excluded. Tests: `tests/test_config_schema.py`, `tests/test_dream_weights.py`.
 - **Packaging unification (P0-2)**: `pyproject.toml` is the single canonical manifest with version floors; default install no longer pulls `sentence-transformers`/torch or unused `anthropic`. Optional extra: `pip install -e ".[embeddings]"`. `requirements.txt` is a compat shim (`-e .`). `install.sh` prefers `uv sync`, uses portable `sed`, and drops the Linux PyTorch CPU index hack. External deferred MCP commands in `hub_config.yaml` are version-pinned (`context-mode@1.0.162`, `jcodemunch-mcp==1.108.53`, etc.). FastMCP floor bumped to `>=3.4.2`.
 - **CI foundation (P0-1)**: `.github/workflows/ci.yml` matrix (Python 3.11 / 3.12 / 3.14 × Ubuntu / macOS); `uv.lock` for reproducible installs; ruff lint+format in `pyproject.toml`; `.pre-commit-config.yaml` (ruff, trailing whitespace, EOF fixer, gitleaks). Use `uv sync --group dev` locally. `pytest` marker `local_only` skips machine-dependent tests in CI.

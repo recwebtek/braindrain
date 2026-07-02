@@ -1,6 +1,6 @@
 # Roadmap
 
-Last aligned with **v1.0.3** (2026-04-10).
+Last aligned with **v1.0.3** (2026-07-02).
 
 Public planning for this repo. For **local-only** scratch notes, use **`.devdocs/`** (gitignored, never commit).
 
@@ -12,9 +12,9 @@ Public planning for this repo. For **local-only** scratch notes, use **`.devdocs
 
 ## Next (prioritized)
 
-1. **L1 — Memory hardening**: retention and cleanup guidelines for `.braindrain/` and continual-learning index; document in this file and `README.md` when finalized.
+1. **L1 — Memory hardening**: iterate on new salience/bounds/associative/hybrid controls in `wiki_brain` and tune defaults for production workloads.
 2. **LLM wiki / context hub**: execute plans under `.cursor/plans/` (e.g. LLM wiki integration) with clear MCP surfaces and security boundaries.
-3. **Admin / ops tools**: draft flows for operator-facing tools (see plan docs); keep `config/hub_config.yaml` and launcher paths in sync with `README.md` and `TODOS.md`.
+3. **Admin / ops tools**: continue observability hardening (stderr + OTel) and task lifecycle reliability; keep `config/hub_config.yaml` and launcher paths in sync with `README.md` and `TODOS.md`.
 4. **L2 / L3 memory tiers**: explicit semantics and optional `~/.braindrain/memory/` — design only until L1 is stable.
 
 ## Out of scope for this file
