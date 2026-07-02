@@ -394,9 +394,7 @@ def apply_plan_todo_sync(
     applied: list[str] = []
     skipped: list[str] = []
     proposal_by_id = {
-        str(p.get("todo_id") or ""): p
-        for p in proposals
-        if str(p.get("todo_id") or "")
+        str(p.get("todo_id") or ""): p for p in proposals if str(p.get("todo_id") or "")
     }
     for todo in todos:
         todo_id = str(todo.get("id") or "")
@@ -558,11 +556,7 @@ def _upsert_gitops_queue(repo_root: Path, entry: dict[str, object]) -> None:
     if not isinstance(entries, list):
         entries = []
     plan_source = str(entry.get("planSource") or "").lstrip("/")
-    filtered = [
-        e
-        for e in entries
-        if str(e.get("planSource") or "").lstrip("/") != plan_source
-    ]
+    filtered = [e for e in entries if str(e.get("planSource") or "").lstrip("/") != plan_source]
     filtered.append(entry)
     queue_path.write_text(json.dumps(filtered, indent=2) + "\n", encoding="utf-8")
 

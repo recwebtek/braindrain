@@ -3,7 +3,6 @@
 import json
 import os
 import sys
-import time
 from datetime import datetime
 from pathlib import Path
 
@@ -17,16 +16,16 @@ from fastmcp import FastMCP
 
 from braindrain.config import Config
 from braindrain.config_schema import ConfigValidationError
-from braindrain.context_mode_client import ContextModeClient, MCPProtocolError
+from braindrain.context_mode_client import ContextModeClient
 from braindrain.dream import DreamEngine
 from braindrain.env_probe import get_env_context as _probe_env_context
 from braindrain.exec_path import ensure_node_path_in_environ
 from braindrain.instrumentation import make_observe_mcp_tool
+from braindrain.mcp_apps import register_mcp_app_resources, register_mcp_app_tools
 from braindrain.mcp_catalog import export_mcp_catalog_async
 from braindrain.memory_learning import can_promote_memory, evaluate_lesson_candidate
 from braindrain.observer import BrainEvent, ObserverStore
-from braindrain.output_router import build_routed_output, should_route
-from braindrain.rerank import maybe_rerank_search_results
+from braindrain.output_router import should_route
 from braindrain.scriptlib import (
     apply_update as _scriptlib_apply_update,
 )
@@ -78,25 +77,21 @@ from braindrain.scriptlib import (
 from braindrain.scriptlib import (
     search as _scriptlib_search,
 )
-from braindrain.session import EpisodeRecord, SessionStore
+from braindrain.session import SessionStore
 from braindrain.session_compaction import (
-    build_compact_package,
-    index_package_in_context_mode,
     retrieval_hint,
-    session_index_handle,
 )
 from braindrain.telemetry import telemetry_from_config
 from braindrain.token_checkpoints import append_checkpoint as _append_token_checkpoint
+from braindrain.tool_registry import ToolRegistry
 from braindrain.tools import memory as memory_tools
 from braindrain.tools import output_models
 from braindrain.tools import scriptlib as scriptlib_tools
 from braindrain.tools import tokens as token_tools
 from braindrain.tools import workflows as workflow_tools
 from braindrain.tools import workspace as workspace_tools
-from braindrain.tool_registry import ToolRegistry
 from braindrain.wiki_brain import WikiBrain
 from braindrain.workflow_engine import WorkflowEngine
-from braindrain.mcp_apps import register_mcp_app_resources, register_mcp_app_tools
 from braindrain.workspace_primer import compact_prime_result_for_mcp
 from braindrain.workspace_primer import (
     initialize_project_memory as _initialize_project_memory,
@@ -499,7 +494,9 @@ async def get_token_stats() -> dict:
     Session cost tracking: tokens saved, cost avoided, cache hits by module.
     Call anytime to see BRAINDRAIN's impact on your token usage.
     """
-    return await token_tools.get_token_stats_impl(registry=registry, telemetry=telemetry, config=config)
+    return await token_tools.get_token_stats_impl(
+        registry=registry, telemetry=telemetry, config=config
+    )
 
 
 @mcp.tool(output_schema=OUTPUT_SCHEMAS["get_available_tools"])

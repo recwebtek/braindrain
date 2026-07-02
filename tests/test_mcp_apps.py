@@ -16,11 +16,11 @@ from braindrain.mcp_apps.data import (
     build_token_dashboard_payload,
     load_token_checkpoints,
 )
+from braindrain.mcp_apps.html import plan_board_html, sigint_map_html, token_dashboard_html
 from braindrain.mcp_apps.plan_enrich import (
     enrich_plan_groups,
     parse_master_disposition_tables,
 )
-from braindrain.mcp_apps.html import plan_board_html, sigint_map_html, token_dashboard_html
 from braindrain.mcp_apps.sigint_data import build_sigint_map_payload
 from braindrain.observer import BrainEvent, ObserverStore
 from braindrain.server import mcp

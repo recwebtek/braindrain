@@ -267,7 +267,9 @@ class ToolRegistry:
         left_type = left.get("type")
         right_type = right.get("type")
         if left_type == right_type == "object":
-            keys = set((left.get("properties") or {}).keys()) | set((right.get("properties") or {}).keys())
+            keys = set((left.get("properties") or {}).keys()) | set(
+                (right.get("properties") or {}).keys()
+            )
             properties = {}
             for key in keys:
                 l_prop = (left.get("properties") or {}).get(key)

@@ -26,7 +26,6 @@ from braindrain.mcp_apps.constants import (
 )
 from braindrain.mcp_apps.data import build_plan_board_payload, build_token_dashboard_payload
 from braindrain.mcp_apps.html import plan_board_html, sigint_map_html, token_dashboard_html
-from braindrain.mcp_apps.sigint_data import build_sigint_map_payload
 from braindrain.mcp_apps.plan_actions import (
     apply_plan_todo_sync,
     archive_plan,
@@ -36,6 +35,7 @@ from braindrain.mcp_apps.plan_actions import (
     mark_plan_merge_ready,
     plan_board_handoff,
 )
+from braindrain.mcp_apps.sigint_data import build_sigint_map_payload
 from braindrain.telemetry import TelemetrySession
 
 _TOKEN_APP = AppConfig(

@@ -39,9 +39,25 @@ async def get_available_tools_impl(config) -> dict:
     }
 
 
-async def route_output_impl(get_context_mode_client, should_route_output, text: str, source: str = "braindrain", intent: str | None = None, min_chars: int = 5000, force_index: bool = False, force_inline: bool = False) -> dict:
-    if not force_index and not should_route_output(text, min_chars=min_chars, force_inline=force_inline):
-        return {"routed": False, "source": source, "bytes_raw": len(text.encode("utf-8", errors="ignore")), "text": text}
+async def route_output_impl(
+    get_context_mode_client,
+    should_route_output,
+    text: str,
+    source: str = "braindrain",
+    intent: str | None = None,
+    min_chars: int = 5000,
+    force_index: bool = False,
+    force_inline: bool = False,
+) -> dict:
+    if not force_index and not should_route_output(
+        text, min_chars=min_chars, force_inline=force_inline
+    ):
+        return {
+            "routed": False,
+            "source": source,
+            "bytes_raw": len(text.encode("utf-8", errors="ignore")),
+            "text": text,
+        }
     client = get_context_mode_client()
     if client is None:
         return {
@@ -55,7 +71,13 @@ async def route_output_impl(get_context_mode_client, should_route_output, text: 
     try:
         index_result = await client.index_markdown(content_md=md, source=source, intent=intent)
     except MCPProtocolError as e:
-        return {"routed": False, "error": f"context-mode indexing failed: {e}", "source": source, "bytes_raw": routed.bytes_raw, "text_preview": routed.preview}
+        return {
+            "routed": False,
+            "error": f"context-mode indexing failed: {e}",
+            "source": source,
+            "bytes_raw": routed.bytes_raw,
+            "text_preview": routed.preview,
+        }
     return {
         "routed": True,
         "source": source,
@@ -66,11 +88,18 @@ async def route_output_impl(get_context_mode_client, should_route_output, text: 
         "suggested_queries": routed.suggested_queries,
         "retrieval_hint": f"Call search_index with query handle:{routed.handle} or a suggested_queries entry.",
         "context_mode": {"indexed_via": "ctx_index", "index_result": index_result},
-        "next_steps": {"use_ctx_search": True, "examples": [{"tool": "search_index", "query": q} for q in routed.suggested_queries[:3]]},
+        "next_steps": {
+            "use_ctx_search": True,
+            "examples": [
+                {"tool": "search_index", "query": q} for q in routed.suggested_queries[:3]
+            ],
+        },
     }
 
 
-async def search_index_impl(get_context_mode_client, config, query: str, limit: int = 5, rerank: bool | None = None) -> dict:
+async def search_index_impl(
+    get_context_mode_client, config, query: str, limit: int = 5, rerank: bool | None = None
+) -> dict:
     client = get_context_mode_client()
     if client is None:
         return {"error": "context_mode is not configured; cannot search"}
@@ -78,7 +107,9 @@ async def search_index_impl(get_context_mode_client, config, query: str, limit: 
         results = await client.search(query=query, limit=limit)
         modules = config.get("modules", {}) or {}
         tool_gate = modules.get("tool_gate", {}) if isinstance(modules, dict) else {}
-        embeddings_cfg = getattr(config.data, "embeddings", None) or config.get("embeddings", {}) or {}
+        embeddings_cfg = (
+            getattr(config.data, "embeddings", None) or config.get("embeddings", {}) or {}
+        )
         do_rerank = rerank if rerank is not None else bool(tool_gate.get("rerank_on_search", False))
         rerank_meta: dict = {"requested": bool(do_rerank)}
         if do_rerank:
@@ -92,4 +123,3 @@ async def search_index_impl(get_context_mode_client, config, query: str, limit: 
         return {"query": query, "limit": limit, "results": results, "rerank": rerank_meta}
     except MCPProtocolError as e:
         return {"error": f"context-mode search failed: {e}"}
-

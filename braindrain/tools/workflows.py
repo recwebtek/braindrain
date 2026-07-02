@@ -7,7 +7,15 @@ async def list_workflows_impl(config) -> dict:
     return config.get_workflow_catalog()
 
 
-async def run_workflow_impl(config, telemetry, get_workflow_engine, init_project_memory_fn, prime_workspace_fn, name: str, args: dict | None = None) -> dict:
+async def run_workflow_impl(
+    config,
+    telemetry,
+    get_workflow_engine,
+    init_project_memory_fn,
+    prime_workspace_fn,
+    name: str,
+    args: dict | None = None,
+) -> dict:
     if args is None:
         args = {}
 
@@ -51,7 +59,9 @@ async def run_workflow_impl(config, telemetry, get_workflow_engine, init_project
         return {"error": str(e), "workflow": name}
 
 
-async def plan_workflow_impl(config, get_workflow_engine, name: str, args: dict | None = None) -> dict:
+async def plan_workflow_impl(
+    config, get_workflow_engine, name: str, args: dict | None = None
+) -> dict:
     if args is None:
         args = {}
 
@@ -120,4 +130,3 @@ async def plan_workflow_impl(config, get_workflow_engine, name: str, args: dict 
         }
 
     return engine.plan(name=name, args=args)
-

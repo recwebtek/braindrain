@@ -28,4 +28,3 @@ __all__ = [
     "run_ruler_apply",
     "sync_cursor_rules_from_ruler",
 ]
-

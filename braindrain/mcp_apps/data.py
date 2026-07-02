@@ -304,8 +304,12 @@ def build_plan_board_payload(*, path: str | None = None) -> dict[str, Any]:
     if archived_groups:
         archived_groups = enrich_plan_groups(archived_groups, repo_root=root, master_md=master_md)
         plan_groups.extend(archived_groups)
-        plan_groups.sort(key=lambda g: (0 if g.get("is_archived") else 1, int(g.get("seq") or 9999)))
-    blocked_items = sum(g["status_counts"].get("Blocked", 0) for g in plan_groups if not g.get("is_archived"))
+        plan_groups.sort(
+            key=lambda g: (0 if g.get("is_archived") else 1, int(g.get("seq") or 9999))
+        )
+    blocked_items = sum(
+        g["status_counts"].get("Blocked", 0) for g in plan_groups if not g.get("is_archived")
+    )
     outstanding_items = sum(
         g["status_counts"].get("Outstanding", 0) for g in plan_groups if not g.get("is_archived")
     )
