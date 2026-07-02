@@ -95,6 +95,7 @@ class OutputSandboxModule(_ExtraIgnoreModel):
 
 class WorkflowEngineModule(_ExtraIgnoreModel):
     enabled: bool = True
+    use_model_tiers: bool = False
 
 
 class ContextDatabaseModule(_ExtraIgnoreModel):

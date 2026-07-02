@@ -79,3 +79,21 @@ def test_task_manager_tracks_completion() -> None:
         assert state["result"] == {"ok": True}
 
     asyncio.run(_run())
+
+
+def test_workflow_engine_model_tier_wiring_falls_back_cleanly(tmp_path):
+    cfg = _make_test_config(tmp_path)
+    cfg.data.modules.setdefault("workflow_engine", {})["use_model_tiers"] = True
+    if "tier_local" in cfg.data.models:
+        cfg.data.models["tier_local"].api_base = ""
+    telemetry = telemetry_from_config({"log_file": str(tmp_path / "telemetry.jsonl")})
+    os.environ["BRAINDRAIN_DISABLE_DOCKER_SANDBOX"] = "1"
+    engine = WorkflowEngine(
+        config=cfg, telemetry=telemetry, context_mode_client_getter=lambda: None
+    )
+    result = asyncio.run(
+        engine.run(name="refactor_prep", args={"path": "./src", "change_description": "x"})
+    )
+    assert result["workflow"] == "refactor_prep"
+    assert result["model_summary"]["enabled"] is False
+    assert "result" in result
