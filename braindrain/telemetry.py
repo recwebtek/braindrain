@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -239,6 +240,17 @@ class TelemetrySession:
                 f"Telemetry warning: could not write to {self.log_file}",
                 file=sys.stderr,
             )
+
+    def emit_stderr_event(self, event_type: str, message: str, **fields: Any) -> None:
+        """Emit structured stderr observability events (logging replacement path)."""
+        event = {
+            "ts": time.time(),
+            "type": event_type,
+            "message": message,
+            "fields": fields,
+        }
+        sanitized = self._sanitize_data(event)
+        print(json.dumps(sanitized, ensure_ascii=False), file=sys.stderr)
 
     def _cost_avoided_usd(self, saved_tokens: int) -> float:
         if saved_tokens <= 0:
