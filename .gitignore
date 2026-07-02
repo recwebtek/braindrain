@@ -73,6 +73,7 @@ tests/*
 !tests/test_wiki_brain_contradiction.py
 !tests/test_wiki_brain_decay.py
 !tests/test_dream_weights.py
+!tests/test_config_schema.py
 !tests/test_macos_host_idle.py
 !tests/test_dream_trigger.py
 !tests/test_telemetry_sanitization.py

@@ -1,12 +1,19 @@
 """Configuration loader with hot-reload support"""
 
 import importlib.util
+import logging
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from braindrain.config_schema import (
+    validate_hub_config,
+    validated_to_raw_dict,
+)
 from braindrain.types import ConfigData, MCPToolConfig, ModelTier, WorkflowConfig
+
+logger = logging.getLogger(__name__)
 
 WATCHFILES_AVAILABLE = importlib.util.find_spec("watchfiles") is not None
 
@@ -28,7 +35,10 @@ class Config:
         with open(self.config_path) as f:
             raw = yaml.safe_load(f)
 
-        self._config = self._parse_config(raw)
+        validated, warnings = validate_hub_config(raw)
+        for message in warnings:
+            logger.warning(message)
+        self._config = self._parse_config(validated_to_raw_dict(validated))
 
     def _parse_config(self, raw: dict) -> ConfigData:
         """Parse raw YAML into ConfigData"""
