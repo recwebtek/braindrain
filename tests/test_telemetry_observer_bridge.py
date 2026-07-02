@@ -36,6 +36,7 @@ def test_record_tool_io_writes_telemetry_and_observer_tool_call(
         observer_store=observer,
         session_id="test-session",
         hash_tool_args=False,
+        project_root="/tmp/workspace",
     )
 
     assert result["saved_tokens"] > 0
@@ -47,6 +48,8 @@ def test_record_tool_io_writes_telemetry_and_observer_tool_call(
     stats = observer.get_event_stats(session_id="test-session")
     assert stats["total_events"] == 1
     assert stats["by_type"].get("tool_call") == 1
+    events = observer.query_events(session_id="test-session", limit=1)
+    assert events[0].metadata.get("project_root") == "/tmp/workspace"
 
     lines = (telemetry.log_file).read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) >= 1

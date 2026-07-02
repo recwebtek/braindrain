@@ -212,20 +212,94 @@ class ToolRegistry:
         return definitions
 
     def _infer_schema(self, tool: MCPToolConfig) -> dict:
-        """Infer JSON schema from tool config"""
-        schema = {
-            "type": "object",
-            "properties": {},
-            "required": [],
-        }
+        """Infer JSON schema from tool input_examples with basic type merging."""
+        schema: dict = {"type": "object", "properties": {}, "required": []}
+        required_keys: set[str] | None = None
 
-        for example in tool.input_examples:
-            if isinstance(example, dict):
-                for key in example.keys():
-                    if key not in schema["properties"]:
-                        schema["properties"][key] = {"type": "string"}
+        dict_examples = [example for example in tool.input_examples if isinstance(example, dict)]
+        if not dict_examples:
+            return schema
 
+        for example in dict_examples:
+            keys = set(example.keys())
+            required_keys = keys if required_keys is None else (required_keys & keys)
+            for key, value in example.items():
+                inferred = self._infer_value_schema(value)
+                existing = schema["properties"].get(key)
+                schema["properties"][key] = (
+                    self._merge_schemas(existing, inferred) if existing else inferred
+                )
+
+        schema["required"] = sorted(required_keys or [])
         return schema
+
+    def _infer_value_schema(self, value) -> dict:
+        if value is None:
+            return {"type": "null"}
+        if isinstance(value, bool):
+            return {"type": "boolean"}
+        if isinstance(value, int):
+            return {"type": "integer"}
+        if isinstance(value, float):
+            return {"type": "number"}
+        if isinstance(value, str):
+            return {"type": "string"}
+        if isinstance(value, dict):
+            properties = {k: self._infer_value_schema(v) for k, v in value.items()}
+            return {
+                "type": "object",
+                "properties": properties,
+                "required": sorted(value.keys()),
+            }
+        if isinstance(value, list):
+            if not value:
+                return {"type": "array", "items": {}}
+            item_schema = self._infer_value_schema(value[0])
+            for item in value[1:]:
+                item_schema = self._merge_schemas(item_schema, self._infer_value_schema(item))
+            return {"type": "array", "items": item_schema}
+        return {"type": "string"}
+
+    def _merge_schemas(self, left: dict, right: dict) -> dict:
+        if left == right:
+            return left
+
+        left_type = left.get("type")
+        right_type = right.get("type")
+        if left_type == right_type == "object":
+            keys = set((left.get("properties") or {}).keys()) | set(
+                (right.get("properties") or {}).keys()
+            )
+            properties = {}
+            for key in keys:
+                l_prop = (left.get("properties") or {}).get(key)
+                r_prop = (right.get("properties") or {}).get(key)
+                if l_prop and r_prop:
+                    properties[key] = self._merge_schemas(l_prop, r_prop)
+                else:
+                    properties[key] = l_prop or r_prop
+            left_required = set(left.get("required") or [])
+            right_required = set(right.get("required") or [])
+            return {
+                "type": "object",
+                "properties": properties,
+                "required": sorted(left_required & right_required),
+            }
+        if left_type == right_type == "array":
+            return {
+                "type": "array",
+                "items": self._merge_schemas(left.get("items") or {}, right.get("items") or {}),
+            }
+
+        types = []
+        for candidate in (left_type, right_type):
+            if isinstance(candidate, list):
+                for t in candidate:
+                    if t not in types:
+                        types.append(t)
+            elif candidate and candidate not in types:
+                types.append(candidate)
+        return {"type": types if len(types) > 1 else (types[0] if types else "string")}
 
     def reload(self) -> None:
         """Reload tools from config"""

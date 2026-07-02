@@ -101,7 +101,17 @@ Set `embeddings.default_provider` (default: `lmstudio_local`). Programmatic help
 - `ingest_codebase` — runs `ai_distiller` first only when repo file count exceeds `options.distiller_when_file_count_gt` (default 200).
 - `refactor_prep_token_light` — `filescope` + `text_editor` before `repo_mapper` / `jcodemunch` when `token_budget` &lt; 2000.
 
-**Benchmark harness** (machine-local): `python3 .scriptlib/benchmark_token_savings_brain_mcp_hub_v1.py --repo-root .` → writes `.braindrain/plan-reports/token-benchmark-*.md`.
+**Benchmark harness** (machine-local report under `.braindrain/plan-reports/`):
+
+```bash
+# Tracked CLI (also mirrored in .scriptlib/ when scriptlib is enabled)
+python3 scripts/benchmark_token_savings_brain_mcp_hub_v1.py --repo-root . --fail-on-regression
+
+# Pytest marker (used by nightly token-benchmark workflow)
+uv run pytest -m token_benchmark
+```
+
+Replays deterministic fixtures in `tests/fixtures/token_benchmark/` through **hub-on** paths (`route_output`, `search_tools`, cached `get_env_context`, session compaction) vs a **hub-off** naive full-context baseline. Metrics align with `braindrain/telemetry.py` (`estimated_raw_tokens` / `actual_context_tokens` / `saved_tokens`). Minimum savings floor defaults to **25%** (`TOKEN_BENCHMARK_MIN_SAVINGS_PCT`). Nightly CI uploads the markdown report as a workflow artifact (not committed).
 
 
 ### Workflows
@@ -150,6 +160,24 @@ Plan Build: run `python3 scripts/plan_build_guard.py --plan <path>` before edits
 | `record_token_checkpoint(phase, task, note, context_tags, path=".")` | Append schema `1.0` rows to `<path>/.braindrain/token-metrics.jsonl`. Use the **workspace root** for `path` (same as `export_mcp_catalog`), not the JSONL file path. |
 
 Async MCP tools record observer `tool_call` rows via `asyncio.to_thread` so SQLite writes do not block the event loop.
+
+### MCP Apps (inline dashboards)
+
+Cursor and other MCP App hosts can render interactive `ui://` HTML from braindrain without loading a separate frontend stack.
+
+| Tool | When to use |
+| ---- | ----------- |
+| `show_token_dashboard()` | Inline token savings snapshot (JSON via `get_token_dashboard` stays separate). |
+| `show_plan_board(path="")` | Interactive plan task board from `.braindrain/plan-reports/`. |
+| `show_sigint_map(path="", session_id="")` | Operational topology graph (session, tools, hooks, plans, external MCP peers). |
+| `poll_plan_board(...)` | **App-only** — refresh board and all plan-board write actions from the iframe (audit, sync, archive, disposition, masterplan). |
+| `poll_sigint_map(...)` | **App-only** — refresh SIGINT map graph from the iframe (8s auto-poll). |
+
+**Plan board UI:** filters, per-plan disposition dropdown, Recheck/Apply sync, archive/cancel, timestamp tags, and open-in-editor flow. Full reference: [`braindrain/mcp_apps/PLAN_BOARD_UI.md`](braindrain/mcp_apps/PLAN_BOARD_UI.md).
+
+**SIGINT map UI:** SVG force graph of active-session ops intelligence from observer events + project config. Full reference: [`braindrain/mcp_apps/SIGINT_MAP_UI.md`](braindrain/mcp_apps/SIGINT_MAP_UI.md).
+
+Restart the braindrain MCP server after `braindrain/mcp_apps/` or registration changes.
 
 
 ### Token Checkpoint Protocol
@@ -267,7 +295,14 @@ pre-commit install   # once per clone
 pre-commit run --all-files
 ```
 
-CI runs the same checks on Python 3.11 / 3.12 / 3.14 across Ubuntu and macOS. Tests marked `local_only` (machine-local services, launchd, LM Studio, etc.) are skipped in CI.
+CI runs the same checks on Python 3.11 / 3.12 / 3.14 across Ubuntu and macOS. Tests marked `local_only` (machine-local services, launchd, LM Studio, etc.) are skipped in CI. The **token benchmark** suite (`pytest -m token_benchmark`) runs on a separate nightly schedule via `.github/workflows/token-benchmark.yml`.
+
+**MCP tool schema snapshot** (`tests/test_mcp_tool_schemas.py`): CI fails if native tool definitions drift from `tests/fixtures/mcp_tool_schemas_snapshot.json`. After you intentionally change `@mcp.tool()` signatures, descriptions, or `outputSchema`, regenerate and commit the fixture:
+
+```bash
+uv run python scripts/regenerate_mcp_tool_schemas_snapshot.py
+uv run pytest tests/test_mcp_tool_schemas.py -q
+```
 
 ### Installer options
 
@@ -326,6 +361,12 @@ Replace `/path/to/braindrain` with the absolute path to your clone. `install.sh`
 ```
 
 If the MCP log shows `**[MCP Allowlist] No serverName provided for adapter**`, either add `**"serverName": "braindrain"**` on that server object in `**~/.cursor/mcp.json**`, or run `**prime_workspace(..., patch_user_cursor_mcp=true)**` once so braindrain patches the global file. `install.sh` / `configure_mcp.py` and project-level `prime_workspace` set this for generated configs; UI-created entries may omit it.
+
+### Remote transport (non-stdio)
+
+- braindrain now uses FastMCP `streamable-http` for remote mode with `stateless_http=true`.
+- Legacy SSE remote transport has been removed.
+- MCP protocol headers (including `MCP-Protocol-Version`) are validated by FastMCP's Streamable HTTP transport stack.
 
 **Large `prime_workspace` results:** the MCP tool defaults to `**compact_mcp_response=true`** (smaller JSON) to avoid **ClosedResourceError** / connection closed while returning the tool result. Set `**compact_mcp_response=false`** only if you need the full `templates.deployed` map and untruncated Ruler logs.
 
@@ -530,8 +571,10 @@ python3 scripts/daily_plan_audit.py \
 ```
 braindrain/
 ├── braindrain/
-│   ├── server.py               # FastMCP server — all MCP tools registered here
-│   ├── workspace_primer.py     # prime_workspace: Ruler templates, subagents, Cursor hooks
+│   ├── server.py               # FastMCP server entrypoint + tool registration
+│   ├── tools/                  # Tool-domain implementations (tokens, memory, workflows, etc.)
+│   ├── primer/                 # Workspace primer submodules (detect/deploy/apply/memory/prime)
+│   ├── workspace_primer.py     # compatibility exports for legacy primer imports
 │   ├── env_probe.py            # OS fingerprint probe, synthesis, and cache
 │   ├── config.py               # YAML config loader
 │   ├── context_mode_client.py  # context-mode stdio client (output routing)
@@ -544,6 +587,7 @@ braindrain/
 │   ├── rerank.py               # optional search_index rerank (lexical / mixedbread / auto)
 │   ├── embeddings_client.py    # local-first embeddings (LM Studio, Ollama, cloud)
 │   ├── embeddings_router.py    # provider priority + quota backoff
+│   ├── mcp_apps/               # MCP Apps ui:// dashboards (token, plan board, SIGINT map)
 │   ├── repo_stats.py           # file-count gating for workflows
 │   └── types.py
 ├── config/

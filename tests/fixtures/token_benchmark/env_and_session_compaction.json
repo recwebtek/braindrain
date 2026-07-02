@@ -1,0 +1,21 @@
+{
+  "id": "env_and_session_compaction",
+  "description": "Typical session open: env probe vs cached envelope, plus end-of-stage session summary compaction.",
+  "steps": [
+    {
+      "type": "env_context",
+      "line": "probe row: cli tool rg present at /opt/example/bin/rg version 14.1.0\n",
+      "repeat": 160
+    },
+    {
+      "type": "session_summary",
+      "session_id": "bench-session-compaction-01",
+      "line": "transcript event: reviewed file and applied small refactor\n",
+      "repeat": 500,
+      "decision_count": 36,
+      "file_count": 48,
+      "events_count": 140,
+      "token_total": 9000
+    }
+  ]
+}

@@ -3,7 +3,6 @@
 import json
 import os
 import sys
-import time
 from datetime import datetime
 from pathlib import Path
 
@@ -17,16 +16,16 @@ from fastmcp import FastMCP
 
 from braindrain.config import Config
 from braindrain.config_schema import ConfigValidationError
-from braindrain.context_mode_client import ContextModeClient, MCPProtocolError
+from braindrain.context_mode_client import ContextModeClient
 from braindrain.dream import DreamEngine
 from braindrain.env_probe import get_env_context as _probe_env_context
 from braindrain.exec_path import ensure_node_path_in_environ
 from braindrain.instrumentation import make_observe_mcp_tool
+from braindrain.mcp_apps import register_mcp_app_resources, register_mcp_app_tools
 from braindrain.mcp_catalog import export_mcp_catalog_async
 from braindrain.memory_learning import can_promote_memory, evaluate_lesson_candidate
 from braindrain.observer import BrainEvent, ObserverStore
-from braindrain.output_router import build_routed_output, should_route
-from braindrain.rerank import maybe_rerank_search_results
+from braindrain.output_router import should_route
 from braindrain.scriptlib import (
     apply_update as _scriptlib_apply_update,
 )
@@ -78,16 +77,19 @@ from braindrain.scriptlib import (
 from braindrain.scriptlib import (
     search as _scriptlib_search,
 )
-from braindrain.session import EpisodeRecord, SessionStore
+from braindrain.session import SessionStore
 from braindrain.session_compaction import (
-    build_compact_package,
-    index_package_in_context_mode,
     retrieval_hint,
-    session_index_handle,
 )
 from braindrain.telemetry import telemetry_from_config
 from braindrain.token_checkpoints import append_checkpoint as _append_token_checkpoint
 from braindrain.tool_registry import ToolRegistry
+from braindrain.tools import memory as memory_tools
+from braindrain.tools import output_models
+from braindrain.tools import scriptlib as scriptlib_tools
+from braindrain.tools import tokens as token_tools
+from braindrain.tools import workflows as workflow_tools
+from braindrain.tools import workspace as workspace_tools
 from braindrain.wiki_brain import WikiBrain
 from braindrain.workflow_engine import WorkflowEngine
 from braindrain.workspace_primer import compact_prime_result_for_mcp
@@ -364,6 +366,7 @@ observe_mcp_tool = make_observe_mcp_tool(
     observer_store_getter=_get_observer_store,
     hash_args_enabled=_observer_hash_args,
     wrap_tool=_should_wrap_tool,
+    project_root_getter=lambda: str(_project_root),
 )
 
 _original_mcp_tool = mcp.tool
@@ -408,8 +411,21 @@ def _should_route_output(text: str, *, min_chars: int, force_inline: bool) -> bo
 
 session_stats = {"note": "deprecated: use telemetry snapshot"}  # kept for backwards compatibility
 
+OUTPUT_SCHEMAS = {
+    "search_tools": output_models.schema_for(output_models.SearchToolsOutput),
+    "get_token_dashboard": output_models.schema_for(output_models.TokenDashboardOutput),
+    "get_env_context": output_models.schema_for(output_models.EnvContextOutput),
+    "get_session_summary": output_models.schema_for(output_models.SessionSummaryOutput),
+    "list_workflows": output_models.schema_for(output_models.ListWorkflowsOutput),
+    "get_token_stats": output_models.schema_for(output_models.TokenStatsOutput),
+    "search_index": output_models.schema_for(output_models.SearchIndexOutput),
+    "route_output": output_models.schema_for(output_models.RouteOutputModel),
+    "get_available_tools": output_models.schema_for(output_models.GetAvailableToolsOutput),
+    "prime_workspace": output_models.schema_for(output_models.PrimeWorkspaceOutput),
+}
 
-@mcp.tool()
+
+@mcp.tool(output_schema=OUTPUT_SCHEMAS["search_tools"])
 async def search_tools(query: str = "", top_k: int = 5) -> dict:
     """
     Search available tools by capability. Call this FIRST before any task.
@@ -419,24 +435,16 @@ async def search_tools(query: str = "", top_k: int = 5) -> dict:
         query: Natural-language capability query (e.g. "codebase symbols", "git operations").
         top_k: Maximum number of matching tools to return. Default: 5.
     """
-    # Some clients/agents may accidentally call this tool with `{}`.
-    # Make the parameter optional to avoid hard validation failures.
-    results = await registry.search_async(query or "", top_k)
-
-    return {
-        "tools": results,
-        "total_available": registry.count(),
-        "query": query,
-    }
+    return await token_tools.search_tools_impl(registry, query=query, top_k=top_k)
 
 
-@mcp.tool()
+@mcp.tool(output_schema=OUTPUT_SCHEMAS["list_workflows"])
 async def list_workflows() -> dict:
     """
     List available workflows with descriptions and token budgets.
     Use this to see what automated tasks BRAINDRAIN can perform.
     """
-    return config.get_workflow_catalog()
+    return await workflow_tools.list_workflows_impl(config)
 
 
 @mcp.tool()
@@ -449,47 +457,15 @@ async def run_workflow(name: str, args: dict = None) -> dict:
         name: Workflow id from list_workflows() (e.g. ingest_codebase, refactor_prep).
         args: Workflow-specific argument dict (see hub_config workflows input_examples).
     """
-    if args is None:
-        args = {}
-
-    if name == "init_project_memory":
-        return init_project_memory(
-            path=args.get("path", "."),
-            dry_run=bool(args.get("dry_run", False)),
-        )
-
-    if name == "prime_cursor_orchestration":
-        return await prime_workspace(
-            path=args.get("path", "."),
-            agents=args.get("agents") or ["cursor"],
-            dry_run=bool(args.get("dry_run", False)),
-            sync_templates=bool(args.get("sync_templates", True)),
-            sync_subagents=bool(args.get("sync_subagents", True)),
-            bundle=args.get("bundle") or "cursor-orchestration",
-            compact_mcp_response=bool(args.get("compact_mcp_response", True)),
-        )
-
-    workflow = config.get_workflow(name)
-    if not workflow:
-        return {
-            "error": f"Workflow '{name}' not found",
-            "available": [wf.name for wf in config.workflows],
-        }
-
-    engine = _get_workflow_engine()
-    if engine is None:
-        return {
-            "workflow": name,
-            "status": "workflow_engine_disabled",
-            "message": "Enable modules.workflow_engine.enabled in config/hub_config.yaml",
-            "token_budget": workflow.token_budget,
-        }
-
-    try:
-        return await engine.run(name=name, args=args)
-    except Exception as e:
-        telemetry.log_error(f"Workflow '{name}' failed: {e}", context={"name": name, "args": args})
-        return {"error": str(e), "workflow": name}
+    return await workflow_tools.run_workflow_impl(
+        config=config,
+        telemetry=telemetry,
+        get_workflow_engine=_get_workflow_engine,
+        init_project_memory_fn=init_project_memory,
+        prime_workspace_fn=prime_workspace,
+        name=name,
+        args=args,
+    )
 
 
 @mcp.tool()
@@ -504,121 +480,35 @@ async def plan_workflow(name: str, args: dict = None) -> dict:
         name: Workflow id from list_workflows().
         args: Workflow-specific argument dict to include in the plan preview.
     """
-    if args is None:
-        args = {}
-
-    if name == "prime_cursor_orchestration":
-        return {
-            "workflow": name,
-            "status": "plan_ready",
-            "plan": {
-                "workflow": name,
-                "token_budget": 800,
-                "steps": ["braindrain.prime_workspace"],
-                "args": {
-                    "path": args.get("path", "."),
-                    "agents": args.get("agents") or ["cursor"],
-                    "bundle": args.get("bundle") or "cursor-orchestration",
-                    "sync_templates": bool(args.get("sync_templates", True)),
-                    "sync_subagents": bool(args.get("sync_subagents", True)),
-                    "dry_run": bool(args.get("dry_run", False)),
-                },
-            },
-            "notes": [
-                "Deploys cursor-orchestration bundle: agents, hooks, skills, scripts.",
-                "Use run_workflow('prime_cursor_orchestration') or prime_workspace with bundle=cursor-orchestration.",
-            ],
-        }
-
-    if name == "init_project_memory":
-        return {
-            "workflow": name,
-            "status": "plan_ready",
-            "plan": {
-                "workflow": name,
-                "token_budget": 500,
-                "steps": ["braindrain.init_project_memory"],
-                "args": {
-                    "path": args.get("path", "."),
-                    "dry_run": bool(args.get("dry_run", False)),
-                },
-            },
-            "notes": [
-                "Idempotent memory bootstrap.",
-                "Creates .braindrain/AGENT_MEMORY.md and .cursor/hooks/state/continual-learning-index.json when missing.",
-                "Migrates .devdocs/AGENT_MEMORY.md to .braindrain/ if the legacy path exists.",
-            ],
-        }
-
-    workflow = config.get_workflow(name)
-    if not workflow:
-        return {
-            "error": f"Workflow '{name}' not found",
-            "available": [wf.name for wf in config.workflows],
-        }
-
-    engine = _get_workflow_engine()
-    if engine is None:
-        return {
-            "workflow": name,
-            "status": "workflow_engine_disabled",
-            "message": "Enable modules.workflow_engine.enabled in config/hub_config.yaml to run workflows",
-            "plan": {
-                "workflow": name,
-                "token_budget": workflow.token_budget,
-                "steps": workflow.steps,
-                "args": args,
-            },
-        }
-
-    return engine.plan(name=name, args=args)
+    return await workflow_tools.plan_workflow_impl(
+        config=config,
+        get_workflow_engine=_get_workflow_engine,
+        name=name,
+        args=args,
+    )
 
 
-@mcp.tool()
+@mcp.tool(output_schema=OUTPUT_SCHEMAS["get_token_stats"])
 async def get_token_stats() -> dict:
     """
     Session cost tracking: tokens saved, cost avoided, cache hits by module.
     Call anytime to see BRAINDRAIN's impact on your token usage.
     """
-    stats = registry.get_stats()
-
-    return {
-        "session": telemetry.snapshot(),
-        "registry": stats,
-        "project": config.get("project_name"),
-        "version": config.get("version"),
-    }
+    return await token_tools.get_token_stats_impl(
+        registry=registry, telemetry=telemetry, config=config
+    )
 
 
-@mcp.tool()
+@mcp.tool(output_schema=OUTPUT_SCHEMAS["get_available_tools"])
 async def get_available_tools() -> dict:
     """
     Get list of all available MCP tools with their loading status.
     Shows which tools are HOT (always loaded) vs DEFERRED (loaded on demand).
     """
-    hot_tools = []
-    deferred_tools = []
-
-    for tool in config.mcp_tools:
-        tool_info = {
-            "name": tool.name,
-            "description": tool.description,
-            "tags": tool.tags,
-        }
-        if tool.hot:
-            hot_tools.append(tool_info)
-        else:
-            deferred_tools.append(tool_info)
-
-    return {
-        "hot_tools": hot_tools,
-        "hot_count": len(hot_tools),
-        "deferred_tools": deferred_tools,
-        "deferred_count": len(deferred_tools),
-    }
+    return await token_tools.get_available_tools_impl(config=config)
 
 
-@mcp.tool()
+@mcp.tool(output_schema=OUTPUT_SCHEMAS["route_output"])
 async def route_output(
     text: str,
     source: str = "braindrain",
@@ -639,64 +529,19 @@ async def route_output(
         force_index: When True, always index regardless of size.
         force_inline: When True, skip auto-routing and return inline text when allowed.
     """
-    if not force_index and not _should_route_output(
-        text, min_chars=min_chars, force_inline=force_inline
-    ):
-        return {
-            "routed": False,
-            "source": source,
-            "bytes_raw": len(text.encode("utf-8", errors="ignore")),
-            "text": text,
-        }
-
-    client = _get_context_mode_client()
-    if client is None:
-        return {
-            "routed": False,
-            "error": "context_mode is not configured; cannot index",
-            "source": source,
-            "bytes_raw": len(text.encode("utf-8", errors="ignore")),
-            "text_preview": text[:400],
-        }
-
-    routed, md = build_routed_output(source=source, content=text, intent=intent)
-    try:
-        index_result = await client.index_markdown(content_md=md, source=source, intent=intent)
-    except MCPProtocolError as e:
-        return {
-            "routed": False,
-            "error": f"context-mode indexing failed: {e}",
-            "source": source,
-            "bytes_raw": routed.bytes_raw,
-            "text_preview": routed.preview,
-        }
-
-    resp = {
-        "routed": True,
-        "source": source,
-        "handle": routed.handle,
-        "index_id": routed.handle,
-        "bytes_raw": routed.bytes_raw,
-        "preview": routed.preview,
-        "suggested_queries": routed.suggested_queries,
-        "retrieval_hint": (
-            f"Call search_index with query handle:{routed.handle} or a suggested_queries entry."
-        ),
-        "context_mode": {
-            "indexed_via": "ctx_index",
-            "index_result": index_result,
-        },
-        "next_steps": {
-            "use_ctx_search": True,
-            "examples": [
-                {"tool": "search_index", "query": q} for q in routed.suggested_queries[:3]
-            ],
-        },
-    }
-    return resp
+    return await token_tools.route_output_impl(
+        get_context_mode_client=_get_context_mode_client,
+        should_route_output=_should_route_output,
+        text=text,
+        source=source,
+        intent=intent,
+        min_chars=min_chars,
+        force_index=force_index,
+        force_inline=force_inline,
+    )
 
 
-@mcp.tool()
+@mcp.tool(output_schema=OUTPUT_SCHEMAS["search_index"])
 async def search_index(query: str, limit: int = 5, rerank: bool | None = None) -> dict:
     """
     Convenience wrapper for context-mode ctx_search.
@@ -709,39 +554,23 @@ async def search_index(query: str, limit: int = 5, rerank: bool | None = None) -
         limit: Maximum number of chunks to return. Default: 5.
         rerank: Override rerank_on_search from config. None uses hub_config default.
     """
-    client = _get_context_mode_client()
-    if client is None:
-        return {"error": "context_mode is not configured; cannot search"}
-    try:
-        results = await client.search(query=query, limit=limit)
-        modules = config.get("modules", {}) or {}
-        tool_gate = modules.get("tool_gate", {}) if isinstance(modules, dict) else {}
-        embeddings_cfg = (
-            getattr(config.data, "embeddings", None) or config.get("embeddings", {}) or {}
-        )
-        do_rerank = rerank if rerank is not None else bool(tool_gate.get("rerank_on_search", False))
-        rerank_meta: dict = {"requested": bool(do_rerank)}
-        if do_rerank:
-            results, rerank_meta = maybe_rerank_search_results(
-                query=query,
-                results=results,
-                embeddings_cfg=embeddings_cfg if isinstance(embeddings_cfg, dict) else {},
-                tool_gate_cfg=tool_gate if isinstance(tool_gate, dict) else {},
-                limit=limit,
-            )
-        return {
-            "query": query,
-            "limit": limit,
-            "results": results,
-            "rerank": rerank_meta,
-        }
-    except MCPProtocolError as e:
-        return {"error": f"context-mode search failed: {e}"}
+    return await token_tools.search_index_impl(
+        get_context_mode_client=_get_context_mode_client,
+        config=config,
+        query=query,
+        limit=limit,
+        rerank=rerank,
+    )
 
 
-@mcp.tool()
+@mcp.tool(output_schema=OUTPUT_SCHEMAS["get_token_dashboard"])
 async def get_token_dashboard() -> dict:
-    """Compact token-savings dashboard (estimated tokens, Claude-focused)."""
+    """
+    Compact token-savings JSON snapshot (estimated tokens, Claude-focused).
+
+    For an inline visual dashboard in MCP Apps hosts (Cursor 2.6+), call
+    ``show_token_dashboard`` instead — this tool returns JSON only.
+    """
     return telemetry.snapshot()
 
 
@@ -802,12 +631,11 @@ async def export_mcp_catalog(path: str = ".", dry_run: bool = False) -> dict:
 @mcp.tool()
 def get_provenance_settings() -> dict:
     """Return current model provenance settings and effective defaults."""
-    return {
-        "provenance": _provenance_settings(),
-        "effective_model": _effective_model_name(),
-        "cursor_mode": _effective_cursor_mode(),
-        "timestamp": datetime.now().isoformat(),
-    }
+    return memory_tools.get_provenance_settings_impl(
+        provenance_settings_fn=_provenance_settings,
+        effective_model_name_fn=_effective_model_name,
+        effective_cursor_mode_fn=_effective_cursor_mode,
+    )
 
 
 @mcp.tool()
@@ -828,37 +656,17 @@ def record_model_trace_event(
         source: Provenance source label (e.g. manual, subagent). Default: manual.
         metadata: Optional extra fields attached to the trace row.
     """
-    settings = _provenance_settings()
-    trace_cfg = settings.get("subagent_trace", {}) if isinstance(settings, dict) else {}
-    enabled = bool(trace_cfg.get("enabled", True)) and bool(settings.get("enabled", True))
-    if not enabled:
-        return {
-            "ok": True,
-            "status": "disabled",
-            "message": "provenance.subagent_trace is disabled",
-        }
-
-    trace_path = Path(str(trace_cfg.get("path") or ".braindrain/plan-reports/model-trace.jsonl"))
-    if not trace_path.is_absolute():
-        trace_path = Path.cwd() / trace_path
-    trace_path.parent.mkdir(parents=True, exist_ok=True)
-
-    now = datetime.now()
-    payload = {
-        "timestamp": now.isoformat(),
-        "date": now.strftime(str(settings.get("date_format", "%Y-%m-%d"))),
-        "actor": actor,
-        "event": event,
-        "source": source,
-        "model_name": _effective_model_name(model_name),
-        "cursor_mode": _effective_cursor_mode(),
-        "metadata": metadata or {},
-    }
-    # Ensure sensitive information in trace payload is redacted
-    sanitized_payload = telemetry.sanitize(payload)
-    with open(trace_path, "a", encoding="utf-8") as handle:
-        handle.write(json.dumps(sanitized_payload, ensure_ascii=False) + "\n")
-    return {"ok": True, "trace_path": str(trace_path), "event": sanitized_payload}
+    return memory_tools.record_model_trace_event_impl(
+        provenance_settings_fn=_provenance_settings,
+        effective_model_name_fn=_effective_model_name,
+        effective_cursor_mode_fn=_effective_cursor_mode,
+        telemetry=telemetry,
+        actor=actor,
+        model_name=model_name,
+        event=event,
+        source=source,
+        metadata=metadata,
+    )
 
 
 @mcp.tool()
@@ -983,8 +791,10 @@ async def touch_session(
         end_session: When True, finalize session and emit compact package.
         index_in_context_mode: When True and end_session, index package via context-mode.
     """
-    store = _get_session_store()
-    summary = store.touch_session(
+    return await memory_tools.touch_session_impl(
+        get_session_store=_get_session_store,
+        get_context_mode_client=_get_context_mode_client,
+        get_observer_store=_get_observer_store,
         session_id=session_id,
         tool_name=tool_name,
         files_modified=files_modified,
@@ -993,58 +803,12 @@ async def touch_session(
         open_todos=open_todos,
         token_delta=token_delta,
         timestamp=timestamp,
+        end_session=end_session,
+        index_in_context_mode=index_in_context_mode,
     )
-    if not end_session:
-        return summary.__dict__
-
-    package = build_compact_package(summary)
-    handle = session_index_handle(session_id)
-    index_meta: dict | None = None
-
-    if index_in_context_mode:
-        client = _get_context_mode_client()
-        if client is not None:
-            try:
-                index_meta = await index_package_in_context_mode(
-                    client,
-                    session_id=session_id,
-                    package=package,
-                )
-                handle = str(index_meta.get("handle") or handle)
-            except MCPProtocolError as exc:
-                index_meta = {"indexed": False, "error": str(exc), "handle": handle}
-
-    finalized = store.end_session(
-        session_id,
-        compact_package=package,
-        context_index_handle=handle,
-        timestamp=timestamp,
-    )
-    _get_observer_store().record_event(
-        BrainEvent(
-            timestamp=timestamp or time.time(),
-            session_id=session_id,
-            event_type="session_end",
-            tool_name=None,
-            token_cost=int(package.get("token_total", 0) or 0),
-            duration_ms=0,
-            metadata={
-                "bytes": package.get("bytes"),
-                "context_index_handle": handle,
-                "indexed": bool(index_meta and index_meta.get("indexed")),
-            },
-        )
-    )
-    response = finalized.__dict__ if finalized else summary.__dict__
-    response["compact_package"] = package
-    response["context_index_handle"] = handle
-    response["retrieval_hint"] = retrieval_hint(handle)
-    if index_meta is not None:
-        response["context_mode"] = index_meta
-    return response
 
 
-@mcp.tool()
+@mcp.tool(output_schema=OUTPUT_SCHEMAS["get_session_summary"])
 def get_session_summary(session_id: str | None = None) -> dict:
     """
     Return latest session summary or a specific session.
@@ -1096,20 +860,20 @@ def record_episode(
         tags: Optional categorization tags.
         episode_id: Optional explicit id; auto-generated when empty.
     """
-    episode = EpisodeRecord(
-        episode_id=episode_id,
+    return memory_tools.record_episode_impl(
+        get_session_store=_get_session_store,
         session_id=session_id,
         problem=problem,
         context=context,
         action=action,
         outcome=outcome,
-        evidence_refs=evidence_refs or [],
+        evidence_refs=evidence_refs,
         local_critique=local_critique,
         global_reflection=global_reflection,
         confidence=confidence,
-        tags=tags or [],
+        tags=tags,
+        episode_id=episode_id,
     )
-    return _get_session_store().record_episode(episode)
 
 
 @mcp.tool()
@@ -1279,16 +1043,19 @@ def get_dream_status() -> dict:
 
 @mcp.tool()
 async def ping() -> dict:
-    """Health check - verify BRAINDRAIN is running"""
-    return {
-        "status": "ok",
-        "service": "braindrain",
-        "version": config.get("version", "1.0.3"),
-        "timestamp": datetime.now().isoformat(),
+    """Health check — verify BRAINDRAIN is running and whether MCP Apps tools are loaded."""
+    result = await workspace_tools.ping_impl(config)
+    tool_names = {t.name for t in await mcp.list_tools()}
+    result["mcp_tool_count"] = len(tool_names)
+    result["mcp_apps"] = {
+        "enabled": "show_token_dashboard" in tool_names,
+        "show_token_dashboard": "show_token_dashboard" in tool_names,
+        "show_plan_board": "show_plan_board" in tool_names,
     }
+    return result
 
 
-@mcp.tool()
+@mcp.tool(output_schema=OUTPUT_SCHEMAS["get_env_context"])
 def get_env_context(refresh: bool = False) -> dict:
     """
     Return a cached snapshot of the host OS environment: identity, network,
@@ -1304,13 +1071,7 @@ def get_env_context(refresh: bool = False) -> dict:
     installs, file operations, or tool invocations — so you know exactly what's
     available without discovery probing.
     """
-    result = _probe_env_context(refresh=refresh)
-    return {
-        "cached": result["cached"],
-        "probe_timestamp": result["probe_timestamp"],
-        "agents_md_block": result["agents_md_block"],
-        "summary": result["summary"],
-    }
+    return workspace_tools.get_env_context_impl(_probe_env_context, refresh=refresh)
 
 
 @mcp.tool()
@@ -1325,14 +1086,7 @@ def refresh_env_context() -> dict:
 
     Returns the fresh AGENTS.md block and structured summary.
     """
-    result = _probe_env_context(refresh=True)
-    return {
-        "cached": False,
-        "probe_timestamp": result["probe_timestamp"],
-        "agents_md_block": result["agents_md_block"],
-        "summary": result["summary"],
-        "message": "Environment context refreshed and cached to ~/.braindrain/env_context.json",
-    }
+    return workspace_tools.refresh_env_context_impl(_probe_env_context)
 
 
 @mcp.tool()
@@ -1653,29 +1407,18 @@ def scriptlib_refresh_index(
         scope: Index scope — project | global | all. Default: project.
         dry_run: When True, preview rebuild without writing. Default: False.
     """
-    if scope not in {"project", "global", "all"}:
-        return {"ok": False, "error": f"Unsupported scope: {scope}"}
-    roots = []
-    if scope in {"project", "all"}:
-        roots.append(_project_scriptlib_root(path))
-    if scope in {"global", "all"}:
-        roots.append(_global_scriptlib_root())
-
-    results = []
-    for root in roots:
-        if not _scriptlib_is_enabled(root):
-            results.append({"ok": True, "root": str(root), "skipped": "scriptlib_disabled"})
-            continue
-        results.append(_scriptlib_refresh_index(root, dry_run=dry_run))
-
-    return {
-        "ok": all(item.get("ok", False) for item in results),
-        "scope": scope,
-        "results": results,
-    }
+    return scriptlib_tools.scriptlib_refresh_index_impl(
+        project_scriptlib_root=_project_scriptlib_root,
+        global_scriptlib_root=_global_scriptlib_root,
+        scriptlib_is_enabled=_scriptlib_is_enabled,
+        scriptlib_refresh_index=_scriptlib_refresh_index,
+        path=path,
+        scope=scope,
+        dry_run=dry_run,
+    )
 
 
-@mcp.tool()
+@mcp.tool(output_schema=OUTPUT_SCHEMAS["prime_workspace"])
 async def prime_workspace(
     path: str = ".",
     agents: list[str] | None = None,
@@ -1729,46 +1472,22 @@ async def prime_workspace(
     - Project memory is initialized under .braindrain/ (gitignored).
     - Call get_env_context() to populate the live env block.
     """
-    import asyncio
-
-    try:
-        result = await asyncio.to_thread(
-            _prime_workspace,
-            path,
-            agents,
-            dry_run,
-            sync_templates,
-            sync_subagents,
-            all_agents,
-            local_only,
-            patch_user_cursor_mcp,
-            bundle,
-            codex_agent_targets,
-        )
-        if compact_mcp_response and isinstance(result, dict):
-            result = compact_prime_result_for_mcp(result)
-        if not result.get("ok"):
-            telemetry.log_error(
-                f"prime_workspace failed: {result.get('error') or result.get('ruler', {}).get('stderr')}",
-                context={"path": path, "agents": agents, "dry_run": dry_run},
-            )
-        return result
-    except Exception as e:
-        telemetry.log_error(
-            f"prime_workspace exception: {e}",
-            context={
-                "path": path,
-                "agents": agents,
-                "dry_run": dry_run,
-                "sync_templates": sync_templates,
-                "sync_subagents": sync_subagents,
-                "all_agents": all_agents,
-                "patch_user_cursor_mcp": patch_user_cursor_mcp,
-                "codex_agent_targets": codex_agent_targets,
-                "bundle": bundle,
-            },
-        )
-        return {"ok": False, "error": str(e)}
+    return await workspace_tools.prime_workspace_impl(
+        prime_workspace_fn=_prime_workspace,
+        compact_prime_result_for_mcp=compact_prime_result_for_mcp,
+        telemetry=telemetry,
+        path=path,
+        agents=agents,
+        dry_run=dry_run,
+        sync_templates=sync_templates,
+        sync_subagents=sync_subagents,
+        all_agents=all_agents,
+        local_only=local_only,
+        patch_user_cursor_mcp=patch_user_cursor_mcp,
+        codex_agent_targets=codex_agent_targets,
+        compact_mcp_response=compact_mcp_response,
+        bundle=bundle,
+    )
 
 
 @mcp.tool()
@@ -1786,18 +1505,21 @@ def init_project_memory(path: str = ".", dry_run: bool = False) -> dict:
         path: Project root directory. Default: current working directory.
         dry_run: When True, preview artifacts without creating files.
     """
-    try:
-        target = Path(path).expanduser().resolve()
-        if not target.exists():
-            return {"ok": False, "error": f"Path does not exist: {target}"}
+    return workspace_tools.init_project_memory_impl(
+        initialize_project_memory_fn=_initialize_project_memory,
+        telemetry=telemetry,
+        path=path,
+        dry_run=dry_run,
+    )
 
-        return _initialize_project_memory(target, dry_run=dry_run)
-    except Exception as e:
-        telemetry.log_error(
-            f"init_project_memory exception: {e}",
-            context={"path": path, "dry_run": dry_run},
-        )
-        return {"ok": False, "error": str(e)}
+
+register_mcp_app_resources(mcp)
+register_mcp_app_tools(
+    mcp,
+    telemetry=telemetry,
+    tool_decorator=mcp.tool,
+    default_project_root=_project_root,
+)
 
 
 def main():
@@ -1811,7 +1533,15 @@ def main():
         # log_level=warning avoids the "Starting MCP server" INFO line being surfaced as an MCP error.
         mcp.run(transport="stdio", show_banner=False, log_level="warning")
     else:
-        mcp.run(transport="sse", port=int(os.environ.get("PORT", "8000")), show_banner=False)
+        # Remote mode uses Streamable HTTP with stateless semantics (SSE removed).
+        # FastMCP handles protocol header validation for MCP requests, including
+        # MCP-Protocol-Version negotiation and required MCP method/name headers.
+        mcp.run(
+            transport="streamable-http",
+            port=int(os.environ.get("PORT", "8000")),
+            show_banner=False,
+            stateless_http=True,
+        )
 
 
 if __name__ == "__main__":

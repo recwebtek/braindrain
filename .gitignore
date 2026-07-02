@@ -78,8 +78,14 @@ tests/*
 !tests/test_dream_trigger.py
 !tests/test_telemetry_sanitization.py
 !tests/test_mcp_tool_schemas.py
+!tests/test_mcp_apps.py
 !tests/test_mcp_catalog.py
 !tests/test_workflow_engine.py
+!tests/test_token_benchmark.py
+!tests/fixtures/
+!tests/fixtures/token_benchmark/
+!tests/fixtures/token_benchmark/**
+!tests/fixtures/mcp_tool_schemas_snapshot.json
 !tests/fake_mcp_tool_server.py
 
 # Ruler outputs at repo root (no leading dot)
@@ -100,3 +106,8 @@ tests/*
 # If your team commits other root dotdirs (e.g. .husky), add: !/.husky/
 # `.devdocs/` is covered by `/.*` above — local-only; never add ! exceptions for it.
 # END BRAINDRAIN GITIGNORE PROTOCOL
+# scriptlib: machine-local catalog (harvest/runtime). Ship only benchmark harness files.
+!/.scriptlib/
+/.scriptlib/*
+!/.scriptlib/benchmark_token_savings_brain_mcp_hub_v1.py
+!/.scriptlib/libindex.md
