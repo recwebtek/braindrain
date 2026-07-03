@@ -1,6 +1,11 @@
 {
   "version": 1,
   "hooks": {
+    "afterFileEdit": [
+      {
+        "command": ".cursor/hooks/on-after-file-edit-plan-provenance.sh"
+      }
+    ],
     "stop": [
       {
         "command": ".cursor/hooks/on-stop-daily-plan-audit.sh"
@@ -13,6 +18,9 @@
       },
       {
         "command": ".cursor/hooks/on-stop-observe.sh"
+      },
+      {
+        "command": ".cursor/hooks/on-stop-plan-provenance.sh"
       }
     ]
   }
