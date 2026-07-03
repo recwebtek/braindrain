@@ -19,8 +19,8 @@ from braindrain.updater import (
     startup_notify_message,
 )
 
-PYPROJECT_V1 = '[project]\nname = "braindrain"\nversion = "1.0.0"\n'
-PYPROJECT_V2 = '[project]\nname = "braindrain"\nversion = "1.0.1"\n'
+PYPROJECT_V1 = '[project]\nname = "braindrain"\nversion = "9.8.1-test"\n'
+PYPROJECT_V2 = '[project]\nname = "braindrain"\nversion = "9.8.2-test"\n'
 
 
 def _run_git(cwd: Path, *args: str) -> None:
@@ -37,14 +37,17 @@ def _run_git(cwd: Path, *args: str) -> None:
     )
 
 
-def _seed_repo(path: Path, *, version_text: str = PYPROJECT_V1) -> None:
-    _run_git(path, "init")
+def _configure_git_identity(path: Path) -> None:
     _run_git(path, "config", "user.email", "updater-test@example.com")
     _run_git(path, "config", "user.name", "Updater Test")
+
+
+def _seed_repo(path: Path, *, version_text: str = PYPROJECT_V1) -> None:
+    _run_git(path, "init", "-b", "main")
+    _configure_git_identity(path)
     (path / "pyproject.toml").write_text(version_text, encoding="utf-8")
     _run_git(path, "add", ".")
     _run_git(path, "commit", "-m", "init")
-    _run_git(path, "branch", "-M", "main")
 
 
 @pytest.fixture()
@@ -59,7 +62,8 @@ def git_pair(tmp_path: Path) -> dict[str, Path]:
     _run_git(upstream, "push", "-u", "origin", "main")
 
     clone = tmp_path / "clone"
-    _run_git(tmp_path, "clone", str(bare), str(clone))
+    _run_git(tmp_path, "clone", "--branch", "main", str(bare), str(clone))
+    _configure_git_identity(clone)
 
     return {"bare": bare, "upstream": upstream, "clone": clone}
 
@@ -82,14 +86,14 @@ def test_check_update_detects_behind_and_writes_state(git_pair: dict[str, Path])
     first = check_update(clone, fetch=True)
     assert first["ok"] is True
     assert first["behind"] == 0
-    assert first["current_version"] == "1.0.0"
+    assert first["current_version"] == "9.8.1-test"
 
-    _push_upstream_commit(upstream, message="release 1.0.1", version_text=PYPROJECT_V2)
+    _push_upstream_commit(upstream, message="release 9.8.2", version_text=PYPROJECT_V2)
     second = check_update(clone, fetch=True)
     assert second["behind"] == 1
-    assert second["remote_version"] == "1.0.1"
+    assert second["remote_version"] == "9.8.2-test"
     assert second["update_available"] is True
-    assert "release 1.0.1" in second["changelog"]
+    assert "release 9.8.2" in second["changelog"]
 
     state = load_update_state(clone)
     assert state is not None

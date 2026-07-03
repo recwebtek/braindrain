@@ -139,18 +139,14 @@ def _current_branch(repo_root: Path) -> str | None:
 
 
 def _is_dirty(repo_root: Path) -> bool:
-    completed = _run_git(
-        [
-            "status",
-            "--porcelain",
-            "--",
-            ".",
-            ":(exclude).braindrain",
-            ":(exclude).braindrain/**",
-        ],
-        cwd=repo_root,
-    )
-    return bool(completed.stdout.strip())
+    completed = _run_git(["status", "--porcelain"], cwd=repo_root)
+    for line in completed.stdout.splitlines():
+        path = line[3:].strip()
+        if path == ".braindrain" or path.startswith(".braindrain/"):
+            continue
+        if path:
+            return True
+    return False
 
 
 def _behind_count(repo_root: Path, remote_ref: str) -> int:
