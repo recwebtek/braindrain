@@ -92,6 +92,10 @@ from braindrain.tools import scriptlib as scriptlib_tools
 from braindrain.tools import tokens as token_tools
 from braindrain.tools import workflows as workflow_tools
 from braindrain.tools import workspace as workspace_tools
+from braindrain.updater import UpdateError as _HubUpdateError
+from braindrain.updater import apply_update as _apply_hub_update
+from braindrain.updater import check_update as _check_hub_update
+from braindrain.updater import load_update_state as _load_update_state
 from braindrain.wiki_brain import WikiBrain
 from braindrain.workflow_engine import WorkflowEngine
 from braindrain.workspace_primer import compact_prime_result_for_mcp
@@ -694,6 +698,39 @@ async def export_mcp_catalog(path: str = ".", dry_run: bool = False) -> dict:
         project_root=Path(path).resolve(),
         dry_run=dry_run,
     )
+
+
+@mcp.tool()
+def check_hub_update() -> dict:
+    """
+    Check whether this braindrain clone is behind its tracked git branch.
+
+    Fetches from origin, compares local vs remote version, and writes
+    `.braindrain/update-state.json`. Notify-only — does not pull changes.
+    """
+    repo_root = _project_root
+    result = _check_hub_update(repo_root)
+    cached = _load_update_state(repo_root) or {}
+    result["cached_state"] = {
+        "last_check": cached.get("last_check"),
+        "restart_required": bool(cached.get("restart_required")),
+    }
+    return result
+
+
+@mcp.tool()
+def apply_hub_update() -> dict:
+    """
+    Fast-forward pull braindrain when the clone is clean and behind origin.
+
+    Syncs dependencies when lockfiles change and runs an MCP handshake smoke
+    test. The running MCP process still serves the old code until you reconnect
+    or restart the braindrain MCP connection in your IDE.
+    """
+    try:
+        return _apply_hub_update(_project_root)
+    except _HubUpdateError as exc:
+        return {"ok": False, "error": str(exc), "restart_required": False}
 
 
 @mcp.tool()

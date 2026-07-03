@@ -1,5 +1,18 @@
 [
   {
+    "name": "apply_hub_update",
+    "description": "Fast-forward pull braindrain when the clone is clean and behind origin.\n\nSyncs dependencies when lockfiles change and runs an MCP handshake smoke\ntest. The running MCP process still serves the old code until you reconnect\nor restart the braindrain MCP connection in your IDE.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    }
+  },
+  {
     "name": "apply_plan_todo_sync",
     "description": "App-only: apply todo status updates from audit proposals.",
     "parameters": {
@@ -101,6 +114,19 @@
       "type": "object"
     },
     "outputSchema": null
+  },
+  {
+    "name": "check_hub_update",
+    "description": "Check whether this braindrain clone is behind its tracked git branch.\n\nFetches from origin, compares local vs remote version, and writes\n`.braindrain/update-state.json`. Notify-only \u2014 does not pull changes.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    }
   },
   {
     "name": "cognitive_recall",
