@@ -60,6 +60,8 @@ from braindrain.session import EpisodeRecord, SessionStore
 from braindrain.wiki_brain import WikiBrain
 from braindrain.workspace_primer import (
     initialize_project_memory as _initialize_project_memory,
+    list_prime_snapshots as _list_prime_snapshots,
+    restore_prime_snapshot as _restore_prime_snapshot,
 )
 from braindrain.workspace_primer import compact_prime_result_for_mcp
 from braindrain.workspace_primer import prime as _prime_workspace
@@ -1471,6 +1473,60 @@ def init_project_memory(path: str = ".", dry_run: bool = False) -> dict:
         telemetry.log_error(
             f"init_project_memory exception: {e}",
             context={"path": path, "dry_run": dry_run},
+        )
+        return {"ok": False, "error": str(e)}
+
+
+@mcp.tool()
+def list_prime_snapshots(path: str = ".") -> dict:
+    """List available rollback snapshots created by prime_workspace."""
+    try:
+        target = Path(path).expanduser().resolve()
+        if not target.exists():
+            return {"ok": False, "error": f"Path does not exist: {target}"}
+        snapshots = _list_prime_snapshots(target)
+        return {"ok": True, "snapshots": snapshots, "count": len(snapshots)}
+    except Exception as e:
+        telemetry.log_error(
+            f"list_prime_snapshots exception: {e}",
+            context={"path": path},
+        )
+        return {"ok": False, "error": str(e)}
+
+
+@mcp.tool()
+def restore_prime_snapshot(
+    path: str = ".",
+    snapshot_id: str | None = None,
+    restore_memory: bool = True,
+    restore_cursor: bool = True,
+    restore_codex: bool = False,
+    dry_run: bool = False,
+) -> dict:
+    """Restore memory files and selected IDE state from a rollback snapshot."""
+    try:
+        target = Path(path).expanduser().resolve()
+        if not target.exists():
+            return {"ok": False, "error": f"Path does not exist: {target}"}
+        return _restore_prime_snapshot(
+            target,
+            snapshot_id=snapshot_id,
+            restore_memory=restore_memory,
+            restore_cursor=restore_cursor,
+            restore_codex=restore_codex,
+            dry_run=dry_run,
+        )
+    except Exception as e:
+        telemetry.log_error(
+            f"restore_prime_snapshot exception: {e}",
+            context={
+                "path": path,
+                "snapshot_id": snapshot_id,
+                "restore_memory": restore_memory,
+                "restore_cursor": restore_cursor,
+                "restore_codex": restore_codex,
+                "dry_run": dry_run,
+            },
         )
         return {"ok": False, "error": str(e)}
 

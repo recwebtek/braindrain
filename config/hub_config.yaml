@@ -39,6 +39,11 @@ modules:
       editors, CLI tools, and agent behaviour hints. Zero discovery cost after
       first probe. Re-run via refresh_env_context when env changes.
 
+prime:
+  memory_snapshot: true
+  primed_history_max_lines: 50
+  rollback_retention: 12
+
 # ─── MCP TOOLS ─────────────────────────────────────────────────
 mcp_tools:
   # HOT: context-mode (always loaded - intercepts all outputs)

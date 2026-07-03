@@ -26,4 +26,11 @@ run_workflow("prime_cursor_orchestration", { "path": ".", "dry_run": false })
 python3 scripts/daily_plan_audit.py --repo-root . --trigger "post-prime"
 ```
 
-Verify `.braindrain/primed.json` includes `braindrain_hub_root` and `scripts/daily_plan_audit.py` exists locally.
+Verify `.braindrain/primed.json` includes `schema_version`, `memory`, and `rollback.latest_snapshot_dir`, and that `.braindrain/primed-history.jsonl` appended a new row.
+
+If memory files are accidentally removed, use:
+
+```
+list_prime_snapshots(path=".")
+restore_prime_snapshot(path=".", snapshot_id=None, restore_memory=true, restore_cursor=true, dry_run=false)
+```
