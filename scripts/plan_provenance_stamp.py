@@ -119,7 +119,9 @@ def write_active_model(repo_root: Path, info: dict[str, str]) -> Path:
     return path
 
 
-def load_active_model(repo_root: Path, *, max_age: timedelta = ACTIVE_MODEL_MAX_AGE) -> dict[str, str] | None:
+def load_active_model(
+    repo_root: Path, *, max_age: timedelta = ACTIVE_MODEL_MAX_AGE
+) -> dict[str, str] | None:
     path = active_model_path(repo_root)
     if not path.is_file():
         return None
@@ -148,7 +150,9 @@ def is_plan_file(path: Path) -> bool:
     return path.suffix == ".md" and path.name.endswith(".plan.md") and "plans" in parts
 
 
-def resolve_plan_path(repo_root: Path, payload: dict[str, object], explicit: str | None) -> Path | None:
+def resolve_plan_path(
+    repo_root: Path, payload: dict[str, object], explicit: str | None
+) -> Path | None:
     if explicit:
         candidate = Path(explicit)
         if not candidate.is_absolute():
