@@ -53,6 +53,8 @@ def _slug_effort(slug: str) -> str | None:
     match = EFFORT_SUFFIX_RE.search(slug)
     if match:
         return match.group(1).lower()
+    if not re.search(r"(thinking|effort|reasoning)", slug, re.IGNORECASE):
+        return None
     for level in ("low", "medium", "high"):
         if slug.endswith(f"-{level}") or slug.endswith(f"_{level}"):
             return level

@@ -165,7 +165,7 @@ def load_active_model_state(
     if updated_at:
         try:
             stamp = dt.datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
-            age = dt.datetime.now(dt.timezone.utc) - stamp.astimezone(dt.timezone.utc)
+            age = dt.datetime.now(dt.UTC) - stamp.astimezone(dt.UTC)
             if age > dt.timedelta(hours=max_age_hours):
                 return None
         except ValueError:
