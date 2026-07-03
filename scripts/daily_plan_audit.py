@@ -138,7 +138,49 @@ DISPOSITION_VERB = {
 }
 
 
-def resolve_model_name(model_name: str | None = None) -> str:
+ACTIVE_MODEL_FILE = ".braindrain/active-model.json"
+ACTIVE_MODEL_MAX_AGE_HOURS = 24
+
+
+def _active_model_path(repo_root: Path) -> Path:
+    return repo_root / ACTIVE_MODEL_FILE
+
+
+def load_active_model_state(
+    repo_root: Path,
+    *,
+    max_age_hours: int = ACTIVE_MODEL_MAX_AGE_HOURS,
+) -> dict[str, str] | None:
+    """Load recent model provenance captured by plan_provenance_stamp hooks."""
+    path = _active_model_path(repo_root)
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    updated_at = str(payload.get("updated_at", "")).strip()
+    if updated_at:
+        try:
+            stamp = dt.datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+            age = dt.datetime.now(dt.UTC) - stamp.astimezone(dt.UTC)
+            if age > dt.timedelta(hours=max_age_hours):
+                return None
+        except ValueError:
+            return None
+    model = str(payload.get("model", "")).strip()
+    if not model:
+        return None
+    return {k: str(v) for k, v in payload.items()}
+
+
+def resolve_model_name(
+    model_name: str | None = None,
+    *,
+    repo_root: Path | None = None,
+) -> str:
     if model_name and model_name.strip():
         return model_name.strip()
     for key in (
@@ -150,10 +192,18 @@ def resolve_model_name(model_name: str | None = None) -> str:
         value = os.environ.get(key, "").strip()
         if value:
             return value
+    if repo_root is not None:
+        state = load_active_model_state(repo_root)
+        if state and state.get("model"):
+            return state["model"]
     return "auto"
 
 
-def resolve_cursor_mode(cursor_mode: str | None = None) -> str:
+def resolve_cursor_mode(
+    cursor_mode: str | None = None,
+    *,
+    repo_root: Path | None = None,
+) -> str:
     mode = (
         (
             cursor_mode
@@ -165,6 +215,10 @@ def resolve_cursor_mode(cursor_mode: str | None = None) -> str:
     )
     if mode in {"auto", "manual"}:
         return mode
+    if repo_root is not None:
+        state = load_active_model_state(repo_root)
+        if state and state.get("cursor_mode") in {"auto", "manual"}:
+            return state["cursor_mode"]
     return "auto"
 
 
@@ -4355,8 +4409,8 @@ def main() -> int:
     trace_path = Path(args.trace_path)
     if not trace_path.is_absolute():
         trace_path = repo_root / trace_path
-    model_name = resolve_model_name(args.model_name)
-    cursor_mode = resolve_cursor_mode(args.cursor_mode)
+    model_name = resolve_model_name(args.model_name, repo_root=repo_root)
+    cursor_mode = resolve_cursor_mode(args.cursor_mode, repo_root=repo_root)
     provenance = {
         "created_by_model": model_name,
         "created_at": args.report_date,

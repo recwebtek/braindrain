@@ -82,6 +82,8 @@ def test_cursor_hook_templates_exist_in_repo() -> None:
     assert (hooks / "on-stop-daily-plan-audit.sh").is_file()
     assert (hooks / "on-stop-gitops.sh").is_file()
     assert (hooks / "on-stop-observe.sh").is_file()
+    assert (hooks / "on-after-file-edit-plan-provenance.sh").is_file()
+    assert (hooks / "on-stop-plan-provenance.sh").is_file()
 
 
 def test_brainlog_command_template_exists() -> None:
@@ -120,10 +122,21 @@ def test_deploy_cursor_hook_templates_writes_expected_paths(tmp_project_dir: Pat
     d = tmp_project_dir / ".cursor" / "hooks" / "on-stop-daily-plan-audit.sh"
     g = tmp_project_dir / ".cursor" / "hooks" / "on-stop-gitops.sh"
     o = tmp_project_dir / ".cursor" / "hooks" / "on-stop-observe.sh"
-    assert d.is_file() and g.is_file() and o.is_file()
+    p = tmp_project_dir / ".cursor" / "hooks" / "on-after-file-edit-plan-provenance.sh"
+    s = tmp_project_dir / ".cursor" / "hooks" / "on-stop-plan-provenance.sh"
+    assert d.is_file() and g.is_file() and o.is_file() and p.is_file() and s.is_file()
     assert d.stat().st_mode & stat.S_IXUSR
     assert g.stat().st_mode & stat.S_IXUSR
     assert o.stat().st_mode & stat.S_IXUSR
+    assert p.stat().st_mode & stat.S_IXUSR
+    assert s.stat().st_mode & stat.S_IXUSR
+
+    hook_json = json.loads(hj.read_text(encoding="utf-8"))
+    assert "afterFileEdit" in hook_json["hooks"]
+    assert any(
+        "on-after-file-edit-plan-provenance" in entry["command"]
+        for entry in hook_json["hooks"]["afterFileEdit"]
+    )
 
     assert "hooks.json" in out
     assert out["hooks.json"]["action"] == "created"

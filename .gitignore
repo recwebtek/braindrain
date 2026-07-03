@@ -82,6 +82,7 @@ tests/*
 !tests/test_mcp_catalog.py
 !tests/test_workflow_engine.py
 !tests/test_token_benchmark.py
+!tests/test_plan_provenance_stamp.py
 !tests/fixtures/
 !tests/fixtures/token_benchmark/
 !tests/fixtures/token_benchmark/**

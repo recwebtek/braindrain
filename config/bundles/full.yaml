@@ -15,6 +15,7 @@ skills:
 operational_scripts:
   - daily_plan_audit
   - plan_build_guard
+  - plan_provenance
 mcp_servers:
   - braindrain
   - mattermost

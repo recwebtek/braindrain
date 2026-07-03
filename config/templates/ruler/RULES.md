@@ -200,6 +200,7 @@ Use `provenance` settings from `config/hub_config.yaml` as the source of truth:
   - provenance metadata: `created_by_model`, `created_at`, `last_modified_by_model`, `last_modified_at`, `cursor_mode`
 - For plan files and generated plan reports, include provenance in YAML frontmatter:
   - `created_by_model`, `created_at`, `last_modified_by_model`, `last_modified_at`, `cursor_mode`.
+- **Enforcement:** Cursor `afterFileEdit` / `stop` hooks (`on-after-file-edit-plan-provenance.sh`, `on-stop-plan-provenance.sh`) stamp plan frontmatter and `.braindrain/active-model.json` from hook `model` / `model_id` / `model_params` payloads. Agents should still write provenance at plan creation when possible; hooks are the durable backstop.
 - For sub-agent operations, record model provenance events to
   `.braindrain/plan-reports/model-trace.jsonl` when `provenance.subagent_trace.enabled=true`.
 

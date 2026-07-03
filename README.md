@@ -624,13 +624,15 @@ braindrain/
   - `.cursor/hooks/on-stop-observe.sh` (lightweight stop-event observation)
   - `.cursor/hooks/on-stop-gitops.sh` (TASK-GRAPH branch queueing)
   - `.cursor/hooks/on-stop-daily-plan-audit.sh` (daily-gated planning audit report)
+  - `.cursor/hooks/on-after-file-edit-plan-provenance.sh` (stamps `*.plan.md` frontmatter with model provenance from hook payload)
+  - `.cursor/hooks/on-stop-plan-provenance.sh` (refreshes `.braindrain/active-model.json` for audit/report pickup)
   - Hook output contract: stop-hook scripts should be silent unless they intentionally emit valid JSON. Plain text output can cause Cursor hook-response JSON parse failures.
   Edit templates under `config/templates/cursor/` in this repo, then re-prime consumer projects to roll out hook changes.
 - **Subagent templates**: canonical source is `config/templates/agents/*.md`. `prime_workspace()` copies that tree to:
   - `.cursor/agents/` when Cursor is in the resolved agent set, and
   - `.codex/agents/` when Codex is in the resolved agent set (same files; IDE-specific layout only).
   Skills deploy from `config/templates/cursor-skills/<id>/` → `.cursor/skills/<id>/` for each id in the active bundle `skills:` list (e.g. `cursor-orchestration`: coordinator, gitops, scriptlib-librarian). See `docs/skill-braindrain-hub-pr.md`.
-  Operational scripts (`daily_plan_audit`, `plan_build_guard`, `plan_branch_utils`) copy from hub `scripts/` → project `scripts/` per bundle `operational_scripts`. Re-prime upgrades them when the hub revision changes (content-hash marker), so plan branch/PR reconciliation reaches consumer workspaces without tracking `*.plan.md` in git.
+  Operational scripts (`daily_plan_audit`, `plan_build_guard`, `plan_provenance_stamp`, `plan_branch_utils`) copy from hub `scripts/` → project `scripts/` per bundle `operational_scripts`. Re-prime upgrades them when the hub revision changes (content-hash marker), so plan branch/PR reconciliation reaches consumer workspaces without tracking `*.plan.md` in git.
   Existing files are create-only by default; set `sync_subagents=true` to update with backups. `.cursor/` is gitignored at repo root; do not commit generated agent/skill files—edit templates and re-run `prime_workspace`.
 - **Codex config merge**: `prime_workspace()` appends/updates a managed `BRAINDRAIN SUBAGENTS` block in `.codex/config.toml` only when allowed by policy (`sync_subagents=true` for existing files). Existing MCP server entries remain intact.
 - **Project memory artifacts**: initialized by `prime_workspace()` (or `init_project_memory()`) and kept separate from generated protocol files:
@@ -676,6 +678,8 @@ Implemented now (runtime behavior in this repo):
     - `.cursor/hooks/on-stop-observe.sh`
     - `.cursor/hooks/on-stop-gitops.sh`
     - `.cursor/hooks/on-stop-daily-plan-audit.sh`
+    - `.cursor/hooks/on-after-file-edit-plan-provenance.sh`
+    - `.cursor/hooks/on-stop-plan-provenance.sh`
     - `scripts/run_dream_cron.sh`
     - `scripts/macos_dream_watch.sh` + `scripts/install_dream_watch_launchd.sh` (macOS host-idle, opt-in)
 
