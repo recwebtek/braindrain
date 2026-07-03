@@ -48,7 +48,11 @@ def main() -> int:
         window_days=args.window,
         max_points=args.max_points,
     )
-    out = Path(args.out) if args.out else repo_root / ".braindrain/plan-reports/plan-audit-history.html"
+    out = (
+        Path(args.out)
+        if args.out
+        else repo_root / ".braindrain/plan-reports/plan-audit-history.html"
+    )
     if not out.is_absolute():
         out = repo_root / out
     out.parent.mkdir(parents=True, exist_ok=True)

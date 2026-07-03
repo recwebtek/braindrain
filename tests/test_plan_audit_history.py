@@ -187,7 +187,9 @@ def test_parse_plan_cards_regex() -> None:
 
 def test_normalize_risk_collapses_wording() -> None:
     a = normalize_risk("Blocked items lack explicit owner markers (@, owner:, assignee:, or dri:).")
-    b = normalize_risk("Blocked items lack explicit owner markers (@ owner assignee dri) — 12 plans")
+    b = normalize_risk(
+        "Blocked items lack explicit owner markers (@ owner assignee dri) — 12 plans"
+    )
     assert a == b
 
 
@@ -200,7 +202,12 @@ def test_jsonl_append_replaces_same_date(tmp_project_dir: Path) -> None:
     entry_b, _ = parse_audit_report(reports / "plan-audit-2026-05-02.md")
     assert entry_b is not None
     append_history_jsonl_row(tmp_project_dir, entry_b)
-    lines = (tmp_project_dir / ".braindrain/plan-reports/plan-audit-history.jsonl").read_text().strip().splitlines()
+    lines = (
+        (tmp_project_dir / ".braindrain/plan-reports/plan-audit-history.jsonl")
+        .read_text()
+        .strip()
+        .splitlines()
+    )
     assert len(lines) == 1
     row = json.loads(lines[0])
     assert row["counts"]["implemented"] == 9
@@ -208,7 +215,7 @@ def test_jsonl_append_replaces_same_date(tmp_project_dir: Path) -> None:
 
 def test_lifecycle_disposition_transition(tmp_project_dir: Path) -> None:
     r1 = V11_REPORT
-    r2 = V11_REPORT.replace('Disposition: `active`', 'Disposition: `merge-ready`').replace(
+    r2 = V11_REPORT.replace("Disposition: `active`", "Disposition: `merge-ready`").replace(
         '"2026-05-01"', '"2026-06-01"'
     )
     _write_reports(
@@ -266,16 +273,30 @@ def test_html_escapes_script_injection() -> None:
                 "counts": {},
                 "scores": {},
                 "plan_count": 1,
-                "plans": [{"slug": "</script><script>alert(1)</script>", "items": {}, "disposition": "active"}],
+                "plans": [
+                    {
+                        "slug": "</script><script>alert(1)</script>",
+                        "items": {},
+                        "disposition": "active",
+                    }
+                ],
             }
         ],
-        "summary": {"report_count": 1, "date_range": ["2026-07-03", "2026-07-03"], "deltas": {}, "peak_blocked": {}},
+        "summary": {
+            "report_count": 1,
+            "date_range": ["2026-07-03", "2026-07-03"],
+            "deltas": {},
+            "peak_blocked": {},
+        },
         "plan_lifecycles": [],
         "alerts": {},
         "skipped": [],
     }
     html_out = render_history_html(snap)
-    assert "<\\/script>" in html_out or "</script><script>" not in html_out.split("snapshot-data")[1][:200]
+    assert (
+        "<\\/script>" in html_out
+        or "</script><script>" not in html_out.split("snapshot-data")[1][:200]
+    )
     assert len(snap["series"]) == 1
 
 

@@ -303,7 +303,9 @@ def _series_entry_from_report(path: Path, fm: dict[str, Any], body: str) -> dict
         "plans": plans,
         "source_file": path.name,
         "schema_version": schema,
-        "top_risks": list(fm.get("top_risks") or []) if isinstance(fm.get("top_risks"), list) else [],
+        "top_risks": list(fm.get("top_risks") or [])
+        if isinstance(fm.get("top_risks"), list)
+        else [],
     }
 
 
@@ -397,7 +399,9 @@ def append_history_jsonl_row(repo_root: Path, entry: dict[str, Any]) -> Path:
     return path
 
 
-def _parse_reports_to_series(reports_dir: Path) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+def _parse_reports_to_series(
+    reports_dir: Path,
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     series: list[dict[str, Any]] = []
     skipped: list[dict[str, str]] = []
     for path in discover_audit_reports(reports_dir):
@@ -512,11 +516,7 @@ def _derive_plan_lifecycles(
 
         last_plan = observations[-1][1]
         last_disp = str(last_plan.get("disposition") or "")
-        stalled = (
-            last_disp == "active"
-            and unchanged_runs >= 2
-            and days_active >= stall_days
-        )
+        stalled = last_disp == "active" and unchanged_runs >= 2 and days_active >= stall_days
 
         impl_30d = 0
         if len(observations) >= 2:
@@ -548,7 +548,9 @@ def _derive_plan_lifecycles(
     return lifecycles
 
 
-def _detect_regressions(series: list[dict[str, Any]], window: int = REGRESSION_WINDOW) -> list[dict[str, Any]]:
+def _detect_regressions(
+    series: list[dict[str, Any]], window: int = REGRESSION_WINDOW
+) -> list[dict[str, Any]]:
     flags: list[dict[str, Any]] = []
     if len(series) < window + 1:
         return flags
@@ -572,7 +574,9 @@ def _detect_regressions(series: list[dict[str, Any]], window: int = REGRESSION_W
     return flags[-3:]
 
 
-def _coverage_alerts(series: list[dict[str, Any]], threshold: int = COVERAGE_ALERT_THRESHOLD) -> list[dict[str, Any]]:
+def _coverage_alerts(
+    series: list[dict[str, Any]], threshold: int = COVERAGE_ALERT_THRESHOLD
+) -> list[dict[str, Any]]:
     alerts: list[dict[str, Any]] = []
     for point in series[-5:]:
         score = int((point.get("scores") or {}).get("coverage_score", 100))

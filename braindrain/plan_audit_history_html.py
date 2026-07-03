@@ -9,7 +9,9 @@ from typing import Any
 
 from braindrain.mcp_apps.html import _BASE_CSS
 
-_AUDIT_HISTORY_CSS = _BASE_CSS + """
+_AUDIT_HISTORY_CSS = (
+    _BASE_CSS
+    + """
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
 .panel h2 { font-size: 12px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; }
 .kpi { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-bottom: 12px; }
@@ -29,6 +31,7 @@ _AUDIT_HISTORY_CSS = _BASE_CSS + """
 .spark { font-size: 10px; color: var(--muted); }
 .spark strong { color: var(--text); display: block; margin-bottom: 4px; font-size: 11px; }
 """
+)
 
 _AUDIT_HISTORY_JS = r"""
 function esc(s) {
