@@ -488,9 +488,9 @@ def deploy_templates(
     Copy Ruler templates into <target_dir>/.ruler/, substituting launcher path.
 
     When all_agents=False (default) and agents is provided, writes a minimal
-    ruler.toml that only includes agent entries for the resolved agents plus the
-    full mcp_servers/mcp_targets sections.  When all_agents=True, the full
-    template is copied unchanged (all agent entries).
+    ruler.toml that filters ``default_agents`` (and optional ``[agents.<id>]``
+    blocks) to the resolved agents plus the full ``mcp_servers`` sections.
+    When all_agents=True, the full template is copied unchanged.
 
     **Important:** If `.ruler/ruler.toml` already exists, it is still **replaced**
     when in minimal mode whenever the on-disk content would differ from the
@@ -1148,39 +1148,69 @@ def ensure_codex_subagent_config(
 
 def _filter_ruler_toml_agents(toml_content: str, agents: list[str]) -> str:
     """
-    Strip [agents] table entries that are NOT in the given agents list.
+    Filter Ruler v0.3+ ``default_agents`` and optional ``[agents.<id>]`` blocks.
 
-    Operates as a simple line-by-line filter — preserves comments, formatting,
-    and all other TOML sections intact.  Only removes lines of the form:
-        <key> = { source = "RULES.md" }
-    when <key> is not in the agents set.
+  Preserves comments, ``mcp_servers``, and all other TOML sections. Supports the
+  legacy pre-v0.3 ``[agents]`` table (``key = { source = "RULES.md" }``) for
+  workspaces that have not yet re-primed.
     """
     agent_set = set(agents)
-    lines = toml_content.splitlines(keepends=True)
-    result: list[str] = []
-    in_agents_table = False
 
-    for line in lines:
+    def _rewrite_default_agents(match: re.Match[str]) -> str:
+        inner = match.group(1)
+        names = re.findall(r'"([^"]+)"', inner)
+        kept = [f'"{name}"' for name in names if name in agent_set]
+        if not kept and agents:
+            kept = [f'"{agents[0]}"']
+        if "\n" in inner:
+            body = ",\n  ".join(kept)
+            return f"default_agents = [\n  {body}\n]"
+        return f"default_agents = [{', '.join(kept)}]"
+
+    content = re.sub(
+        r"default_agents\s*=\s*\[(.*?)\]",
+        _rewrite_default_agents,
+        toml_content,
+        count=1,
+        flags=re.DOTALL,
+    )
+
+    lines = content.splitlines(keepends=True)
+    result: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
         stripped = line.strip()
 
-        # Detect section headers.
-        if stripped.startswith("["):
-            in_agents_table = stripped == "[agents]"
-            result.append(line)
+        agent_section = re.match(r"^\[agents\.([^\]]+)\]$", stripped)
+        if agent_section and agent_section.group(1) not in agent_set:
+            i += 1
+            while i < len(lines):
+                next_stripped = lines[i].strip()
+                if next_stripped.startswith("[") and next_stripped.endswith("]"):
+                    break
+                i += 1
             continue
 
-        if in_agents_table:
-            # Skip blank lines and comments unconditionally inside [agents].
-            if not stripped or stripped.startswith("#"):
-                result.append(line)
-                continue
-            # key = { ... } lines: keep only if key is in agent_set.
-            key = stripped.split("=")[0].strip()
-            if key in agent_set:
-                result.append(line)
-            # else: silently drop the entry.
-        else:
+        if stripped == "[agents]":
             result.append(line)
+            i += 1
+            while i < len(lines):
+                inner = lines[i]
+                inner_stripped = inner.strip()
+                if inner_stripped.startswith("[") and inner_stripped.endswith("]"):
+                    break
+                if inner_stripped and not inner_stripped.startswith("#"):
+                    key = inner_stripped.split("=")[0].strip()
+                    if key in agent_set:
+                        result.append(inner)
+                else:
+                    result.append(inner)
+                i += 1
+            continue
+
+        result.append(line)
+        i += 1
 
     return "".join(result)
 
