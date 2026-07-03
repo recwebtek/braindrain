@@ -617,6 +617,14 @@ def parse_args() -> argparse.Namespace:
             "in hub_config.yaml or 40)."
         ),
     )
+    parser.add_argument(
+        "--render-history",
+        action="store_true",
+        help=(
+            "After the audit, regenerate plan-audit-history.html from report history "
+            "(off by default to keep hooks fast)."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -4398,6 +4406,57 @@ def build_report(
     return "\n".join(body)
 
 
+def _ensure_braindrain_on_path(repo_root: Path) -> Path:
+    """Return the directory that contains the braindrain package (hub or primed hub root)."""
+    root = Path(repo_root).resolve()
+    if (root / "braindrain").is_dir():
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+        return root
+    primed = root / ".braindrain" / "primed.json"
+    if primed.is_file():
+        try:
+            data = json.loads(primed.read_text(encoding="utf-8"))
+            hub = Path(str(data.get("braindrain_hub_root") or ""))
+            if hub.is_dir() and (hub / "braindrain").is_dir():
+                if str(hub) not in sys.path:
+                    sys.path.insert(0, str(hub))
+                return hub
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            pass
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    return root
+
+
+def append_plan_audit_history_jsonl(repo_root: Path, dated_path: Path) -> None:
+    """Append or replace one JSONL history row for the dated audit report."""
+    _ensure_braindrain_on_path(repo_root)
+    try:
+        from braindrain.plan_audit_history import append_history_jsonl_row, parse_audit_report
+    except ImportError:
+        return
+    entry, _skip = parse_audit_report(Path(dated_path))
+    if entry:
+        append_history_jsonl_row(Path(repo_root).resolve(), entry)
+
+
+def render_plan_audit_history_dashboard(repo_root: Path) -> None:
+    """Regenerate plan-audit-history.html when the renderer script is available."""
+    root = Path(repo_root).resolve()
+    render_script = root / "scripts" / "render_plan_audit_history.py"
+    hub = _ensure_braindrain_on_path(root)
+    if not render_script.is_file():
+        render_script = hub / "scripts" / "render_plan_audit_history.py"
+    if not render_script.is_file():
+        return
+    subprocess.run(
+        [sys.executable, str(render_script), "--repo-root", str(root)],
+        cwd=str(root),
+        check=False,
+    )
+
+
 def main() -> int:
     args = parse_args()
     repo_root = Path(args.repo_root).resolve()
@@ -4595,6 +4654,8 @@ def main() -> int:
     dated_path = out_dir / f"plan-audit-{args.report_date}.md"
     dated_path.write_text(report, encoding="utf-8")
 
+    append_plan_audit_history_jsonl(repo_root, dated_path)
+
     latest_path = out_dir / "latest.md"
     shutil.copyfile(dated_path, latest_path)
 
@@ -4700,6 +4761,9 @@ def main() -> int:
             + "\n"
         )
     (out_dir / "next-actions.md").write_text(next_actions, encoding="utf-8")
+
+    if getattr(args, "render_history", False):
+        render_plan_audit_history_dashboard(repo_root)
 
     print(str(dated_path))
     return 0
