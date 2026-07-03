@@ -11,7 +11,7 @@ import tarfile
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 
@@ -101,7 +101,7 @@ def _file_sha256(path: Path) -> str:
 
 def _build_memory_state(
     target_dir: Path,
-    prior_state: Optional[dict],
+    prior_state: dict | None,
     memory_backups: dict[str, str],
     primed_at: str,
 ) -> dict[str, dict[str, Any]]:
@@ -128,16 +128,14 @@ def _build_memory_state(
             stat = path.stat()
             entry["bytes"] = stat.st_size
             entry["sha256"] = _file_sha256(path)
-            entry["last_modified_at"] = datetime.fromtimestamp(
-                stat.st_mtime, tz=UTC
-            ).isoformat()
+            entry["last_modified_at"] = datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat()
             if not entry["first_seen_at"] and stat.st_size > 0:
                 entry["first_seen_at"] = primed_at
         memory[fname] = entry
     return memory
 
 
-def _summarize_deploy_block(block: Optional[dict]) -> dict[str, Any]:
+def _summarize_deploy_block(block: dict | None) -> dict[str, Any]:
     """Aggregate created/updated/skipped counts for a deployment block."""
     if not isinstance(block, dict):
         return {"created": 0, "updated": 0, "skipped_existing": 0}
@@ -167,7 +165,13 @@ def _summarize_deploy_block(block: Optional[dict]) -> dict[str, Any]:
 def _collect_notable_actions(result: dict, *, cap: int = 20) -> list[dict[str, str]]:
     """Collect notable skip/update entries from deployment sections."""
     notable: list[dict[str, str]] = []
-    for section_name in ("subagents", "templates", "cursor_hooks", "cursor_skills", "cursor_commands"):
+    for section_name in (
+        "subagents",
+        "templates",
+        "cursor_hooks",
+        "cursor_skills",
+        "cursor_commands",
+    ):
         section = result.get(section_name) or {}
         if not isinstance(section, dict):
             continue
@@ -313,8 +317,8 @@ def _write_primed_state(
     target_dir: Path,
     result: dict[str, Any],
     *,
-    prior_state: Optional[dict] = None,
-    memory_backups: Optional[dict[str, str]] = None,
+    prior_state: dict | None = None,
+    memory_backups: dict[str, str] | None = None,
     history_max_lines: int = 50,
 ) -> dict[str, Any]:
     """Persist primed.json schema v2 and append primed-history.jsonl."""
@@ -1697,7 +1701,9 @@ def _restore_cursor_agents_from_snapshot(
     return result
 
 
-def _safe_extract_tar_to_target(archive_path: Path, target_dir: Path, *, dry_run: bool = False) -> dict[str, Any]:
+def _safe_extract_tar_to_target(
+    archive_path: Path, target_dir: Path, *, dry_run: bool = False
+) -> dict[str, Any]:
     """Extract archive members safely into target directory."""
     extracted = 0
     skipped = 0
@@ -1731,7 +1737,9 @@ def list_prime_snapshots(target_dir: Path) -> list[dict[str, Any]]:
     if not rollback_root.exists():
         return []
     out: list[dict[str, Any]] = []
-    for path in sorted([p for p in rollback_root.iterdir() if p.is_dir()], key=lambda p: p.name, reverse=True):
+    for path in sorted(
+        [p for p in rollback_root.iterdir() if p.is_dir()], key=lambda p: p.name, reverse=True
+    ):
         manifest_path = path / "manifest.json"
         manifest: dict[str, Any] = {}
         if manifest_path.is_file():

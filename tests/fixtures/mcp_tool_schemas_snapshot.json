@@ -853,6 +853,25 @@
     }
   },
   {
+    "name": "list_prime_snapshots",
+    "description": "List available rollback snapshots created by prime_workspace.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "default": ".",
+          "type": "string",
+          "description": "Project root. Default: current working directory."
+        }
+      },
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    }
+  },
+  {
     "name": "list_workflows",
     "description": "List available workflows with descriptions and token budgets.\nUse this to see what automated tasks BRAINDRAIN can perform.",
     "parameters": {
@@ -1670,6 +1689,57 @@
     "parameters": {
       "additionalProperties": false,
       "properties": {},
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    }
+  },
+  {
+    "name": "restore_prime_snapshot",
+    "description": "Restore memory files and selected IDE state from a rollback snapshot.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "default": ".",
+          "type": "string",
+          "description": "Project root. Default: current working directory."
+        },
+        "snapshot_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Rollback directory name (e.g. 20260703-093000). Default: newest snapshot."
+        },
+        "restore_memory": {
+          "default": true,
+          "type": "boolean",
+          "description": "Restore protected `.braindrain/*.md` backups. Default: True."
+        },
+        "restore_cursor": {
+          "default": true,
+          "type": "boolean",
+          "description": "Extract `cursor.tar.gz` from the snapshot. Default: True."
+        },
+        "restore_codex": {
+          "default": false,
+          "type": "boolean",
+          "description": "Extract `codex.tar.gz` from the snapshot. Default: False."
+        },
+        "dry_run": {
+          "default": false,
+          "type": "boolean",
+          "description": "Preview restore actions without writing files. Default: False."
+        }
+      },
       "type": "object"
     },
     "outputSchema": {

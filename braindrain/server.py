@@ -97,10 +97,14 @@ from braindrain.workflow_engine import WorkflowEngine
 from braindrain.workspace_primer import compact_prime_result_for_mcp
 from braindrain.workspace_primer import (
     initialize_project_memory as _initialize_project_memory,
+)
+from braindrain.workspace_primer import (
     list_prime_snapshots as _list_prime_snapshots,
-    restore_prime_snapshot as _restore_prime_snapshot,
 )
 from braindrain.workspace_primer import prime as _prime_workspace
+from braindrain.workspace_primer import (
+    restore_prime_snapshot as _restore_prime_snapshot,
+)
 
 mcp = FastMCP("braindrain")
 
@@ -1635,7 +1639,12 @@ register_mcp_app_tools(
 
 @mcp.tool()
 def list_prime_snapshots(path: str = ".") -> dict:
-    """List available rollback snapshots created by prime_workspace."""
+    """
+    List available rollback snapshots created by prime_workspace.
+
+    Args:
+        path: Project root. Default: current working directory.
+    """
     try:
         target = Path(path).expanduser().resolve()
         if not target.exists():
@@ -1659,7 +1668,17 @@ def restore_prime_snapshot(
     restore_codex: bool = False,
     dry_run: bool = False,
 ) -> dict:
-    """Restore memory files and selected IDE state from a rollback snapshot."""
+    """
+    Restore memory files and selected IDE state from a rollback snapshot.
+
+    Args:
+        path: Project root. Default: current working directory.
+        snapshot_id: Rollback directory name (e.g. 20260703-093000). Default: newest snapshot.
+        restore_memory: Restore protected `.braindrain/*.md` backups. Default: True.
+        restore_cursor: Extract `cursor.tar.gz` from the snapshot. Default: True.
+        restore_codex: Extract `codex.tar.gz` from the snapshot. Default: False.
+        dry_run: Preview restore actions without writing files. Default: False.
+    """
     try:
         target = Path(path).expanduser().resolve()
         if not target.exists():

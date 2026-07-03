@@ -30,8 +30,8 @@ from braindrain.workspace_primer import (
     deploy_cursor_skill_templates,
     deploy_operational_scripts,
     deploy_subagent_templates,
-    restore_prime_snapshot,
     prime,
+    restore_prime_snapshot,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -268,12 +268,19 @@ def test_prime_preserves_existing_memory_files(tmp_project_dir: Path) -> None:
     ops.write_text("existing-ops\n", encoding="utf-8")
     (tmp_project_dir / ".cursor").mkdir(parents=True, exist_ok=True)
 
-    with patch("braindrain.workspace_primer.run_ruler_apply", return_value={"ok": True, "stdout": "", "stderr": "", "command": "x", "returncode": 0}), patch(
-        "braindrain.workspace_primer.seed_if_enabled",
-        return_value={"ok": True, "enabled": False},
-    ), patch(
-        "braindrain.workspace_primer.verify_prime_install",
-        return_value={"ok": True, "checks": {"dry_run": False}},
+    with (
+        patch(
+            "braindrain.workspace_primer.run_ruler_apply",
+            return_value={"ok": True, "stdout": "", "stderr": "", "command": "x", "returncode": 0},
+        ),
+        patch(
+            "braindrain.workspace_primer.seed_if_enabled",
+            return_value={"ok": True, "enabled": False},
+        ),
+        patch(
+            "braindrain.workspace_primer.verify_prime_install",
+            return_value={"ok": True, "checks": {"dry_run": False}},
+        ),
     ):
         result = prime(path=str(tmp_project_dir), agents=["cursor"], local_only=True)
     assert result["ok"] is True
