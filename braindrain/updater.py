@@ -139,7 +139,17 @@ def _current_branch(repo_root: Path) -> str | None:
 
 
 def _is_dirty(repo_root: Path) -> bool:
-    completed = _run_git(["status", "--porcelain"], cwd=repo_root)
+    completed = _run_git(
+        [
+            "status",
+            "--porcelain",
+            "--",
+            ".",
+            ":(exclude).braindrain",
+            ":(exclude).braindrain/**",
+        ],
+        cwd=repo_root,
+    )
     return bool(completed.stdout.strip())
 
 

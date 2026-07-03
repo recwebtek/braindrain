@@ -83,6 +83,7 @@ tests/*
 !tests/test_workflow_engine.py
 !tests/test_token_benchmark.py
 !tests/test_plan_provenance_stamp.py
+!tests/test_updater.py
 !tests/fixtures/
 !tests/fixtures/token_benchmark/
 !tests/fixtures/token_benchmark/**
