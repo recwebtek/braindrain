@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-
 from scripts.plan_branch_utils import FRONTMATTER_BLOCK_RE, parse_plan_frontmatter
 
 HISTORY_ROW_SCHEMA_VERSION = "1.0"
@@ -188,14 +187,17 @@ def discover_audit_reports(reports_dir: Path) -> list[Path]:
     return [by_date[k] for k in sorted(by_date)]
 
 
+_RISK_STOP_WORDS = frozenset({"or", "and", "the", "a", "plans", "plan"})
+
+
 def normalize_risk(text: str) -> str:
     """Canonicalize top_risks strings for recurrence counting."""
     s = str(text or "").lower()
     s = re.sub(r"\d+", "", s)
     s = re.sub(r"\d{4}-\d{2}-\d{2}", "", s)
-    s = re.sub(r"[@#]", "", s)
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
+    s = re.sub(r"[@#:,.`—–\-()]", " ", s)
+    words = [w for w in re.sub(r"\s+", " ", s).split() if w and w not in _RISK_STOP_WORDS]
+    return " ".join(words)
 
 
 def parse_plan_cards(body: str) -> list[dict[str, Any]]:
