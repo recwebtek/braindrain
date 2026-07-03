@@ -43,6 +43,7 @@ KNOWN_TOP_LEVEL_KEYS = frozenset(
         "planning_auditor",
         "cost_tracking",
         "provenance",
+        "prime",
         "complexity_router",
         "cache",
         "bundles",
@@ -322,6 +323,12 @@ class ProvenanceConfig(_ExtraIgnoreModel):
     subagent_trace: ProvenanceSubagentTrace = Field(default_factory=ProvenanceSubagentTrace)
 
 
+class PrimeConfig(_ExtraIgnoreModel):
+    memory_snapshot: bool = True
+    primed_history_max_lines: int = 50
+    rollback_retention: int = 12
+
+
 class HubConfigSchema(_ExtraIgnoreModel):
     version: str = "1.0"
     project_name: str = "braindrain"
@@ -340,6 +347,7 @@ class HubConfigSchema(_ExtraIgnoreModel):
     planning_auditor: PlanningAuditorConfig = Field(default_factory=PlanningAuditorConfig)
     cost_tracking: CostTrackingConfig = Field(default_factory=CostTrackingConfig)
     provenance: ProvenanceConfig = Field(default_factory=ProvenanceConfig)
+    prime: PrimeConfig = Field(default_factory=PrimeConfig)
     complexity_router: dict[str, Any] = Field(default_factory=dict)
     cache: dict[str, Any] = Field(default_factory=dict)
     bundles: dict[str, Any] = Field(default_factory=dict)

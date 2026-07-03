@@ -21,6 +21,7 @@ from braindrain.workspace_primer import (
     CURSOR_HOOK_TEMPLATES_DIR,
     CURSOR_SKILL_TEMPLATES_DIR,
     MAX_ROLLBACK_SNAPSHOTS,
+    _read_primed_state,
     _resolve_bundle_manifest,
     compact_prime_result_for_mcp,
     create_prime_snapshot,
@@ -30,6 +31,7 @@ from braindrain.workspace_primer import (
     deploy_operational_scripts,
     deploy_subagent_templates,
     prime,
+    restore_prime_snapshot,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -186,6 +188,9 @@ def test_deploy_subagent_templates_marks_default_current(tmp_project_dir: Path) 
 def test_create_prime_snapshot_archives_cursor_and_manifest(tmp_project_dir: Path) -> None:
     (tmp_project_dir / ".cursor" / "agents").mkdir(parents=True, exist_ok=True)
     (tmp_project_dir / ".cursor" / "agents" / "x.md").write_text("x", encoding="utf-8")
+    memory_dir = tmp_project_dir / ".braindrain"
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    (memory_dir / "AGENT_MEMORY.md").write_text("keep me\n", encoding="utf-8")
     snapshot = create_prime_snapshot(
         tmp_project_dir,
         apply_agents=["cursor"],
@@ -198,6 +203,7 @@ def test_create_prime_snapshot_archives_cursor_and_manifest(tmp_project_dir: Pat
     assert manifest_path.is_file()
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert ".cursor" in manifest["ide_dirs"]
+    assert "AGENT_MEMORY.md" in manifest["memory_backups"]
     archive_paths = [Path(a["path"]) for a in manifest["archives"]]
     assert any(p.name == "cursor.tar.gz" for p in archive_paths)
     tar_path = next(p for p in archive_paths if p.name == "cursor.tar.gz")
@@ -246,6 +252,58 @@ def test_prime_result_exposes_rollback_manifest(tmp_project_dir: Path) -> None:
         result = prime(path=str(tmp_project_dir), agents=["cursor"], local_only=True)
     assert result["rollback_manifest_path"]
     assert isinstance(result["rollback_archives"], list)
+    assert result["primed_state"]["schema_version"] == "2.0"
+    assert "memory" in result["primed_state"]
+    primed_state = _read_primed_state(tmp_project_dir)
+    assert primed_state is not None
+    assert primed_state.get("schema_version") == "2.0"
+
+
+def test_prime_preserves_existing_memory_files(tmp_project_dir: Path) -> None:
+    memory_dir = tmp_project_dir / ".braindrain"
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    memory = memory_dir / "AGENT_MEMORY.md"
+    ops = memory_dir / "OPS.md"
+    memory.write_text("existing-memory\n", encoding="utf-8")
+    ops.write_text("existing-ops\n", encoding="utf-8")
+    (tmp_project_dir / ".cursor").mkdir(parents=True, exist_ok=True)
+
+    with (
+        patch(
+            "braindrain.workspace_primer.run_ruler_apply",
+            return_value={"ok": True, "stdout": "", "stderr": "", "command": "x", "returncode": 0},
+        ),
+        patch(
+            "braindrain.workspace_primer.seed_if_enabled",
+            return_value={"ok": True, "enabled": False},
+        ),
+        patch(
+            "braindrain.workspace_primer.verify_prime_install",
+            return_value={"ok": True, "checks": {"dry_run": False}},
+        ),
+    ):
+        result = prime(path=str(tmp_project_dir), agents=["cursor"], local_only=True)
+    assert result["ok"] is True
+    assert memory.read_text(encoding="utf-8") == "existing-memory\n"
+    assert ops.read_text(encoding="utf-8") == "existing-ops\n"
+
+
+def test_restore_prime_snapshot_dry_run_reports_targets(tmp_project_dir: Path) -> None:
+    (tmp_project_dir / ".cursor" / "agents").mkdir(parents=True, exist_ok=True)
+    (tmp_project_dir / ".cursor" / "agents" / "x.md").write_text("x", encoding="utf-8")
+    memory_dir = tmp_project_dir / ".braindrain"
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    (memory_dir / "AGENT_MEMORY.md").write_text("hello\n", encoding="utf-8")
+    snapshot = create_prime_snapshot(
+        tmp_project_dir,
+        apply_agents=["cursor"],
+        all_agents=False,
+        dry_run=False,
+    )
+    assert snapshot["ok"] is True
+    out = restore_prime_snapshot(tmp_project_dir, dry_run=True)
+    assert out["ok"] is True
+    assert "AGENT_MEMORY.md" in out["restored_memory"]
 
 
 def test_prime_restores_cursor_agents_if_ruler_removes_directory(tmp_project_dir: Path) -> None:

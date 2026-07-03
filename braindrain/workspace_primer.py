@@ -11,6 +11,7 @@ import tarfile
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -48,12 +49,167 @@ DEFAULT_MEMORY_FILE = f"{BRAINDRAIN_DIR}/AGENT_MEMORY.md"
 DEFAULT_INDEX_FILE = ".cursor/hooks/state/continual-learning-index.json"
 MAX_ROLLBACK_SNAPSHOTS = 12
 _TEMPLATE_MARKER_PREFIX = "<!-- braindrain-template:"
+PRIMED_SCHEMA_VERSION = "2.0"
+PRIMED_HISTORY_SCHEMA_VERSION = "1.0"
+MEMORY_FILES_WRITE_POLICY = "create_only"
+PROTECTED_MEMORY_FILES = ("AGENT_MEMORY.md", "OPS.md", "SESSION_PROGRESS.md")
+_PRIMED_HISTORY_FILE = f"{BRAINDRAIN_DIR}/primed-history.jsonl"
 _SCRIPT_MARKER_PREFIX = "# braindrain-script:"
 
 # Marker file persisted after the first successful prime.
 _PRIMED_MARKER = f"{BRAINDRAIN_DIR}/primed.json"
 BUNDLES_DIR = Path(__file__).parent.parent / "config" / "bundles"
 DEFAULT_BUNDLE = "core"
+
+
+def _read_prime_settings() -> dict[str, Any]:
+    """Read optional prime settings from hub config with safe defaults."""
+    defaults: dict[str, Any] = {
+        "memory_snapshot": True,
+        "primed_history_max_lines": 50,
+        "rollback_retention": MAX_ROLLBACK_SNAPSHOTS,
+    }
+    cfg_path = _hub_root_from_launcher() / "config" / "hub_config.yaml"
+    if not cfg_path.is_file():
+        return defaults
+    try:
+        raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return defaults
+    if not isinstance(raw, dict):
+        return defaults
+    prime_cfg = raw.get("prime") or {}
+    if not isinstance(prime_cfg, dict):
+        return defaults
+    out = dict(defaults)
+    for key in defaults:
+        if key in prime_cfg:
+            out[key] = prime_cfg[key]
+    return out
+
+
+def _file_sha256(path: Path) -> str:
+    h = sha256()
+    with path.open("rb") as fh:
+        while True:
+            chunk = fh.read(8192)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _build_memory_state(
+    target_dir: Path,
+    prior_state: dict | None,
+    memory_backups: dict[str, str],
+    primed_at: str,
+) -> dict[str, dict[str, Any]]:
+    """Build memory metadata block for primed.json v2."""
+    prior_memory = (prior_state or {}).get("memory") if isinstance(prior_state, dict) else {}
+    if not isinstance(prior_memory, dict):
+        prior_memory = {}
+    memory: dict[str, dict[str, Any]] = {}
+    for fname in PROTECTED_MEMORY_FILES:
+        path = target_dir / BRAINDRAIN_DIR / fname
+        prior_entry = prior_memory.get(fname) if isinstance(prior_memory, dict) else {}
+        if not isinstance(prior_entry, dict):
+            prior_entry = {}
+        exists = path.exists()
+        entry: dict[str, Any] = {
+            "exists": exists,
+            "bytes": 0,
+            "sha256": "",
+            "first_seen_at": prior_entry.get("first_seen_at") or None,
+            "last_modified_at": None,
+            "last_backup": memory_backups.get(fname, ""),
+        }
+        if exists:
+            stat = path.stat()
+            entry["bytes"] = stat.st_size
+            entry["sha256"] = _file_sha256(path)
+            entry["last_modified_at"] = datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat()
+            if not entry["first_seen_at"] and stat.st_size > 0:
+                entry["first_seen_at"] = primed_at
+        memory[fname] = entry
+    return memory
+
+
+def _summarize_deploy_block(block: dict | None) -> dict[str, Any]:
+    """Aggregate created/updated/skipped counts for a deployment block."""
+    if not isinstance(block, dict):
+        return {"created": 0, "updated": 0, "skipped_existing": 0}
+    deployed = block.get("deployed") or {}
+    if not isinstance(deployed, dict):
+        return {"created": 0, "updated": 0, "skipped_existing": 0}
+    created = 0
+    updated = 0
+    skipped = 0
+    for meta in deployed.values():
+        if not isinstance(meta, dict):
+            continue
+        action = meta.get("action")
+        if action in ("created", "created_from_empty"):
+            created += 1
+        elif action == "updated":
+            updated += 1
+        elif action == "skipped_existing":
+            skipped += 1
+    return {
+        "created": created,
+        "updated": updated,
+        "skipped_existing": skipped,
+    }
+
+
+def _collect_notable_actions(result: dict, *, cap: int = 20) -> list[dict[str, str]]:
+    """Collect notable skip/update entries from deployment sections."""
+    notable: list[dict[str, str]] = []
+    for section_name in (
+        "subagents",
+        "templates",
+        "cursor_hooks",
+        "cursor_skills",
+        "cursor_commands",
+    ):
+        section = result.get(section_name) or {}
+        if not isinstance(section, dict):
+            continue
+        deployed = section.get("deployed") or {}
+        if not isinstance(deployed, dict):
+            continue
+        for path, meta in deployed.items():
+            if not isinstance(meta, dict):
+                continue
+            action = str(meta.get("action", ""))
+            if action not in {"skipped_existing", "updated"}:
+                continue
+            item = {"path": str(path), "action": action}
+            classification = meta.get("classification")
+            if isinstance(classification, str) and classification:
+                item["classification"] = classification
+            notable.append(item)
+            if len(notable) >= cap:
+                return notable
+    return notable
+
+
+def _append_primed_history(
+    target_dir: Path,
+    row: dict[str, Any],
+    *,
+    max_lines: int = 50,
+) -> None:
+    """Append a JSONL history row and trim to most recent lines."""
+    path = target_dir / _PRIMED_HISTORY_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines: list[str] = []
+    if path.exists():
+        lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    lines.append(json.dumps(row, separators=(",", ":")))
+    if max_lines > 0 and len(lines) > max_lines:
+        lines = lines[-max_lines:]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _get_launcher_path() -> str:
@@ -159,29 +315,83 @@ def _read_primed_state(target_dir: Path) -> dict | None:
 
 def _write_primed_state(
     target_dir: Path,
-    agents: list[str],
+    result: dict[str, Any],
     *,
-    bundle: str = DEFAULT_BUNDLE,
-    bundle_version: str = "1",
-    braindrain_hub_root: str | None = None,
-) -> None:
-    """Persist primed.json with timestamp and resolved agents."""
+    prior_state: dict | None = None,
+    memory_backups: dict[str, str] | None = None,
+    history_max_lines: int = 50,
+) -> dict[str, Any]:
+    """Persist primed.json schema v2 and append primed-history.jsonl."""
     marker = target_dir / _PRIMED_MARKER
     marker.parent.mkdir(parents=True, exist_ok=True)
-    hub_root = braindrain_hub_root or str(_hub_root_from_launcher())
-    marker.write_text(
-        json.dumps(
-            {
-                "primed_at": datetime.now(tz=UTC).isoformat(),
-                "agents": agents,
-                "bundle": bundle,
-                "bundle_version": bundle_version,
-                "braindrain_hub_root": hub_root,
+    prior = prior_state if isinstance(prior_state, dict) else {}
+    primed_at = datetime.now(tz=UTC).isoformat()
+    first_primed_at = prior.get("first_primed_at") or prior.get("primed_at") or primed_at
+    backups = memory_backups or {}
+    bundle_name = str(result.get("bundle", DEFAULT_BUNDLE))
+    bundle_version = str(result.get("bundle_manifest_version", "1"))
+    rollback = result.get("rollback_snapshot") or {}
+    scriptlib = result.get("scriptlib") or {}
+
+    current_state: dict[str, Any] = {
+        "schema_version": PRIMED_SCHEMA_VERSION,
+        "first_primed_at": first_primed_at,
+        "primed_at": primed_at,
+        "braindrain_hub_root": str(_hub_root_from_launcher()),
+        "agents": result.get("resolved_agents") or ["all"],
+        "bundle": bundle_name,
+        "bundle_version": bundle_version,
+        "detect_method": result.get("detect_method"),
+        "options": {
+            "sync_templates": bool(result.get("sync_templates", False)),
+            "sync_subagents": bool(result.get("sync_subagents", False)),
+            "all_agents": bool(result.get("all_agents", False)),
+            "local_only": bool(result.get("local_only", True)),
+            "dry_run": bool(result.get("dry_run", False)),
+            "patch_user_cursor_mcp": bool(result.get("patch_user_cursor_mcp", False)),
+        },
+        "memory": _build_memory_state(target_dir, prior, backups, primed_at),
+        "scriptlib": {
+            "enabled": bool(scriptlib.get("enabled", False)),
+            "last_seed_at": scriptlib.get("seeded_at") or scriptlib.get("timestamp"),
+            "guidance_updated_at": scriptlib.get("guidance_updated_at"),
+        },
+        "rollback": {
+            "latest_snapshot_dir": rollback.get("snapshot_dir", ""),
+            "latest_manifest": rollback.get("manifest_path", ""),
+            "retention_max": rollback.get("retention_max", MAX_ROLLBACK_SNAPSHOTS),
+        },
+        "last_run": {
+            "is_first_prime": bool(result.get("is_first_prime", False)),
+            "ok": bool(result.get("ok", False)),
+            "counts": {
+                "templates": _summarize_deploy_block(result.get("templates")),
+                "subagents": _summarize_deploy_block(result.get("subagents")),
+                "cursor_hooks": _summarize_deploy_block(result.get("cursor_hooks")),
+                "cursor_commands": _summarize_deploy_block(result.get("cursor_commands")),
+                "cursor_skills": _summarize_deploy_block(result.get("cursor_skills")),
             },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+            "notable": _collect_notable_actions(result),
+        },
+    }
+    marker.write_text(json.dumps(current_state, indent=2) + "\n", encoding="utf-8")
+
+    history_row = {
+        "schema_version": PRIMED_HISTORY_SCHEMA_VERSION,
+        "timestamp": primed_at,
+        "bundle": bundle_name,
+        "bundle_version": bundle_version,
+        "agents": current_state["agents"],
+        "options": current_state["options"],
+        "rollback_snapshot_dir": rollback.get("snapshot_dir", ""),
+        "memory_backups": backups,
+        "deploy_summary": current_state["last_run"],
+        "ruler_ok": bool((result.get("ruler") or {}).get("ok")),
+        "verification_ok": bool((result.get("verification") or {}).get("ok")),
+        "prior_bundle": prior.get("bundle"),
+    }
+    _append_primed_history(target_dir, history_row, max_lines=history_max_lines)
+    return current_state
 
 
 def _load_bundle_manifest(bundle: str) -> dict:
@@ -1340,12 +1550,29 @@ def _prune_old_snapshots(rollback_root: Path, *, keep: int = MAX_ROLLBACK_SNAPSH
     return removed
 
 
+def _snapshot_protected_memory(snapshot_dir: Path, target_dir: Path) -> dict[str, str]:
+    """Snapshot protected memory files into rollback/<ts>/memory/."""
+    memory_dir = snapshot_dir / "memory"
+    backups: dict[str, str] = {}
+    for fname in PROTECTED_MEMORY_FILES:
+        src = target_dir / BRAINDRAIN_DIR / fname
+        if not src.exists() or src.stat().st_size == 0:
+            continue
+        memory_dir.mkdir(parents=True, exist_ok=True)
+        dst = memory_dir / fname
+        shutil.copy2(src, dst)
+        backups[fname] = str(dst.relative_to(target_dir))
+    return backups
+
+
 def create_prime_snapshot(
     target_dir: Path,
     *,
     apply_agents: list[str] | None,
     all_agents: bool,
     dry_run: bool = False,
+    memory_snapshot: bool = True,
+    retention_max: int = MAX_ROLLBACK_SNAPSHOTS,
 ) -> dict[str, object]:
     """Create compressed rollback snapshot(s) for IDE dirs + manifest."""
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -1368,9 +1595,14 @@ def create_prime_snapshot(
             "snapshot_dir": str(snapshot_dir),
             "ide_dirs": [str(p.relative_to(target_dir)) for p in ide_dirs],
             "touched_paths": touched,
+            "memory_backups": {},
+            "retention_max": retention_max,
         }
 
     snapshot_dir.mkdir(parents=True, exist_ok=True)
+    memory_backups: dict[str, str] = {}
+    if memory_snapshot:
+        memory_backups = _snapshot_protected_memory(snapshot_dir, target_dir)
     archives: list[dict[str, str]] = []
     for d in ide_dirs:
         archive_name = f"{d.name.lstrip('.')}.tar.gz"
@@ -1389,17 +1621,21 @@ def create_prime_snapshot(
         "ide_dirs": [str(p.relative_to(target_dir)) for p in ide_dirs],
         "archives": archives,
         "touched_paths": touched,
-        "retention_max": MAX_ROLLBACK_SNAPSHOTS,
+        "retention_max": retention_max,
+        "memory_backups": memory_backups,
+        "protected_files": list(PROTECTED_MEMORY_FILES),
     }
     manifest_path = snapshot_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
-    pruned = _prune_old_snapshots(rollback_root, keep=MAX_ROLLBACK_SNAPSHOTS)
+    pruned = _prune_old_snapshots(rollback_root, keep=retention_max)
     return {
         "ok": True,
         "snapshot_dir": str(snapshot_dir),
         "manifest_path": str(manifest_path),
         "archives": archives,
+        "memory_backups": memory_backups,
+        "retention_max": retention_max,
         "archive_count": len(archives),
         "pruned": pruned,
     }
@@ -1463,6 +1699,143 @@ def _restore_cursor_agents_from_snapshot(
     if restored == 0 and not result.get("reason"):
         result["reason"] = "restore_noop"
     return result
+
+
+def _safe_extract_tar_to_target(
+    archive_path: Path, target_dir: Path, *, dry_run: bool = False
+) -> dict[str, Any]:
+    """Extract archive members safely into target directory."""
+    extracted = 0
+    skipped = 0
+    with tarfile.open(archive_path, "r:gz") as tf:
+        for member in tf.getmembers():
+            if not member.isfile():
+                continue
+            rel_name = Path(member.name)
+            dest = (target_dir / rel_name).resolve()
+            try:
+                dest.relative_to(target_dir.resolve())
+            except ValueError:
+                skipped += 1
+                continue
+            if dry_run:
+                extracted += 1
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            src = tf.extractfile(member)
+            if src is None:
+                skipped += 1
+                continue
+            dest.write_bytes(src.read())
+            extracted += 1
+    return {"ok": True, "extracted_files": extracted, "skipped_files": skipped}
+
+
+def list_prime_snapshots(target_dir: Path) -> list[dict[str, Any]]:
+    """Return available rollback snapshots with manifest metadata."""
+    rollback_root = target_dir / BRAINDRAIN_DIR / "rollback"
+    if not rollback_root.exists():
+        return []
+    out: list[dict[str, Any]] = []
+    for path in sorted(
+        [p for p in rollback_root.iterdir() if p.is_dir()], key=lambda p: p.name, reverse=True
+    ):
+        manifest_path = path / "manifest.json"
+        manifest: dict[str, Any] = {}
+        if manifest_path.is_file():
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except Exception:
+                manifest = {}
+        out.append(
+            {
+                "snapshot_id": path.name,
+                "snapshot_dir": str(path),
+                "manifest_path": str(manifest_path) if manifest_path.is_file() else "",
+                "archives": manifest.get("archives", []),
+                "memory_backups": manifest.get("memory_backups", {}),
+                "created_at": manifest.get("timestamp", path.name),
+            }
+        )
+    return out
+
+
+def restore_prime_snapshot(
+    target_dir: Path,
+    snapshot_id: str | None = None,
+    *,
+    restore_memory: bool = True,
+    restore_cursor: bool = True,
+    restore_codex: bool = False,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Restore workspace snapshot (memory files and selected IDE archives)."""
+    snapshots = list_prime_snapshots(target_dir)
+    if not snapshots:
+        return {"ok": False, "error": "No rollback snapshots found."}
+    selected = None
+    if snapshot_id:
+        for item in snapshots:
+            if item.get("snapshot_id") == snapshot_id:
+                selected = item
+                break
+        if selected is None:
+            return {"ok": False, "error": f"Snapshot not found: {snapshot_id}"}
+    else:
+        selected = snapshots[0]
+    snapshot_dir = Path(str(selected["snapshot_dir"]))
+    manifest_path = snapshot_dir / "manifest.json"
+    if not manifest_path.is_file():
+        return {"ok": False, "error": f"Snapshot manifest missing: {manifest_path}"}
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    restored_memory: dict[str, str] = {}
+    memory_backups = manifest.get("memory_backups") or {}
+    if restore_memory and isinstance(memory_backups, dict):
+        for fname, rel in memory_backups.items():
+            if not isinstance(fname, str) or not isinstance(rel, str):
+                continue
+            src = target_dir / rel
+            if not src.is_file():
+                continue
+            dest = target_dir / BRAINDRAIN_DIR / fname
+            try:
+                dest.resolve().relative_to((target_dir / BRAINDRAIN_DIR).resolve())
+            except ValueError:
+                continue
+            restored_memory[fname] = str(dest.relative_to(target_dir))
+            if dry_run:
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+
+    archive_results: dict[str, dict[str, Any]] = {}
+    for archive in manifest.get("archives", []):
+        if not isinstance(archive, dict):
+            continue
+        name = archive.get("name")
+        if name == "cursor.tar.gz" and not restore_cursor:
+            continue
+        if name == "codex.tar.gz" and not restore_codex:
+            continue
+        if name not in ("cursor.tar.gz", "codex.tar.gz"):
+            continue
+        archive_path = snapshot_dir / str(name)
+        if not archive_path.is_file():
+            archive_results[str(name)] = {"ok": False, "error": "archive_missing"}
+            continue
+        archive_results[str(name)] = _safe_extract_tar_to_target(
+            archive_path, target_dir, dry_run=dry_run
+        )
+
+    return {
+        "ok": True,
+        "snapshot_id": selected["snapshot_id"],
+        "snapshot_dir": str(snapshot_dir),
+        "dry_run": dry_run,
+        "restored_memory": restored_memory,
+        "restored_archives": archive_results,
+    }
 
 
 def verify_prime_install(target_dir: Path, bundle_manifest: dict) -> dict:
@@ -1591,6 +1964,10 @@ def compact_prime_result_for_mcp(
             if block_key == "cursor_skills":
                 slim_block["skill_ids"] = block.get("skill_ids")
             out[block_key] = slim_block
+    primed_state = result.get("primed_state") or {}
+    if isinstance(primed_state, dict):
+        out["primed_schema_version"] = primed_state.get("schema_version")
+        out["latest_rollback"] = (primed_state.get("rollback") or {}).get("latest_snapshot_dir")
     out["subagents"] = result.get("subagents")
     out["codex_subagent_config"] = result.get("codex_subagent_config")
     out["_mcp_response_compact"] = True
@@ -1652,6 +2029,12 @@ def sync_cursor_rules_from_ruler(
     rules_dir.mkdir(parents=True, exist_ok=True)
 
     # Always mirror full RULES.md into braindrain.mdc.
+    existing_bd = bd_path.read_text(encoding="utf-8") if bd_path.is_file() else None
+    if existing_bd is not None and existing_bd != mdc_full:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        backup_path = bd_path.with_name(f"{bd_path.name}.bak.{stamp}")
+        backup_path.write_text(existing_bd, encoding="utf-8")
+        result["braindrain.mdc_backup"] = str(backup_path)
     bd_path.write_text(mdc_full, encoding="utf-8")
     result["braindrain.mdc"] = "written"
 
@@ -1772,6 +2155,8 @@ def initialize_project_memory(target_dir: Path, dry_run: bool = False) -> dict:
     """
     Initialize durable project memory artifacts used by continual learning.
 
+    Write policy: create-only for durable memory markdown files.
+
     Artifacts written under .braindrain/ (gitignored):
     - .braindrain/AGENT_MEMORY.md  (high-signal durable memory)
     - .cursor/hooks/state/continual-learning-index.json (incremental transcript index)
@@ -1831,6 +2216,12 @@ Machine-local operational notes for this workspace. Do not commit `.braindrain/`
             "created": False,
             "exists": (target_dir / BRAINDRAIN_DIR / "OPS.md").exists(),
         },
+        "session_progress_file": {
+            "path": str(target_dir / BRAINDRAIN_DIR / "SESSION_PROGRESS.md"),
+            "created": False,
+            "exists": (target_dir / BRAINDRAIN_DIR / "SESSION_PROGRESS.md").exists(),
+            "write_policy": MEMORY_FILES_WRITE_POLICY,
+        },
     }
 
     if dry_run:
@@ -1840,6 +2231,7 @@ Machine-local operational notes for this workspace. Do not commit `.braindrain/`
             results["index_file"]["would_create"] = True
         if not results["ops_file"]["exists"]:
             results["ops_file"]["would_create"] = True
+        results["session_progress_file"]["would_create"] = False
         return {"ok": True, "dry_run": True, "artifacts": results}
 
     # One-time migration from legacy .devdocs/ to .braindrain/.
@@ -1862,18 +2254,17 @@ Machine-local operational notes for this workspace. Do not commit `.braindrain/`
         ops_file.write_text(ops_template, encoding="utf-8")
         results["ops_file"]["created"] = True
         results["ops_file"]["exists"] = True
-    else:
-        # Validate index JSON and preserve existing content.
-        try:
-            json.loads(index_file.read_text(encoding="utf-8"))
-            results["index_file"]["valid_json"] = True
-        except json.JSONDecodeError:
-            results["index_file"]["valid_json"] = False
-            return {
-                "ok": False,
-                "error": f"Invalid JSON in index file: {index_file}",
-                "artifacts": results,
-            }
+    # Validate index JSON and preserve existing content.
+    try:
+        json.loads(index_file.read_text(encoding="utf-8"))
+        results["index_file"]["valid_json"] = True
+    except json.JSONDecodeError:
+        results["index_file"]["valid_json"] = False
+        return {
+            "ok": False,
+            "error": f"Invalid JSON in index file: {index_file}",
+            "artifacts": results,
+        }
 
     return {"ok": True, "dry_run": False, "artifacts": results, "migration": migration}
 
@@ -1951,6 +2342,10 @@ def prime(
         return {"ok": False, "error": str(e), "bundle": bundle}
 
     codex_targets = codex_agent_targets or [".codex/agents"]
+    prime_settings = _read_prime_settings()
+    memory_snapshot_enabled = bool(prime_settings.get("memory_snapshot", True))
+    rollback_retention = int(prime_settings.get("rollback_retention", MAX_ROLLBACK_SNAPSHOTS))
+    history_max_lines = int(prime_settings.get("primed_history_max_lines", 50))
 
     # Step 1: deploy templates.
     cursor_agents_preexisting = (target_dir / ".cursor" / "agents").is_dir()
@@ -1959,6 +2354,8 @@ def prime(
         apply_agents=apply_agents,
         all_agents=all_agents,
         dry_run=dry_run,
+        memory_snapshot=memory_snapshot_enabled,
+        retention_max=rollback_retention,
     )
     if not dry_run:
         template_results = deploy_templates(
@@ -2129,16 +2526,6 @@ def prime(
             "guidance_enabled": False,
         }
 
-    # Step 9: persist primed marker (skip on dry_run).
-    if not dry_run and ruler_result.get("ok"):
-        _write_primed_state(
-            target_dir,
-            apply_agents or ["all"],
-            bundle=bundle_manifest.get("name", bundle),
-            bundle_version=str(bundle_manifest.get("version", "1")),
-            braindrain_hub_root=str(_hub_root_from_launcher()),
-        )
-
     verification = (
         verify_prime_install(target_dir, bundle_manifest)
         if not dry_run
@@ -2148,8 +2535,9 @@ def prime(
         }
     )
     ok = bool(ruler_result["ok"] and memory_init.get("ok", False) and verification.get("ok", False))
+    primed_state: dict[str, Any] = {}
 
-    return {
+    result = {
         "ok": ok,
         "target": str(target_dir),
         "launcher_path": launcher_path,
@@ -2158,6 +2546,7 @@ def prime(
         "sync_subagents": sync_subagents,
         "all_agents": all_agents,
         "local_only": local_only,
+        "patch_user_cursor_mcp": patch_user_cursor_mcp,
         "is_first_prime": is_first_prime,
         "resolved_agents": apply_agents,
         "bundle": bundle_manifest.get("name", bundle),
@@ -2252,3 +2641,16 @@ def prime(
             ]
         ),
     }
+
+    # Step 9: persist primed marker and history only when all checks pass.
+    if not dry_run and ok:
+        primed_state = _write_primed_state(
+            target_dir,
+            result,
+            prior_state=prior_state,
+            memory_backups=(snapshot.get("memory_backups") or {}),
+            history_max_lines=history_max_lines,
+        )
+    result["primed_state"] = primed_state
+
+    return result

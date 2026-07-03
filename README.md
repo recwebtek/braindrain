@@ -634,8 +634,10 @@ braindrain/
   Existing files are create-only by default; set `sync_subagents=true` to update with backups. `.cursor/` is gitignored at repo root; do not commit generated agent/skill files—edit templates and re-run `prime_workspace`.
 - **Codex config merge**: `prime_workspace()` appends/updates a managed `BRAINDRAIN SUBAGENTS` block in `.codex/config.toml` only when allowed by policy (`sync_subagents=true` for existing files). Existing MCP server entries remain intact.
 - **Project memory artifacts**: initialized by `prime_workspace()` (or `init_project_memory()`) and kept separate from generated protocol files:
-  - `.braindrain/AGENT_MEMORY.md` for high-signal durable memory (legacy `.devdocs/` / `.devdocs/AGENT_MEMORY.md` may be migrated on first run)
+  - `.braindrain/AGENT_MEMORY.md`, `.braindrain/OPS.md`, and `.braindrain/SESSION_PROGRESS.md` are **create-only** on prime/re-prime (existing content is preserved)
   - `.cursor/hooks/state/continual-learning-index.json` for incremental transcript indexing
+  - prime now snapshots protected memory files into `.braindrain/rollback/<ts>/memory/` and records metadata in `.braindrain/primed.json` (`schema_version: 2.0`) plus `.braindrain/primed-history.jsonl`
+  - use `list_prime_snapshots(path=".")` and `restore_prime_snapshot(path=".", snapshot_id=None, restore_memory=true, restore_cursor=true)` to recover from rollback snapshots
   - `AGENTS.md` remains generator-owned protocol text and should not be used as memory storage
 - **Scriptlib**: disabled by default. When enabled for a workspace, braindrain seeds project-local `.scriptlib/`, harvests reusable scripts recursively, and injects librarian-first guidance into generated agent rule surfaces for that workspace only.
 - **Shared personal scriptlib**: promoted scripts can also live in `~/.braindrain/scriptlib` as a curated machine-level catalog. Project-local harvest never auto-publishes into the shared catalog.
