@@ -38,6 +38,12 @@ OPERATIONAL_SCRIPT_FILES: dict[str, list[str]] = {
         "daily_plan_audit.py",
     ],
     "plan_provenance": ["plan_provenance_stamp.py", "plan_branch_utils.py"],
+    "plan_audit_history": [
+        "render_plan_audit_history.py",
+        "backfill_plan_audit_history.py",
+        "plan_branch_utils.py",
+        "daily_plan_audit.py",
+    ],
 }
 
 # Canonical project-local docs directory (gitignored; never committed).

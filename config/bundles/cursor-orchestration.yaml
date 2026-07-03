@@ -17,6 +17,7 @@ operational_scripts:
   - plan_build_guard
   - plan_meta_closeout
   - plan_provenance
+  - plan_audit_history
 # Subagents: all config/templates/agents/*.md (incl. daily-plan-auditor) deploy to .cursor/agents/ on prime.
 capability_profiles:
   default_role: coordinator
