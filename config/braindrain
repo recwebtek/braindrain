@@ -102,4 +102,40 @@ if [[ ! -x "$VENV_PYTHON" ]]; then
   fi
 fi
 
+# Notify-only update awareness (never blocks startup or pulls automatically).
+if [[ -x "$VENV_PYTHON" ]]; then
+  _bd_update_out="$("$VENV_PYTHON" - <<'PY' "$REPO" 2>/dev/null || true
+import subprocess
+import sys
+from pathlib import Path
+
+from braindrain.updater import maybe_background_check, startup_notify_message
+
+root = Path(sys.argv[1])
+if maybe_background_check(root):
+    subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "braindrain.updater",
+            "check",
+            "--repo-root",
+            str(root),
+            "--quiet",
+        ],
+        cwd=root,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+message = startup_notify_message(root)
+if message:
+    print(message)
+PY
+)" || true
+  if [[ -n "$_bd_update_out" ]]; then
+    echo "$_bd_update_out" >&2
+  fi
+fi
+
 exec "$VENV_PYTHON" -m braindrain.server stdio

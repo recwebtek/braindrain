@@ -472,10 +472,26 @@ cd braindrain
 
 Each device runs its own environment probe and gets its own `env_context` — correct Python paths, correct IDE config locations, correct installed tools for that machine. No shared state between devices.
 
-To pull updates:
+### Updating
+
+Repo-clone installs can check and apply updates without hosting braindrain online:
 
 ```bash
-cd braindrain && git pull && (command -v uv >/dev/null && uv sync || .venv/bin/pip install -e .)
+# Check only (exit 10 when updates are available)
+./scripts/update_braindrain.sh check
+
+# Fast-forward pull when the clone is clean (ff-only)
+./scripts/update_braindrain.sh apply
+```
+
+From an agent session you can also call `check_hub_update()` (notify-only fetch) or `apply_hub_update()` (pull + dependency sync). **After `apply`, reconnect or restart the braindrain MCP connection** in your IDE so the host loads new code and tool schemas.
+
+The launcher (`config/braindrain`) runs a throttled background check at most once per 24h and prints a stderr nudge when `.braindrain/update-state.json` shows commits behind `origin/main`. Automatic paths never pull without an explicit `apply`.
+
+Manual fallback:
+
+```bash
+cd braindrain && git pull --ff-only && (command -v uv >/dev/null && uv sync || .venv/bin/pip install -r requirements.txt)
 ```
 
 ---

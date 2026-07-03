@@ -27,6 +27,8 @@ _NATIVE_TOKEN_WEIGHT: dict[str, str] = {
     "poll_token_dashboard": "negligible",
     "poll_plan_board": "negligible",
     "prime_workspace": "medium",
+    "check_hub_update": "low",
+    "apply_hub_update": "medium",
     "run_workflow": "medium",
     "plan_workflow": "low",
 }
