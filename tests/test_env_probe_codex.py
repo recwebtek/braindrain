@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from braindrain.env_probe import probe_app_configs
 from scripts.install import configure_mcp
+
+from braindrain.env_probe import probe_app_configs
 
 _ask_selection = configure_mcp._ask_selection
 _build_targets = configure_mcp._build_targets

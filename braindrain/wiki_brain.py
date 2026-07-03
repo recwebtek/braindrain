@@ -82,6 +82,7 @@ class WikiBrain:
         self.prune_threshold = prune_threshold
         self.consolidation_similarity = consolidation_similarity
         self._fts_available = True
+        self._power_available: bool | None = None
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
@@ -90,6 +91,17 @@ class WikiBrain:
         # Enable WAL mode for better write performance
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
+
+        if self._power_available is None:
+            try:
+                conn.execute("SELECT POWER(2, 3)")
+                self._power_available = True
+            except sqlite3.OperationalError:
+                self._power_available = False
+
+        if not self._power_available:
+            conn.create_function("POWER", 2, math.pow)
+
         return conn
 
     def _init_schema(self) -> None:
@@ -327,9 +339,7 @@ class WikiBrain:
                 ).fetchall()
             else:
                 base_clauses = [clause.replace("r.", "") for clause in clauses]
-                base_where = (
-                    f"WHERE {' AND '.join(base_clauses)}" if base_clauses else ""
-                )
+                base_where = f"WHERE {' AND '.join(base_clauses)}" if base_clauses else ""
                 rows = conn.execute(
                     f"""
                     SELECT *
@@ -380,14 +390,10 @@ class WikiBrain:
         ranked.sort(key=lambda item: item["score"], reverse=True)
         top = ranked[:limit]
         # Batch update access timestamps to avoid N+1 connection overhead
-        self._mark_accessed_batch(
-            [item["record"]["record_id"] for item in top], now=now
-        )
+        self._mark_accessed_batch([item["record"]["record_id"] for item in top], now=now)
         return top
 
-    def review_playbook(
-        self, *, query: str = "", limit: int = 10
-    ) -> list[dict[str, Any]]:
+    def review_playbook(self, *, query: str = "", limit: int = 10) -> list[dict[str, Any]]:
         records = self.query_records(query=query, record_class="lesson", limit=limit)
         return [record.to_dict() for record in records]
 
@@ -428,43 +434,45 @@ class WikiBrain:
         return None
 
     def decay_records(self, *, now: float | None = None) -> dict[str, Any]:
+        """Apply importance decay to active records using exponential half-life."""
         current = now or time.time()
-        updated = 0
+        if self.decay_half_life_days <= 0:
+            with self._connect() as conn:
+                cursor = conn.execute(
+                    "UPDATE brain_records SET updated_at = ? WHERE status = 'active'",
+                    (current,),
+                )
+                return {"updated_records": cursor.rowcount}
+
         with self._connect() as conn:
-            rows = conn.execute(
+            cursor = conn.execute(
                 """
-                SELECT record_id, importance, updated_at, created_at
-                FROM brain_records
+                UPDATE brain_records
+                SET
+                    importance = importance * POWER(
+                        0.5,
+                        (MAX(0.0, (? - COALESCE(NULLIF(updated_at, 0), created_at))) / 86400.0) / ?
+                    ),
+                    updated_at = ?
                 WHERE status = 'active'
-                """
-            ).fetchall()
-            for row in rows:
-                anchor = float(row["updated_at"] or row["created_at"])
-                decayed = float(row["importance"]) * self._half_life(
-                    anchor, current, self.decay_half_life_days
-                )
-                conn.execute(
-                    "UPDATE brain_records SET importance = ?, updated_at = ? WHERE record_id = ?",
-                    (decayed, current, row["record_id"]),
-                )
-                updated += 1
-        return {"updated_records": updated}
+                """,
+                (current, self.decay_half_life_days, current),
+            )
+            return {"updated_records": cursor.rowcount}
 
     def forget_below_threshold(self) -> dict[str, Any]:
+        """Mark records below the prune threshold as forgotten."""
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT record_id FROM brain_records
+                UPDATE brain_records
+                SET status = 'forgotten'
                 WHERE importance < ? AND status = 'active'
+                RETURNING record_id
                 """,
                 (self.prune_threshold,),
             ).fetchall()
             ids = [row["record_id"] for row in rows]
-            if ids:
-                conn.executemany(
-                    "UPDATE brain_records SET status = 'forgotten' WHERE record_id = ?",
-                    [(record_id,) for record_id in ids],
-                )
         return {"forgotten_records": ids}
 
     def record_metric(
@@ -524,9 +532,7 @@ class WikiBrain:
         """Mark a single record as accessed (lightweight)."""
         self._mark_accessed_batch([record_id], now=now)
 
-    def _mark_accessed_batch(
-        self, record_ids: list[str], *, now: float | None = None
-    ) -> None:
+    def _mark_accessed_batch(self, record_ids: list[str], *, now: float | None = None) -> None:
         """Mark multiple records as accessed in a single transaction (~40x faster for batches)."""
         if not record_ids:
             return

@@ -38,7 +38,7 @@ _prepend_path() {
 }
 _prepend_path
 VENV_PYTHON="$REPO/.venv/bin/python"
-REQUIREMENTS_FILE="$REPO/requirements.txt"
+PYPROJECT_FILE="$REPO/pyproject.toml"
 
 _choose_python() {
   local candidates=("$@")
@@ -85,12 +85,20 @@ if [[ ! -x "$VENV_PYTHON" ]]; then
     exit 1
   fi
   "$BOOTSTRAP_PYTHON" -m venv "$REPO/.venv" || exit 1
-  if [[ -f "$REQUIREMENTS_FILE" ]]; then
-    "$REPO/.venv/bin/pip" install -r "$REQUIREMENTS_FILE" || {
-      echo "[braindrain] Failed to install Python dependencies." >&2
-      echo "[braindrain] Fix: run ./install.sh (or .venv/bin/pip install -r requirements.txt)." >&2
-      exit 1
-    }
+  if [[ -f "$PYPROJECT_FILE" ]]; then
+    if command -v uv >/dev/null 2>&1; then
+      (cd "$REPO" && uv sync) || {
+        echo "[braindrain] Failed to install Python dependencies (uv sync)." >&2
+        echo "[braindrain] Fix: run ./install.sh" >&2
+        exit 1
+      }
+    else
+      "$REPO/.venv/bin/pip" install -e "$REPO" || {
+        echo "[braindrain] Failed to install Python dependencies." >&2
+        echo "[braindrain] Fix: run ./install.sh (or .venv/bin/pip install -e .)." >&2
+        exit 1
+      }
+    fi
   fi
 fi
 

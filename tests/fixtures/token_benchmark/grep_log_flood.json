@@ -1,0 +1,12 @@
+{
+  "id": "grep_log_flood",
+  "description": "Agent receives a multi-KB shell/grep dump that hub-on routes through output sandbox.",
+  "steps": [
+    {
+      "type": "large_output",
+      "source": "shell:grep",
+      "line": "src/module.py:42: neutral benchmark log line for token replay\n",
+      "repeat": 900
+    }
+  ]
+}

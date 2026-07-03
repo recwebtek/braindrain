@@ -267,7 +267,9 @@ class SessionStore:
                 ),
             )
 
-    def finalize_session(self, session_id: str, *, timestamp: float | None = None) -> SessionSummary | None:
+    def finalize_session(
+        self, session_id: str, *, timestamp: float | None = None
+    ) -> SessionSummary | None:
         summary = self.get_session_summary(session_id=session_id)
         if summary is None:
             return None
@@ -372,7 +374,9 @@ class SessionStore:
                 (lesson_id, episode_id),
             )
 
-    def list_episodes(self, *, session_id: str | None = None, limit: int = 20) -> list[EpisodeRecord]:
+    def list_episodes(
+        self, *, session_id: str | None = None, limit: int = 20
+    ) -> list[EpisodeRecord]:
         with self._connect() as conn:
             if session_id:
                 rows = conn.execute(
@@ -409,8 +413,12 @@ class SessionStore:
             open_todos=json.loads(row["open_todos"] or "[]") if "open_todos" in keys else [],
             token_total=int(row["token_total"] or 0),
             updated_at=float(row["updated_at"]),
-            context_index_handle=row["context_index_handle"] if "context_index_handle" in keys else None,
-            compact_package_json=row["compact_package_json"] if "compact_package_json" in keys else None,
+            context_index_handle=row["context_index_handle"]
+            if "context_index_handle" in keys
+            else None,
+            compact_package_json=row["compact_package_json"]
+            if "compact_package_json" in keys
+            else None,
         )
 
     def _row_to_episode(self, row: sqlite3.Row) -> EpisodeRecord:

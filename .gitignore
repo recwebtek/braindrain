@@ -1,9 +1,13 @@
 .DS_Store
 __pycache__/
+*.egg-info/
 *.pyc
 *.pyo
 *.pyd
 .Python
+*.egg-info/
+dist/
+build/
 
 # Virtualenvs (any depth)
 .venv/
@@ -55,15 +59,34 @@ CRUSH.md
 
 # Tests are dev-only (not needed on consumer installs)
 tests/*
+!tests/conftest.py
 !tests/test_workspace_primer_hooks.py
 !tests/test_scriptlib.py
 !tests/test_env_probe_codex.py
 !tests/test_plan_auditor_master.py
+!tests/test_plan_build_guard.py
+!tests/test_plan_meta_closeout.py
 !tests/test_telemetry_observer_bridge.py
 !tests/test_route_output_records_savings.py
 !tests/test_token_checkpoints.py
 !tests/test_exec_path.py
 !tests/test_wiki_brain_contradiction.py
+!tests/test_wiki_brain_decay.py
+!tests/test_dream_weights.py
+!tests/test_config_schema.py
+!tests/test_macos_host_idle.py
+!tests/test_dream_trigger.py
+!tests/test_telemetry_sanitization.py
+!tests/test_mcp_tool_schemas.py
+!tests/test_mcp_apps.py
+!tests/test_mcp_catalog.py
+!tests/test_workflow_engine.py
+!tests/test_token_benchmark.py
+!tests/fixtures/
+!tests/fixtures/token_benchmark/
+!tests/fixtures/token_benchmark/**
+!tests/fixtures/mcp_tool_schemas_snapshot.json
+!tests/fake_mcp_tool_server.py
 
 # Ruler outputs at repo root (no leading dot)
 /AGENTS.md
@@ -78,7 +101,13 @@ tests/*
 !/.gitattributes
 !/.gitmodules
 !/.env.example
+!/.pre-commit-config.yaml
 # `.cursor/` stays fully ignored; ship subagents from config/templates/agents/ and skills from config/templates/cursor-skills/ (deploy: prime_workspace).
 # If your team commits other root dotdirs (e.g. .husky), add: !/.husky/
 # `.devdocs/` is covered by `/.*` above — local-only; never add ! exceptions for it.
 # END BRAINDRAIN GITIGNORE PROTOCOL
+# scriptlib: machine-local catalog (harvest/runtime). Ship only benchmark harness files.
+!/.scriptlib/
+/.scriptlib/*
+!/.scriptlib/benchmark_token_savings_brain_mcp_hub_v1.py
+!/.scriptlib/libindex.md

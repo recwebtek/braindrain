@@ -13,7 +13,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional, Protocol
+from typing import Any, Protocol
 
 
 class TokenEstimator(Protocol):
@@ -49,7 +49,7 @@ def build_estimator(cost_tracking: dict[str, Any]) -> TokenEstimator:
     return CharDiv4Estimator()
 
 
-def estimate_tokens(text: str, estimator: Optional[TokenEstimator] = None) -> int:
+def estimate_tokens(text: str, estimator: TokenEstimator | None = None) -> int:
     est = estimator or CharDiv4Estimator()
     return est.estimate(text)
 
@@ -61,11 +61,51 @@ def estimate_claude_tokens(text: str) -> int:
 
 # Regex patterns for redaction (pre-compiled for performance)
 # Paths: /Users/..., /Volumes/..., /home/..., /root/...
-_PATH_RE = re.compile(r"(/Users/[^\s'\"]+|/Volumes/[^\s'\"]+|/home/[^\s'\"]+|/root/[^\s'\"]+)")
-# API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_), Google AI (AIza)
+_PATH_RE = re.compile(r"(/Users/|/Volumes/|/home/|/root/)([^\s'\",;]+)")
+# API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_), Google AI (AIza),
+# AWS (AKIA/ASIA), Slack (xoxb/xoxp/...)
 _KEY_RE = re.compile(
-    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,})"
+    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,}|A[KS]IA[A-Z0-9]{16,}|xox[bparc]-[a-zA-Z0-9-]{12,})",
+    re.IGNORECASE,
 )
+# Generic secrets: password=value, "secret": "value", api_key: token
+_GENERIC_SECRET_RE = re.compile(
+    r"(['\"]?)([a-zA-Z0-9_-]*(?:password|secret|token|apikey|api_key|pass))\b\1(\s*[:=]\s*)(['\"]?)([^\s'\",;]+)\4",
+    re.IGNORECASE,
+)
+
+_SENSITIVE_KEY_EXACT = frozenset(
+    {
+        "password",
+        "secret",
+        "token",
+        "api_key",
+        "apikey",
+        "pass",
+        "credentials",
+        "access_token",
+        "refresh_token",
+        "auth_token",
+        "private_key",
+        "passwd",
+    }
+)
+_SENSITIVE_KEY_SUFFIXES = (
+    "_password",
+    "_secret",
+    "_api_key",
+    "_token",
+    "_pass",
+    "_credentials",
+)
+
+
+def _is_sensitive_dict_key(key: str) -> bool:
+    normalized = key.lower().replace("-", "_")
+    if normalized in _SENSITIVE_KEY_EXACT:
+        return True
+    return any(normalized.endswith(suffix) for suffix in _SENSITIVE_KEY_SUFFIXES)
+
 
 # Machine-local debug reports (under .braindrain/, never committed).
 _DEBUG_LOG_DIR = Path(".braindrain") / "logs"
@@ -117,32 +157,70 @@ class TelemetrySession:
                 self.log_file.parent.mkdir(parents=True, exist_ok=True)
 
     def sanitize(self, data: Any) -> Any:
-        """Public entry point for recursive redaction of sensitive paths and API keys."""
+        """Public entry point for recursive redaction of sensitive telemetry data."""
         return self._sanitize_data(data)
 
     def _sanitize_data(self, data: Any) -> Any:
-        """Recursive redaction of sensitive paths and API keys."""
+        """Recursive redaction of sensitive paths, API keys, and generic secrets."""
 
         def _do_sanitize(val: Any) -> Any:
             if isinstance(val, str):
-                # Optimization: skip regex overhead if the string has no characters indicating
-                # a potential sensitive path or API key. ~3.5x speedup for clean strings.
+                # Optimization: skip regex overhead when no redaction markers are present.
+                # Broad checks first (faster than lower()), then specific sensitive markers.
                 if (
-                    "/" not in val
-                    and "sk-" not in val
-                    and "gsk_" not in val
-                    and "hf_" not in val
-                    and "AIza" not in val
+                    "/Users/" not in val
+                    and "/Volumes/" not in val
+                    and "/home/" not in val
+                    and "/root/" not in val
                 ):
-                    return val
+                    val_lower = val.lower()
+                    if (
+                        "sk-" not in val_lower
+                        and "gsk_" not in val_lower
+                        and "hf_" not in val_lower
+                        and "aiza" not in val_lower
+                        and "akia" not in val_lower
+                        and "asia" not in val_lower
+                        and "xox" not in val_lower
+                        and "password" not in val_lower
+                        and "secret" not in val_lower
+                        and "token" not in val_lower
+                        and "apikey" not in val_lower
+                        and "api_key" not in val_lower
+                        and "pass" not in val_lower
+                    ):
+                        return val
 
-                val = _PATH_RE.sub("[REDACTED_PATH]", val)
+                val = _PATH_RE.sub(r"\1[REDACTED_PATH]", val)
                 val = _KEY_RE.sub("[REDACTED_KEY]", val)
+                val = _GENERIC_SECRET_RE.sub(r"\1\2\1\3\4[REDACTED_SECRET]\4", val)
                 return val
             if isinstance(val, dict):
-                return {k: _do_sanitize(v) for k, v in val.items()}
+                sanitized: dict[Any, Any] = {}
+                for key, value in val.items():
+                    sanitized_key = _do_sanitize(key)
+                    if (
+                        isinstance(key, str)
+                        and _is_sensitive_dict_key(key)
+                        and isinstance(value, str)
+                    ):
+                        sanitized[sanitized_key] = "[REDACTED_SECRET]"
+                        continue
+                    sanitized[sanitized_key] = _do_sanitize(value)
+                return sanitized
             if isinstance(val, list):
-                return [_do_sanitize(i) for i in val]
+                return [_do_sanitize(item) for item in val]
+            if isinstance(val, tuple):
+                if (
+                    len(val) >= 2
+                    and isinstance(val[0], str)
+                    and _is_sensitive_dict_key(val[0])
+                    and isinstance(val[1], str)
+                ):
+                    head = tuple(_do_sanitize(item) for item in val[:1])
+                    tail = tuple(_do_sanitize(item) for item in val[2:])
+                    return head + ("[REDACTED_SECRET]",) + tail
+                return tuple(_do_sanitize(item) for item in val)
             return val
 
         return _do_sanitize(data)
@@ -168,7 +246,7 @@ class TelemetrySession:
         input_rate = float(self.rates.get("input_per_1m", 1.25) or 1.25)
         return (saved_tokens / 1_000_000.0) * input_rate
 
-    def log_error(self, error: str, context: Optional[dict[str, Any]] = None) -> None:
+    def log_error(self, error: str, context: dict[str, Any] | None = None) -> None:
         """
         Log an error or bad response to a daily debug report.
         Sanitizes personal information (device paths, usernames).
@@ -229,7 +307,7 @@ class TelemetrySession:
         raw_text: str,
         actual_text: str,
         module: str = "output_sandbox",
-        meta: Optional[dict[str, Any]] = None,
+        meta: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         raw_tokens = self.estimator.estimate(raw_text)
         actual_tokens = self.estimator.estimate(actual_text)
@@ -281,9 +359,7 @@ class TelemetrySession:
                     "tokens_saved_est": agg.tokens_saved_est,
                     "saved_pct_est": round(agg.saved_pct_est, 2),
                 }
-                for name, agg in sorted(
-                    self.tools.items(), key=lambda kv: -kv[1].tokens_saved_est
-                )
+                for name, agg in sorted(self.tools.items(), key=lambda kv: -kv[1].tokens_saved_est)
             },
         }
 

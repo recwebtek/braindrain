@@ -28,7 +28,7 @@ modules:
     enabled: true # Phase 3: Workflow engine
 
   context_database:
-    enabled: false # Deferred - custom L0/L1/L2 to come
+    enabled: false # Deferred custom DB module; L0–L3 ship natively (observer/sessions/wiki_brain/dreaming)
 
   env_context:
     enabled: true
@@ -49,7 +49,7 @@ mcp_tools:
   # HOT: context-mode (always loaded - intercepts all outputs)
   - name: context_mode
     transport: stdio
-    command: "npx -y context-mode"
+    command: "npx -y context-mode@1.0.162"
     hot: true
     defer_loading: false
     tags: [sandbox, output, compression, fts5, session]
@@ -88,7 +88,7 @@ mcp_tools:
 
   - name: jcodemunch
     transport: stdio
-    command: "uvx jcodemunch-mcp"
+    command: "uvx jcodemunch-mcp==1.108.53"
     defer_loading: true
     tags: [codebase, symbols, retrieval, search, function, class]
     description: "Surgical symbol-level retrieval. Respects token_budget."
@@ -100,7 +100,7 @@ mcp_tools:
   # GitHub MCP (deferred - 26K tokens if loaded)
   - name: github
     transport: stdio
-    command: "npx @modelcontextprotocol/server-github"
+    command: "npx -y @modelcontextprotocol/server-github@2025.4.8"
     defer_loading: true
     hot_tools: [create_pull_request]
     tags: [git, pr, issues, commits, review]
@@ -114,7 +114,7 @@ mcp_tools:
   # DEFERRED: codebase distillation (high ROI for big repos)
   - name: ai_distiller
     transport: stdio
-    command: "npx -y @janreges/ai-distiller-mcp"
+    command: "npx -y @janreges/ai-distiller-mcp@1.4.0"
     defer_loading: true
     tags: [codebase, distillation, api, compression, tree-sitter]
     description: "Distills codebases to public APIs/types (90%+ context reduction on large repos)."
@@ -123,7 +123,7 @@ mcp_tools:
   # DEFERRED: token-efficient editing (line-range reads + safe patching)
   - name: text_editor
     transport: stdio
-    command: "uvx mcp-text-editor"
+    command: "uvx mcp-text-editor==1.0.2"
     defer_loading: true
     tags: [editing, line-oriented, patching, token-efficient]
     description: "Line-oriented text editing server to avoid full-file reads."
@@ -302,6 +302,79 @@ observer:
   ring_buffer_max: 10000
   wrap_all_tools: true
   hash_args: true
+
+# ─── MEMORY PROMOTION GUARDRAILS ───────────────────────────────
+memory_learning:
+  promotion:
+    reject_secrets: true
+    reject_transient_state: true
+    require_repeat_observation: 1
+    require_grounded_evidence: false
+    min_confidence: 0.0
+    # transient_markers default: [today, just now, temporary, debug only]
+
+# ─── SESSIONS (L1 telemetry + compaction) ──────────────────────
+sessions:
+  storage_path: ~/.braindrain/sessions.db
+  inactivity_timeout_minutes: 30
+
+# ─── WIKI-BRAIN (L2 durable semantic/procedural/lesson store) ──
+wiki_brain:
+  storage_path: ~/.braindrain/wiki-brain/brain.db
+  recall:
+    similarity_weight: 0.5
+    recency_weight: 0.3
+    importance_weight: 0.2
+    recency_half_life_days: 30.0
+  forgetting:
+    decay_half_life_days: 90.0
+    prune_threshold: 0.05
+    consolidation_similarity: 0.92
+
+# ─── LESSONS (critique-backed playbook promotion) ──────────────
+lessons:
+  promotion:
+    require_grounded_evidence: true # evaluate_lesson_candidate forces this on
+    min_confidence: 0.0
+
+# ─── DREAMING (L3 consolidation) ───────────────────────────────
+dreaming:
+  policy_version: memory-lessons-v1
+  quiet_minutes: 30
+  lookback_hours: 72
+  max_episode_scan: 50
+  max_event_scan: 250
+  max_session_scan: 20
+  deep: {}
+  storage:
+    base_dir: ~/.braindrain/dreaming
+  weights:
+    frequency: 0.24
+    relevance: 0.30
+    query_diversity: 0.15
+    recency: 0.15
+    consolidation: 0.10
+    conceptual_richness: 0.06
+  triggers:
+    macos_host_idle:
+      enabled: false # manual opt-in; does not install/start launchd watcher
+      mode: full
+      idle_threshold_seconds: 300
+      poll_interval_seconds: 120
+      bypass_session_quiet: true
+      cooldown_minutes: 60
+
+# ─── PROVIDER CONTEXT BOUNDARY ─────────────────────────────────
+provider_context:
+  strategy: provider-native-first
+
+# ─── PLANNING AUDITOR (daily_plan_audit.py / /masterplan) ───────
+# Defaults are safe/off. CLI flags (--apply-*) override these for one-off runs.
+planning_auditor:
+  overlap_jaccard_threshold: 0.55
+  apply_overlap_relations: false
+  apply_goal_tags: false
+  goal_alignment_min_score: 40
 
 # ─── COST TRACKING ─────────────────────────────────────────────
 cost_tracking:

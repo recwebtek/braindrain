@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Callable, Awaitable, Optional
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from braindrain.session import SessionSummary
 
@@ -25,7 +26,9 @@ def _truncate_list(values: list[str], *, max_items: int, max_item_len: int) -> l
     return trimmed
 
 
-def build_compact_package(summary: SessionSummary, *, max_bytes: int = COMPACT_MAX_BYTES) -> dict[str, Any]:
+def build_compact_package(
+    summary: SessionSummary, *, max_bytes: int = COMPACT_MAX_BYTES
+) -> dict[str, Any]:
     """Build structured session package capped at max_bytes UTF-8 JSON."""
     package: dict[str, Any] = {
         "session_id": summary.session_id,
@@ -48,7 +51,9 @@ def build_compact_package(summary: SessionSummary, *, max_bytes: int = COMPACT_M
         max_items = max(1, max_items // 2)
         max_item_len = max(40, max_item_len - 40)
         for key in list_keys:
-            package[key] = _truncate_list(package[key], max_items=max_items, max_item_len=max_item_len)
+            package[key] = _truncate_list(
+                package[key], max_items=max_items, max_item_len=max_item_len
+            )
         tools = package.get("tools_used") or {}
         if isinstance(tools, dict) and len(tools) > max_items:
             top = sorted(tools.items(), key=lambda kv: kv[1], reverse=True)[:max_items]

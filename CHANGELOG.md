@@ -8,6 +8,7 @@ The format is based on keeping a clear, user-facing history. Version in `VERSION
 
 ### For users
 
+- **CI badge**: GitHub Actions runs ruff + pytest on push and pull requests (see README Contributing section).
 - **`braindrain-hub-pr` skill**: `prime_workspace` deploys bundle-listed Cursor skills from `config/templates/cursor-skills/` (included in `core` and `full` bundles). Documents hub-vs-consumer PR workflow in `docs/skill-braindrain-hub-pr.md`.
 - **Scriptlib modularization**: scriptlib now treats project-local `.scriptlib/` and shared `~/.braindrain/scriptlib` as distinct layers, with promotion-only flow into the shared personal catalog.
 - **New scriptlib MCP tools**: added promote, update discovery/application, maintenance, and catalog status flows for local/shared script operations.
@@ -17,6 +18,9 @@ The format is based on keeping a clear, user-facing history. Version in `VERSION
 
 ### For contributors
 
+- **Config schema validation (P1a)**: `braindrain/config_schema.py` validates `config/hub_config.yaml` at startup with Pydantic v2 models (`modules`, `mcp_tools`, `workflows`, `models`, memory stack, `dreaming.weights`, `cost_tracking`, `provenance`, `planning_auditor`). Unknown top-level keys warn; `livingdash:` is excluded. Tests: `tests/test_config_schema.py`, `tests/test_dream_weights.py`.
+- **Packaging unification (P0-2)**: `pyproject.toml` is the single canonical manifest with version floors; default install no longer pulls `sentence-transformers`/torch or unused `anthropic`. Optional extra: `pip install -e ".[embeddings]"`. `requirements.txt` is a compat shim (`-e .`). `install.sh` prefers `uv sync`, uses portable `sed`, and drops the Linux PyTorch CPU index hack. External deferred MCP commands in `hub_config.yaml` are version-pinned (`context-mode@1.0.162`, `jcodemunch-mcp==1.108.53`, etc.). FastMCP floor bumped to `>=3.4.2`.
+- **CI foundation (P0-1)**: `.github/workflows/ci.yml` matrix (Python 3.11 / 3.12 / 3.14 × Ubuntu / macOS); `uv.lock` for reproducible installs; ruff lint+format in `pyproject.toml`; `.pre-commit-config.yaml` (ruff, trailing whitespace, EOF fixer, gitleaks). Use `uv sync --group dev` locally. `pytest` marker `local_only` skips machine-dependent tests in CI.
 - **`deploy_cursor_skill_templates`**: `braindrain/workspace_primer.py` copies `config/templates/cursor-skills/<id>/SKILL.md` → `.cursor/skills/<id>/SKILL.md` per bundle `skills:` list. Tests in `tests/test_workspace_primer_hooks.py`.
 - **Subagent templates**: single source tree `config/templates/agents/` deploys to `.cursor/agents/` and/or `.codex/agents/` depending on the resolved IDE set; duplicate `cursor-subagents/` and `codex-subagents/` template dirs were removed. Skills remain under `config/templates/cursor-skills/`. Added `daily-plan-auditor` agent and planning close-out guidance in Ruler `RULES.md`. Planning audit script moves `archived` plans into `<ide>/plans/.plan.archives/`. Tests: `tests/test_plan_auditor_master.py`.
 - Added provenance-aware runtime/tooling paths in `braindrain/server.py`, `braindrain/config.py`, `braindrain/types.py`, and `scripts/daily_plan_audit.py`, with tests in `tests/test_plan_auditor_master.py` and `tests/test_provenance_config.py`.

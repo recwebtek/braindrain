@@ -7,11 +7,12 @@ and `ctx_search` so BRAINDRAIN can keep large outputs out of the model context.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
-from braindrain.exec_path import resolve_command_argv
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
+
+from braindrain.exec_path import resolve_command_argv
 
 
 class MCPProtocolError(RuntimeError):
@@ -49,13 +50,19 @@ class ContextModeClient:
                 }
                 return await fn(session, tools)
 
-    async def index_markdown(self, *, content_md: str, source: str, intent: Optional[str] = None) -> Any:
+    async def index_markdown(
+        self, *, content_md: str, source: str, intent: str | None = None
+    ) -> Any:
         async def _run(session: ClientSession, tools: dict[str, MCPToolSpec]):
             spec = tools.get("ctx_index")
             if spec is None:
                 raise MCPProtocolError("context-mode does not expose ctx_index")
 
-            props = (spec.input_schema or {}).get("properties", {}) if isinstance(spec.input_schema, dict) else {}
+            props = (
+                (spec.input_schema or {}).get("properties", {})
+                if isinstance(spec.input_schema, dict)
+                else {}
+            )
             args: dict[str, Any] = {}
 
             # Adapt to schema naming (content/markdown/text)
@@ -87,7 +94,11 @@ class ContextModeClient:
             if spec is None:
                 raise MCPProtocolError("context-mode does not expose ctx_search")
 
-            props = (spec.input_schema or {}).get("properties", {}) if isinstance(spec.input_schema, dict) else {}
+            props = (
+                (spec.input_schema or {}).get("properties", {})
+                if isinstance(spec.input_schema, dict)
+                else {}
+            )
             args: dict[str, Any] = {}
 
             if "query" in props:
@@ -108,4 +119,3 @@ class ContextModeClient:
             return result.model_dump(by_alias=True, exclude_none=True)
 
         return await self._with_session(_run)
-

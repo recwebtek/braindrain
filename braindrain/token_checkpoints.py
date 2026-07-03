@@ -3,16 +3,14 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from braindrain.telemetry import TelemetrySession
 
 SCHEMA_VERSION = "1.0"
-VALID_PHASES = frozenset(
-    {"start", "pre_high_cost", "post_high_cost", "milestone_close", "end"}
-)
+VALID_PHASES = frozenset({"start", "pre_high_cost", "post_high_cost", "milestone_close", "end"})
 
 
 def default_checkpoint_path(project_root: Path | str | None = None) -> Path:
@@ -41,7 +39,7 @@ def append_checkpoint(
     phase: str,
     task: str,
     note: str = "",
-    context_tags: Optional[list[str]] = None,
+    context_tags: list[str] | None = None,
     telemetry: TelemetrySession,
     path: Path | None = None,
     project_root: Path | str | None = None,
@@ -65,7 +63,7 @@ def append_checkpoint(
     snapshot = telemetry.snapshot()
     row = {
         "schema_version": SCHEMA_VERSION,
-        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "timestamp": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "task": task,
         "phase": phase_norm,
         "tool": tool,

@@ -14,9 +14,10 @@ import os
 import platform
 import shlex
 import subprocess
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable, Optional, Union
+from typing import Any
 
 CACHE_PATH = Path.home() / ".braindrain" / "env_context.json"
 
@@ -175,7 +176,7 @@ _LLM_PORTS: dict[int, str] = {
     1337: "LM Studio (alt)",
 }
 
-_PROBE_COMMANDS: list[tuple[str, Union[str, Callable[[], Optional[str]]]]] = [
+_PROBE_COMMANDS: list[tuple[str, str | Callable[[], str | None]]] = [
     # Identity
     ("hostname", "hostname"),
     ("computer_name", "scutil --get ComputerName 2>/dev/null || hostname"),
@@ -188,18 +189,22 @@ _PROBE_COMMANDS: list[tuple[str, Union[str, Callable[[], Optional[str]]]]] = [
     # Window system / Desktop Environment
     (
         "wm_de_info",
-        lambda: "\n".join(
-            filter(
-                None,
-                [
-                    os.environ.get("XDG_CURRENT_DESKTOP"),
-                    os.environ.get("DESKTOP_SESSION"),
-                    os.environ.get("XDG_SESSION_TYPE"),
-                    _run("sw_vers -productVersion") if os.path.exists("/usr/bin/sw_vers") else None,
-                ],
+        lambda: (
+            "\n".join(
+                filter(
+                    None,
+                    [
+                        os.environ.get("XDG_CURRENT_DESKTOP"),
+                        os.environ.get("DESKTOP_SESSION"),
+                        os.environ.get("XDG_SESSION_TYPE"),
+                        _run("sw_vers -productVersion")
+                        if os.path.exists("/usr/bin/sw_vers")
+                        else None,
+                    ],
+                )
             )
-        )
-        or None,
+            or None
+        ),
     ),
     # Network — LAN IPs + interface names
     (
@@ -215,9 +220,11 @@ _PROBE_COMMANDS: list[tuple[str, Union[str, Callable[[], Optional[str]]]]] = [
     ("shell", lambda: os.environ.get("SHELL") or None),
     (
         "shell_version",
-        lambda: _run(f"{shlex.quote(os.environ.get('SHELL', ''))} --version 2>&1 | head -1")
-        if os.environ.get("SHELL")
-        else None,
+        lambda: (
+            _run(f"{shlex.quote(os.environ.get('SHELL', ''))} --version 2>&1 | head -1")
+            if os.environ.get("SHELL")
+            else None
+        ),
     ),
     ("term", lambda: os.environ.get("TERM") or None),
     ("term_program", lambda: os.environ.get("TERM_PROGRAM") or None),
@@ -259,7 +266,9 @@ _PROBE_COMMANDS: list[tuple[str, Union[str, Callable[[], Optional[str]]]]] = [
     ),
     (
         "editor_env",
-        lambda: "\n".join(filter(None, [os.environ.get("EDITOR"), os.environ.get("VISUAL")])) or None,
+        lambda: (
+            "\n".join(filter(None, [os.environ.get("EDITOR"), os.environ.get("VISUAL")])) or None
+        ),
     ),
     # Key CLI tools agents commonly use
     (
@@ -524,7 +533,7 @@ def run_probe() -> dict[str, Any]:
     import concurrent.futures
 
     raw: dict[str, Any] = {
-        "probe_timestamp": datetime.now(timezone.utc).isoformat(),
+        "probe_timestamp": datetime.now(UTC).isoformat(),
         "platform_python": platform.platform(),
     }
 
@@ -645,9 +654,7 @@ def _parse_running_notable(raw: dict[str, Any]) -> dict[str, Any]:
     # Detect which LLM servers are running
     llm_running: list[dict[str, Any]] = []
     ports_raw = raw.get("llm_ports_listening") or ""
-    listening_ports = {
-        int(p.strip()) for p in ports_raw.splitlines() if p.strip().isdigit()
-    }
+    listening_ports = {int(p.strip()) for p in ports_raw.splitlines() if p.strip().isdigit()}
 
     for port, name in _LLM_PORTS.items():
         if port in listening_ports:
@@ -701,9 +708,7 @@ def _parse_python_interpreters(raw: dict[str, Any]) -> list[dict[str, str]]:
             if real not in seen_paths:
                 seen_paths.add(real)
                 ver = _run(f"{shlex.quote(str(venv_path))} --version 2>/dev/null") or "unknown"
-                interpreters.append(
-                    {"path": str(venv_path), "real_path": real, "version": ver}
-                )
+                interpreters.append({"path": str(venv_path), "real_path": real, "version": ver})
 
     return interpreters
 
@@ -731,14 +736,10 @@ def synthesize(raw: dict[str, Any]) -> dict[str, Any]:
 
     # Installed editors
     editors = [l.strip() for l in _val("editors").splitlines() if l.strip()]
-    editor_env = [
-        e for e in _val("editor_env").splitlines() if e.strip() and e.strip() != "''"
-    ]
+    editor_env = [e for e in _val("editor_env").splitlines() if e.strip() and e.strip() != "''"]
 
     # Modern CLI tools present
-    modern_tools = [
-        l.strip() for l in _val("modern_cli_tools").splitlines() if l.strip()
-    ]
+    modern_tools = [l.strip() for l in _val("modern_cli_tools").splitlines() if l.strip()]
 
     # Runtimes — only include what's actually installed
     runtimes: dict[str, str] = {}
@@ -800,9 +801,7 @@ def synthesize(raw: dict[str, Any]) -> dict[str, Any]:
     if pkg_mgrs:
         agent_hints.append(f"use `{pkg_mgrs[0]}` for package installs")
     if is_mac:
-        agent_hints.append(
-            "macOS — avoid Linux-only flags (e.g. `--no-preserve-root`, `date -d`)"
-        )
+        agent_hints.append("macOS — avoid Linux-only flags (e.g. `--no-preserve-root`, `date -d`)")
     if is_linux:
         agent_hints.append(
             "Linux — systemd available" if "systemd" in _val("init_system") else "Linux"
@@ -872,14 +871,9 @@ def synthesize(raw: dict[str, Any]) -> dict[str, Any]:
         },
         "agent_hints": agent_hints,
         "app_configs": app_configs,
-        "ai_cli_tools": ai_cli_tools,
-        "brew_packages": [
-            l.strip() for l in _val("brew_leaves").splitlines() if l.strip()
-        ],
+        "brew_packages": [l.strip() for l in _val("brew_leaves").splitlines() if l.strip()],
         "path_entries": [p for p in _val("path").split(":") if p],
-        "xdg_config_dirs": [
-            l.strip() for l in _val("xdg_config").splitlines() if l.strip()
-        ],
+        "xdg_config_dirs": [l.strip() for l in _val("xdg_config").splitlines() if l.strip()],
         "shell_aliases_sample": [
             l.strip() for l in _val("shell_aliases").splitlines() if l.strip()
         ],
@@ -919,13 +913,9 @@ def render_agents_md_block(summary: dict[str, Any]) -> str:
     ]
 
     if hw.get("cpu") or hw.get("memory"):
-        lines.append(
-            f"- **Hardware**: {hw.get('cpu', '')} · {hw.get('memory', '')} RAM"
-        )
+        lines.append(f"- **Hardware**: {hw.get('cpu', '')} · {hw.get('memory', '')} RAM")
 
-    lines.append(
-        f"- **Shell**: `{shell.get('path', '')}` · terminal: `{shell.get('term', '')}`"
-    )
+    lines.append(f"- **Shell**: `{shell.get('path', '')}` · terminal: `{shell.get('term', '')}`")
 
     pkg_mgrs = summary.get("package_managers", [])
     if pkg_mgrs:
@@ -935,9 +925,7 @@ def render_agents_md_block(summary: dict[str, Any]) -> str:
         )
 
     if runtimes:
-        runtime_str = " · ".join(
-            f"`{k}` {v.split()[-1] if v else ''}" for k, v in runtimes.items()
-        )
+        runtime_str = " · ".join(f"`{k}` {v.split()[-1] if v else ''}" for k, v in runtimes.items())
         lines.append(f"- **Runtimes**: {runtime_str}")
 
     # Python interpreters — explicit list so agents never guess
@@ -982,9 +970,7 @@ def render_agents_md_block(summary: dict[str, Any]) -> str:
     if running.get("llm_servers"):
         for srv in running["llm_servers"]:
             model_note = f" · {srv['models']}" if srv.get("models") else ""
-            lines.append(
-                f"- **{srv['name']}** running on `localhost:{srv['port']}`{model_note}"
-            )
+            lines.append(f"- **{srv['name']}** running on `localhost:{srv['port']}`{model_note}")
 
     if installed.get("vm_tools"):
         lines.append(f"- **VM tools**: {', '.join(installed['vm_tools'])}")
@@ -993,14 +979,10 @@ def render_agents_md_block(summary: dict[str, Any]) -> str:
         lines.append(f"- **GUI/WM tools**: {', '.join(installed['gui_tools'])}")
 
     if installed.get("ide_agents"):
-        lines.append(
-            f"- **IDEs/agents installed**: {', '.join(installed['ide_agents'])}"
-        )
+        lines.append(f"- **IDEs/agents installed**: {', '.join(installed['ide_agents'])}")
 
     if installed.get("productivity"):
-        lines.append(
-            f"- **Productivity/media apps**: {', '.join(installed['productivity'])}"
-        )
+        lines.append(f"- **Productivity/media apps**: {', '.join(installed['productivity'])}")
 
     if ai_cli:
         # Strip full paths — just the binary names
@@ -1014,9 +996,7 @@ def render_agents_md_block(summary: dict[str, Any]) -> str:
         for app_key, info in configured_apps.items():
             servers = info.get("mcp_servers", [])
             disabled = info.get("mcp_servers_disabled", [])
-            server_str = (
-                ", ".join(f"`{s}`" for s in servers) if servers else "_(none active)_"
-            )
+            server_str = ", ".join(f"`{s}`" for s in servers) if servers else "_(none active)_"
             path_str = info.get("config_path", "")
             line = f"  - **{info['name']}** → `{path_str}`"
             line += f" · servers: {server_str}"
@@ -1072,9 +1052,7 @@ def get_env_context(refresh: bool = False) -> dict[str, Any]:
             "summary": cached_data.get("summary", {}),
             "agents_md_block": cached_data.get("agents_md_block", ""),
             "cached": True,
-            "probe_timestamp": cached_data.get("summary", {}).get(
-                "generated_at", "unknown"
-            ),
+            "probe_timestamp": cached_data.get("summary", {}).get("generated_at", "unknown"),
         }
 
     # Run fresh probe

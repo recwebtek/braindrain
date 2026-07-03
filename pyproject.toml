@@ -8,13 +8,64 @@ version = "1.0.3"
 description = "Intelligent MCP Context Hub"
 requires-python = ">=3.11"
 dependencies = [
-    "fastmcp>=3.1.1",
-    "pyyaml",
-    "pydantic",
-    "rank-bm25",
-    "anthropic",
-    "python-dotenv",
+    "fastmcp>=3.4.2",
+    "pyyaml>=6.0",
+    "pydantic>=2.0",
+    "rank-bm25>=0.2.2",
+    "python-dotenv>=1.0.0",
+    "tomli-w>=1.0.0",
+    "llm-sandbox[mcp-docker]>=0.3.39",
+]
+
+[project.optional-dependencies]
+embeddings = [
+    "sentence-transformers>=5.0.0",
 ]
 
 [project.scripts]
 braindrain = "braindrain.server:main"
+
+[tool.setuptools.packages.find]
+include = ["braindrain*"]
+exclude = ["config*"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.9",
+    "pre-commit>=4.0",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["braindrain", "scripts", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP"]
+ignore = [
+    "E501",  # line length handled by formatter
+    "E741",  # legacy single-letter loop vars in env_probe (tighten later)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"braindrain/server.py" = ["E402"]  # sys.path bootstrap before imports
+"scripts/plan_build_guard.py" = ["E402"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["braindrain"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "local_only: tests that require machine-local services or host-specific setup",
+    "token_benchmark: hub-on vs hub-off token savings replay benchmarks",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]

@@ -27,7 +27,7 @@ For each stage:
    - `[GITOPS]` → delegate to `gitops` subagent
    - `[TESTOPS]` → delegate to `testops` subagent (after build tasks)
    - `[RESEARCH]` → delegate to `research` subagent
-   - `[PLAN AUDIT]` → delegate to `daily-plan-auditor` subagent (after planning sessions or TASK-GRAPH plan churn)
+   - `[PLAN AUDIT]` → delegate to `daily-plan-auditor` subagent (after planning sessions or TASK-GRAPH plan churn; uses primed `scripts/daily_plan_audit.py` to reconcile plan `branch:` with git/gh and refresh `.braindrain/plan-reports/`)
    - `[SCRIPTLIB]` → delegate to `librarian` subagent
    - `[EMBED]` → delegate to `embedding` subagent
    - `[BUILD]` → handle directly or delegate to `toolcall` subagent
@@ -73,6 +73,8 @@ If no branch exists yet for the plan, dispatch gitops `branch-setup` first, then
   `model: <model_name> | date: <YYYY-MM-DD>`.
 
 When you **write or materially edit** any `*.plan.md` under an IDE `plans/` tree, finish with planning close-out per Ruler `RULES.md`: update `_master.plan.md` links if needed, then invoke `daily-plan-auditor` or run `scripts/daily_plan_audit.py` (do not rely only on the daily-gated stop hook).
+
+For **replan** work: set `supersedes:` on the new plan, archive or list the superseded plan in `_master.plan.md`, and re-run the auditor so overlap clusters and goal alignment refresh. Before `[BUILD]`, read implementation sequence #1 from `.braindrain/plan-reports/master-plan.md` (or task board `Seq` column) and respect `blocks:` / `supersedes:` on the selected plan.
 
 ## Progress Tracking
 

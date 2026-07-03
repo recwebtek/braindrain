@@ -1,0 +1,16 @@
+{
+  "id": "deferred_tool_discovery",
+  "description": "Agent discovers deferred MCP tools — hub-on uses BM25 references, hub-off inlines bloated schemas.",
+  "steps": [
+    {
+      "type": "search_tools",
+      "query": "token dashboard savings route output",
+      "top_k": 5
+    },
+    {
+      "type": "search_tools",
+      "query": "codebase map symbols retrieval",
+      "top_k": 5
+    }
+  ]
+}

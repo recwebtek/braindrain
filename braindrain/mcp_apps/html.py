@@ -1,0 +1,1375 @@
+"""Self-contained HTML for MCP Apps (`ui://`) — no Vite, no Agent-Native."""
+
+from __future__ import annotations
+
+_BRIDGE_JS = r"""
+const PROTOCOL_VERSION = "2026-01-26";
+const state = { initialized: false, nextId: 1, hostContext: null, pendingToolResult: null };
+const pendingRequests = new Map();
+let lastInbound = "";
+
+function parseMessage(raw) {
+  if (!raw) return null;
+  if (typeof raw === "string") {
+    try { raw = JSON.parse(raw); } catch (_) { return null; }
+  }
+  if (raw && typeof raw === "object") {
+    if (raw.jsonrpc === "2.0") return raw;
+    if (raw.data && raw.data.jsonrpc === "2.0") return raw.data;
+    if (raw.payload && raw.payload.jsonrpc === "2.0") return raw.payload;
+  }
+  return null;
+}
+
+function postToHost(msg) {
+  const targets = [];
+  try {
+    if (window.parent && window.parent !== window) targets.push(window.parent);
+  } catch (_) {}
+  try {
+    if (window.top && window.top !== window && targets.indexOf(window.top) === -1) {
+      targets.push(window.top);
+    }
+  } catch (_) {}
+  for (let i = 0; i < targets.length; i++) {
+    targets[i].postMessage(msg, "*");
+  }
+}
+
+function sendNotification(method, params) {
+  postToHost({ jsonrpc: "2.0", method: method, params: params || {} });
+}
+
+function sendRequest(method, params, timeoutMs) {
+  const id = state.nextId++;
+  const key = String(id);
+  return new Promise(function(resolve, reject) {
+    const timer = setTimeout(function() {
+      pendingRequests.delete(key);
+      reject(new Error("timeout: " + method + (lastInbound ? " (last: " + lastInbound + ")" : "")));
+    }, timeoutMs || 15000);
+    pendingRequests.set(key, {
+      resolve: function(result) { clearTimeout(timer); resolve(result); },
+      reject: function(err) { clearTimeout(timer); reject(err); }
+    });
+    postToHost({ jsonrpc: "2.0", id: id, method: method, params: params });
+  });
+}
+
+function applyTheme(ctx) {
+  if (!ctx) return;
+  const theme = ctx.theme || (ctx.hostContext && ctx.hostContext.theme);
+  if (!theme) return;
+  document.documentElement.dataset.theme = theme === "dark" ? "dark" : "light";
+}
+
+function extractData(response) {
+  if (!response || typeof response !== "object") return null;
+  if (response.structuredContent && typeof response.structuredContent === "object") {
+    return response.structuredContent;
+  }
+  if (response.structured_content && typeof response.structured_content === "object") {
+    return response.structured_content;
+  }
+  if (response.content && Array.isArray(response.content)) {
+    for (let i = 0; i < response.content.length; i++) {
+      const item = response.content[i];
+      if (item && item.type === "text" && typeof item.text === "string") {
+        try {
+          const parsed = JSON.parse(item.text);
+          if (parsed && typeof parsed === "object") return parsed;
+        } catch (_) {}
+      }
+    }
+  }
+  if (response.result && typeof response.result === "object") {
+    return extractData(response.result);
+  }
+  return response;
+}
+
+function handleToolResult(params) {
+  const payload = extractData(params);
+  if (typeof renderDashboard === "function" && payload) {
+    renderDashboard(payload);
+  }
+  const status = document.getElementById("status");
+  if (status && (status.textContent === "Initializing…" || status.textContent.indexOf("Bridge:") === 0)) {
+    status.textContent = state.initialized ? "Connected" : "Connected (data only)";
+  }
+}
+
+function finishInitialize(init) {
+  state.hostContext = (init && init.hostContext) || init || null;
+  applyTheme(state.hostContext);
+  sendNotification("ui/notifications/initialized");
+  state.initialized = true;
+  if (state.pendingToolResult) {
+    const queued = state.pendingToolResult;
+    state.pendingToolResult = null;
+    handleToolResult(queued);
+  }
+  const status = document.getElementById("status");
+  if (status && status.textContent === "Initializing…") {
+    status.textContent = "Connected";
+  }
+  setupSizeReporting();
+}
+
+window.addEventListener("message", function(event) {
+  const msg = parseMessage(event.data);
+  if (!msg || msg.jsonrpc !== "2.0") return;
+
+  if (msg.id != null && pendingRequests.has(String(msg.id))) {
+    lastInbound = "response id=" + String(msg.id);
+    const pending = pendingRequests.get(String(msg.id));
+    pendingRequests.delete(String(msg.id));
+    if (msg.error) pending.reject(msg.error);
+    else pending.resolve(msg.result);
+    return;
+  }
+
+  if (!msg.method) return;
+  lastInbound = msg.method;
+
+  if (msg.method === "ui/notifications/host-context-changed") {
+    state.hostContext = Object.assign({}, state.hostContext || {}, msg.params || {});
+    applyTheme(state.hostContext);
+    return;
+  }
+  if (msg.method === "ui/notifications/tool-result") {
+    if (!state.initialized) state.pendingToolResult = msg.params;
+    else handleToolResult(msg.params);
+    return;
+  }
+  if (msg.method === "ui/notifications/tool-input") {
+    const el = document.getElementById("status");
+    if (el) el.textContent = "Loading…";
+  }
+});
+
+function setupSizeReporting() {
+  let lastW = 0;
+  let lastH = 0;
+  let scheduled = false;
+  function report() {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(function() {
+      scheduled = false;
+      const html = document.documentElement;
+      const prev = html.style.height;
+      html.style.height = "max-content";
+      const height = Math.ceil(html.getBoundingClientRect().height);
+      html.style.height = prev;
+      const width = Math.ceil(window.innerWidth);
+      if (width === lastW && height === lastH) return;
+      lastW = width;
+      lastH = height;
+      sendNotification("ui/notifications/size-changed", { width: width, height: height });
+    });
+  }
+  report();
+  if (typeof ResizeObserver !== "undefined") {
+    const ro = new ResizeObserver(report);
+    ro.observe(document.documentElement);
+    ro.observe(document.body);
+  }
+}
+
+async function callTool(name, args) {
+  try {
+    const result = await sendRequest("tools/call", { name: name, arguments: args || {} }, 120000);
+    if (result && result.isError) {
+      const msg = (result.content && result.content[0] && result.content[0].text) || "Tool call failed";
+      throw new Error(msg);
+    }
+    return extractData(result);
+  } catch (err) {
+    if (err && typeof err === "object" && err.message) throw err;
+    if (err && typeof err === "object" && err.code === -32602) {
+      throw new Error(err.message || "Invalid tool call");
+    }
+    throw err;
+  }
+}
+
+function sendChatMessage(text) {
+  sendNotification("ui/message", { message: text });
+}
+
+async function openExternalLink(url) {
+  return sendRequest("ui/open-link", { url: url }, 8000);
+}
+
+function editorFileUriVariants(absPath) {
+  const normalized = String(absPath || "").replace(/\\/g, "/");
+  if (!normalized) return [];
+  const noLead = normalized.replace(/^\/+/, "");
+  const segments = noLead.split("/").map(encodeURIComponent).join("/");
+  return [
+    "cursor://file/" + segments,
+    "vscode://file/" + segments,
+    "cursor://file" + encodeURI(normalized),
+    "vscode://file" + encodeURI(normalized)
+  ];
+}
+
+function copyTextFallback(text) {
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function tryOpenPlanUri(url) {
+  try {
+    await openExternalLink(url);
+    return true;
+  } catch (_) {}
+  try {
+    const w = window.open(url, "_blank", "noopener,noreferrer");
+    return !!w;
+  } catch (_) {}
+  return false;
+}
+
+function showPlanOpenDialog(abs, rel) {
+  const relAt = "@" + rel;
+  const modal = ensurePlanModal();
+  document.getElementById("plan-modal-title").textContent = "Open plan in Cursor";
+  document.getElementById("plan-modal-body").innerHTML =
+    "<p class='hint'>The plan board runs in a sandboxed iframe — it cannot open files directly. Path copied to clipboard.</p>" +
+    "<label class='modal-label'>Chat @ reference<input id='plan-open-rel' readonly value='" + esc(relAt) + "' /></label>" +
+    "<label class='modal-label'>Absolute path (⌘P)<input id='plan-open-abs' readonly value='" + esc(abs) + "' /></label>" +
+    "<p class='hint' id='plan-open-status'>Use <strong>Send to chat</strong> then click the @ file link, or ⌘P and paste the path.</p>";
+  ["plan-open-rel", "plan-open-abs"].forEach(function(id) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("focus", function() { el.select(); });
+  });
+  const actions = document.getElementById("plan-modal-actions");
+  actions.innerHTML = "";
+  function close() { hidePlanModal(); }
+
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.textContent = "Copy path";
+  copyBtn.onclick = function() {
+    if (copyTextFallback(abs)) copyBtn.textContent = "Copied!";
+  };
+  const chatBtn = document.createElement("button");
+  chatBtn.type = "button";
+  chatBtn.className = "primary";
+  chatBtn.textContent = "Send to chat";
+  chatBtn.onclick = function() {
+    sendChatMessage("Open this plan file in the editor: " + relAt);
+    const st = document.getElementById("plan-open-status");
+    if (st) st.textContent = "Sent to chat — click the @ file link in the new message.";
+    const status = document.getElementById("status");
+    if (status) status.textContent = "Plan open request sent to chat";
+  };
+  const tryBtn = document.createElement("button");
+  tryBtn.type = "button";
+  tryBtn.textContent = "Try deep link";
+  tryBtn.onclick = async function() {
+    tryBtn.disabled = true;
+    for (let i = 0; i < editorFileUriVariants(abs).length; i++) {
+      if (await tryOpenPlanUri(editorFileUriVariants(abs)[i])) {
+        close();
+        return;
+      }
+    }
+    tryBtn.disabled = false;
+    tryBtn.textContent = "Deep link blocked";
+  };
+  const doneBtn = document.createElement("button");
+  doneBtn.type = "button";
+  doneBtn.textContent = "Close";
+  doneBtn.onclick = close;
+  actions.appendChild(copyBtn);
+  actions.appendChild(chatBtn);
+  actions.appendChild(tryBtn);
+  actions.appendChild(doneBtn);
+  modal.classList.remove("hidden");
+  modal.setAttribute("aria-hidden", "false");
+}
+
+async function openPlanInEditor(source, projectRoot, planAbs) {
+  const abs = planAbs || planAbsolutePath(projectRoot, source);
+  const rel = String(source || "").replace(/^\/+/, "");
+  if (!abs || !rel) return;
+  copyTextFallback(abs);
+  showPlanOpenDialog(abs, rel);
+  const status = document.getElementById("status");
+  if (status) status.textContent = "Plan path copied — use dialog to open";
+  for (let i = 0; i < editorFileUriVariants(abs).length; i++) {
+    if (await tryOpenPlanUri(editorFileUriVariants(abs)[i])) {
+      if (status) status.textContent = "Deep link sent — check editor";
+      hidePlanModal();
+      return;
+    }
+  }
+}
+
+async function bootstrap() {
+  const status = document.getElementById("status");
+  const initParams = {
+    protocolVersion: PROTOCOL_VERSION,
+    appCapabilities: { availableDisplayModes: ["inline"] },
+    appInfo: { name: "braindrain-mcp-app", version: "1.0.0" }
+  };
+  const versions = [PROTOCOL_VERSION, "2025-06-18"];
+  for (let i = 0; i < versions.length; i++) {
+    initParams.protocolVersion = versions[i];
+    try {
+      const init = await sendRequest("ui/initialize", initParams, i === 0 ? 8000 : 7000);
+      finishInitialize(init);
+      return;
+    } catch (err) {
+      if (i === versions.length - 1 && status) {
+        if (state.pendingToolResult) {
+          handleToolResult(state.pendingToolResult);
+          state.pendingToolResult = null;
+          status.textContent = "Connected (no handshake)";
+          return;
+        }
+        status.textContent = "Bridge: " + (err.message || String(err));
+      }
+    }
+  }
+}
+
+bootstrap();
+"""
+
+_BASE_CSS = """
+:root {
+  --bg: #f8fafc;
+  --panel: #ffffff;
+  --text: #0f172a;
+  --muted: #64748b;
+  --border: #e2e8f0;
+  --accent: #0284c7;
+  --good: #16a34a;
+  --warn: #d97706;
+}
+:root[data-theme="dark"] {
+  --bg: #09090b;
+  --panel: #18181b;
+  --text: #fafafa;
+  --muted: #a1a1aa;
+  --border: #27272a;
+  --accent: #38bdf8;
+  --good: #22c55e;
+  --warn: #f59e0b;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+.wrap { padding: 12px 14px 16px; max-width: 960px; }
+h1 { font-size: 15px; margin: 0 0 4px; font-weight: 600; }
+.meta { color: var(--muted); font-size: 11px; margin-bottom: 12px; }
+#status { color: var(--muted); font-size: 11px; margin-bottom: 8px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.card .label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+.card .value { font-size: 18px; font-weight: 600; margin-top: 4px; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 500; font-size: 10px; text-transform: uppercase; }
+tr:hover td { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.pill { display: inline-block; padding: 1px 6px; border-radius: 999px; background: var(--border); font-size: 10px; }
+.pill.blocked { background: color-mix(in srgb, var(--warn) 25%, var(--border)); color: var(--warn); }
+.pill.progress { background: color-mix(in srgb, var(--accent) 20%, var(--border)); color: var(--accent); }
+.pill.outstanding { background: var(--border); color: var(--muted); }
+.plan-card { border: 1px solid var(--border); border-radius: 10px; margin-bottom: 10px; background: var(--panel); overflow: hidden; }
+.plan-card > summary { list-style: none; cursor: pointer; padding: 10px 12px; border-bottom: 1px solid transparent; }
+.plan-card > summary::-webkit-details-marker { display: none; }
+.plan-card[open] > summary { border-bottom-color: var(--border); }
+.plan-card > summary:hover { background: color-mix(in srgb, var(--accent) 4%, transparent); }
+.plan-head { padding: 0; border-bottom: none; }
+.plan-title { font-size: 13px; font-weight: 600; margin: 0 0 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.plan-title-text { flex: 1 1 auto; min-width: 0; }
+.progress-pill { font-size: 10px; font-weight: 500; color: var(--muted); white-space: nowrap; }
+.progress-bar { height: 4px; background: var(--border); border-radius: 999px; overflow: hidden; margin: 0 0 8px; }
+.progress-bar > span { display: block; height: 100%; background: var(--good); border-radius: 999px; }
+.plan-meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: 10px; color: var(--muted); align-items: center; }
+.plan-meta code { font-size: 10px; background: var(--bg); padding: 1px 4px; border-radius: 4px; }
+.plan-meta a { color: var(--accent); text-decoration: none; }
+.plan-meta a:hover { text-decoration: underline; }
+.plan-meta a.open-cursor, .rollup button.open-cursor, .rollup button.open-plan-file { color: var(--accent); text-decoration: none; font-weight: 500; background: none; border: none; padding: 0; font: inherit; cursor: pointer; font-size: inherit; }
+.plan-meta a.open-cursor:hover, .rollup button.open-cursor:hover, .rollup button.open-plan-file:hover { text-decoration: underline; }
+.pill.ts-tag { border-color: rgba(139, 92, 246, 0.45); color: var(--muted); font-size: 9px; letter-spacing: 0.02em; }
+.pill.ts-tag.ts-current-month { border-color: #ca8a04; color: #fde047; background: rgba(234, 179, 8, 0.14); }
+.plan-meta .disp-set { display: inline-flex; align-items: center; gap: 4px; }
+.plan-meta select.plan-disposition { font-size: 10px; padding: 2px 4px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg); color: var(--text); max-width: 150px; cursor: pointer; }
+.plan-meta select.plan-disposition:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+.plan-body { padding: 10px 12px 12px; }
+.section-title { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 10px 0 6px; }
+.section-title:first-child { margin-top: 0; }
+.plan-overview { font-size: 11px; color: var(--muted); line-height: 1.45; margin-bottom: 8px; }
+.plan-items, .todo-list { list-style: none; margin: 0; padding: 0; }
+.plan-items li, .todo-list li { padding: 6px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent); font-size: 12px; }
+.plan-items li:last-child, .todo-list li:last-child { border-bottom: none; }
+.item-text, .todo-text { display: block; margin-top: 3px; line-height: 1.35; }
+.item-gaps, .todo-id { color: var(--muted); font-size: 10px; margin-top: 2px; }
+.pill.completed { background: color-mix(in srgb, var(--good) 20%, var(--border)); color: var(--good); }
+.pill.cancelled { background: var(--border); color: var(--muted); text-decoration: line-through; }
+.pill.todo-pending { background: var(--border); color: var(--muted); }
+.pill.todo-progress { background: color-mix(in srgb, var(--accent) 20%, var(--border)); color: var(--accent); }
+.rollup { font-size: 10px; color: var(--muted); }
+.summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.hint { color: var(--muted); font-size: 11px; margin-top: 10px; }
+.next-actions { margin: 0 0 12px; padding-left: 18px; font-size: 11px; color: var(--muted); }
+.next-actions li { margin: 4px 0; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.toolbar label { font-size: 11px; color: var(--muted); display: inline-flex; align-items: center; gap: 4px; }
+.toolbar select, .toolbar button { font-size: 11px; border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: 6px; padding: 4px 6px; }
+.toolbar button { cursor: pointer; }
+.toolbar button:disabled { opacity: 0.45; cursor: not-allowed; }
+.plan-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.plan-actions button { font-size: 10px; border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 6px; padding: 4px 8px; cursor: pointer; }
+.plan-actions button.danger { border-color: color-mix(in srgb, var(--warn) 40%, var(--border)); color: var(--warn); }
+.plan-actions button:disabled { opacity: 0.45; cursor: not-allowed; }
+.action-result { font-size: 10px; color: var(--muted); margin-top: 6px; line-height: 1.4; }
+.action-result.ok { color: var(--good); }
+.action-result.err { color: var(--warn); }
+.action-progress { height: 4px; background: var(--border); border-radius: 999px; overflow: hidden; margin-top: 6px; min-width: 120px; flex: 1 1 120px; }
+.action-progress > span { display: block; height: 100%; width: 35%; background: var(--accent); border-radius: 999px; animation: action-indeterminate 1s ease-in-out infinite alternate; }
+@keyframes action-indeterminate { from { margin-left: 0; } to { margin-left: 65%; } }
+.action-result-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; margin-top: 6px; }
+.audit-detail { font-size: 10px; color: var(--muted); margin-top: 4px; line-height: 1.4; }
+#run-masterplan.needs-run { box-shadow: 0 0 10px 2px color-mix(in srgb, var(--accent) 55%, transparent); animation: masterplan-glow 2s ease-in-out infinite; }
+@keyframes masterplan-glow { 0%, 100% { box-shadow: 0 0 6px 1px color-mix(in srgb, var(--accent) 40%, transparent); } 50% { box-shadow: 0 0 14px 4px color-mix(in srgb, var(--accent) 65%, transparent); } }
+.plan-card.is-archived { opacity: 0.88; border-style: dashed; }
+.plan-card.is-archived > summary { background: color-mix(in srgb, var(--muted) 6%, transparent); }
+.pill.archived-tag { background: color-mix(in srgb, var(--muted) 25%, var(--border)); color: var(--muted); }
+.plan-modal { position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center; }
+.plan-modal.hidden { display: none; }
+.plan-modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.55); }
+.plan-modal-panel { position: relative; z-index: 1; width: min(420px, calc(100vw - 24px)); background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.35); }
+.plan-modal-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+.plan-modal-body { font-size: 12px; line-height: 1.45; color: var(--text); margin-bottom: 12px; }
+.plan-modal-body p { margin: 0 0 8px; }
+.plan-modal-body ul { margin: 6px 0 0; padding-left: 18px; }
+.modal-label { display: block; font-size: 11px; color: var(--muted); margin-top: 8px; }
+.modal-label textarea { display: block; width: 100%; margin-top: 4px; padding: 8px; font: inherit; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); resize: vertical; }
+.modal-label input[readonly] { display: block; width: 100%; margin-top: 4px; padding: 6px 8px; font: inherit; font-size: 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); }
+.plan-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.plan-modal-actions button { font-size: 11px; border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+.plan-modal-actions button.primary { background: color-mix(in srgb, var(--warn) 18%, var(--panel)); border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); color: var(--warn); }
+"""
+
+
+def _html_page(title: str, render_js: str) -> str:
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{title}</title>
+  <style>{_BASE_CSS}</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>{title}</h1>
+    <div id="status">Initializing…</div>
+    <div id="root"></div>
+  </div>
+  <script>{render_js}</script>
+  <script>{_BRIDGE_JS}</script>
+</body>
+</html>
+"""
+
+
+_TOKEN_RENDER_JS = r"""
+function fmt(n) {
+  if (n == null) return "—";
+  if (typeof n === "number") return n.toLocaleString();
+  return String(n);
+}
+
+function renderDashboard(raw) {
+  const payload = raw && raw.dashboard ? raw.dashboard : raw;
+  const root = document.getElementById("root");
+  const status = document.getElementById("status");
+  if (!payload || !payload.snapshot) {
+    root.innerHTML = "<p class='hint'>No dashboard data yet.</p>";
+    if (status) status.textContent = "No data";
+    return;
+  }
+  const s = payload.snapshot;
+  const tools = payload.tools || [];
+  const checkpoints = payload.checkpoints || [];
+  if (status) status.textContent = "Updated " + (payload.generated_at || "");
+
+  let toolsHtml = tools.slice(0, 12).map(t => `
+    <tr>
+      <td>${t.name}</td>
+      <td>${fmt(t.calls)}</td>
+      <td>${fmt(t.saved_tokens)}</td>
+      <td>${fmt(t.saved_pct)}%</td>
+    </tr>`).join("");
+
+  let cpHtml = checkpoints.slice(-8).reverse().map(c => `
+    <tr>
+      <td>${c.phase || ""}</td>
+      <td>${c.task || ""}</td>
+      <td>${(c.totals && c.totals.saved_tokens) != null ? c.totals.saved_tokens : "—"}</td>
+      <td><span class="pill">${(c.context_tags || []).join(", ")}</span></td>
+    </tr>`).join("");
+
+  root.innerHTML = `
+    <div class="grid">
+      <div class="card"><div class="label">Saved (est.)</div><div class="value">${fmt(s.tokens_saved_est)}</div></div>
+      <div class="card"><div class="label">Saved %</div><div class="value">${fmt(s.saved_pct_est)}%</div></div>
+      <div class="card"><div class="label">Raw in</div><div class="value">${fmt(s.tokens_in_raw_est)}</div></div>
+      <div class="card"><div class="label">Actual in</div><div class="value">${fmt(s.tokens_in_actual_est)}</div></div>
+      <div class="card"><div class="label">Cost avoided</div><div class="value">$${fmt(s.cost_avoided_usd)}</div></div>
+      <div class="card"><div class="label">Uptime</div><div class="value">${fmt(s.uptime_seconds)}s</div></div>
+    </div>
+    <h2 style="font-size:13px;margin:14px 0 6px">Per-tool</h2>
+    <table><thead><tr><th>Tool</th><th>Calls</th><th>Saved</th><th>%</th></tr></thead><tbody>${toolsHtml || "<tr><td colspan=4 class='hint'>No tool calls this session</td></tr>"}</tbody></table>
+    <h2 style="font-size:13px;margin:14px 0 6px">Recent checkpoints</h2>
+    <table><thead><tr><th>Phase</th><th>Task</th><th>Saved</th><th>Tags</th></tr></thead><tbody>${cpHtml || "<tr><td colspan=4 class='hint'>No checkpoints file yet</td></tr>"}</tbody></table>
+    <p class="hint">Session log: ${payload.session_log || "—"}</p>`;
+}
+"""
+
+_PLAN_RENDER_JS = r"""
+window.__planBoardSession = window.__planBoardSession || { audits: {}, masterplanNeeded: false };
+
+function markMasterplanNeeded() {
+  window.__planBoardSession.masterplanNeeded = true;
+  updateMasterplanGlow();
+}
+
+function clearMasterplanNeeded() {
+  window.__planBoardSession.masterplanNeeded = false;
+  updateMasterplanGlow();
+}
+
+function updateMasterplanGlow() {
+  const btn = document.getElementById("run-masterplan");
+  if (btn) btn.classList.toggle("needs-run", !!window.__planBoardSession.masterplanNeeded);
+}
+
+function ensurePlanModal() {
+  let modal = document.getElementById("plan-modal");
+  if (modal) return modal;
+  modal = document.createElement("div");
+  modal.id = "plan-modal";
+  modal.className = "plan-modal hidden";
+  modal.setAttribute("aria-hidden", "true");
+  modal.innerHTML = '<div class="plan-modal-backdrop"></div><div class="plan-modal-panel"><div class="plan-modal-title" id="plan-modal-title"></div><div class="plan-modal-body" id="plan-modal-body"></div><div class="plan-modal-actions" id="plan-modal-actions"></div></div>';
+  document.body.appendChild(modal);
+  modal.querySelector(".plan-modal-backdrop").addEventListener("click", function() {
+    if (modal._resolve) modal._resolve(false);
+    hidePlanModal();
+  });
+  return modal;
+}
+
+function hidePlanModal() {
+  const modal = document.getElementById("plan-modal");
+  if (!modal) return;
+  modal.classList.add("hidden");
+  modal.setAttribute("aria-hidden", "true");
+  modal._resolve = null;
+}
+
+function planDialogConfirm(title, message) {
+  return new Promise(function(resolve) {
+    const modal = ensurePlanModal();
+    modal._resolve = resolve;
+    document.getElementById("plan-modal-title").textContent = title;
+    document.getElementById("plan-modal-body").textContent = message;
+    const actions = document.getElementById("plan-modal-actions");
+    actions.innerHTML = "";
+    const noBtn = document.createElement("button");
+    noBtn.type = "button";
+    noBtn.textContent = "Dismiss";
+    noBtn.onclick = function() { hidePlanModal(); resolve(false); };
+    const yesBtn = document.createElement("button");
+    yesBtn.type = "button";
+    yesBtn.className = "primary";
+    yesBtn.textContent = "Confirm";
+    yesBtn.onclick = function() { hidePlanModal(); resolve(true); };
+    actions.appendChild(noBtn);
+    actions.appendChild(yesBtn);
+    modal.classList.remove("hidden");
+    modal.setAttribute("aria-hidden", "false");
+  });
+}
+
+function planDialogCancelPlan() {
+  return new Promise(function(resolve) {
+    const modal = ensurePlanModal();
+    modal._resolve = function(v) { resolve(v); };
+    document.getElementById("plan-modal-title").textContent = "Cancel this plan?";
+    document.getElementById("plan-modal-body").innerHTML =
+      "<p>This will:</p><ul><li>Mark pending todos as cancelled</li><li>Set disposition to <code>scratched</code></li><li>Move the file to <code>.plan.archives/</code></li></ul>" +
+      "<label class='modal-label'>Cancellation note (shown in overview)<textarea id='plan-modal-note' rows='3'>Outdated idea — superseded / no longer pursuing</textarea></label>";
+    const actions = document.getElementById("plan-modal-actions");
+    actions.innerHTML = "";
+    const noBtn = document.createElement("button");
+    noBtn.type = "button";
+    noBtn.textContent = "Keep plan";
+    noBtn.onclick = function() { hidePlanModal(); resolve({ confirmed: false }); };
+    const yesBtn = document.createElement("button");
+    yesBtn.type = "button";
+    yesBtn.className = "primary";
+    yesBtn.textContent = "Cancel plan";
+    yesBtn.onclick = function() {
+      const noteEl = document.getElementById("plan-modal-note");
+      const note = noteEl ? noteEl.value.trim() : "";
+      hidePlanModal();
+      resolve({ confirmed: true, note: note || "Cancelled plan" });
+    };
+    actions.appendChild(noBtn);
+    actions.appendChild(yesBtn);
+    modal.classList.remove("hidden");
+    modal.setAttribute("aria-hidden", "false");
+  });
+}
+
+function esc(s) {
+  if (s == null) return "";
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function statusClass(status) {
+  if (status === "Blocked") return "blocked";
+  if (status === "In Progress") return "progress";
+  return "outstanding";
+}
+
+function todoStatusClass(status) {
+  const s = (status || "pending").toLowerCase();
+  if (s === "completed") return "completed";
+  if (s === "in_progress") return "todo-progress";
+  if (s === "cancelled") return "cancelled";
+  return "todo-pending";
+}
+
+function todoStatusLabel(status) {
+  const s = (status || "pending").toLowerCase();
+  if (s === "completed") return "Done";
+  if (s === "in_progress") return "Active";
+  if (s === "cancelled") return "Cancelled";
+  return "Pending";
+}
+
+function progressPct(summary) {
+  if (!summary || !summary.total) return 0;
+  const done = (summary.completed || 0) + (summary.cancelled || 0);
+  return Math.round((done / summary.total) * 100);
+}
+
+function renderPrLink(pr) {
+  if (!pr || !pr.label) return "";
+  if (pr.url) {
+    return `<a href="${esc(pr.url)}" target="_blank" rel="noopener">${esc(pr.label)}</a>`;
+  }
+  return esc(pr.label);
+}
+
+function gateEnabled(gates, key) {
+  const g = gates && gates[key];
+  return !!(g && g.enabled);
+}
+
+function gateReason(gates, key) {
+  const g = gates && gates[key];
+  return (g && g.reason) ? g.reason : "";
+}
+
+function hasMeaningfulBranch(branch) {
+  const b = String(branch || "").trim().toLowerCase();
+  return b && b !== "—" && b !== "-" && b !== "none" && b !== "n/a";
+}
+
+function groupHasPr(group) {
+  const pr = group && group.pr;
+  if (!pr) return false;
+  if (pr.url && String(pr.url).indexOf("http") === 0) return true;
+  const label = String(pr.label || "").trim().toLowerCase();
+  return label && label !== "none" && label !== "—" && label !== "-";
+}
+
+function canCancelPlan(group) {
+  return gateEnabled(group.action_gates || {}, "cancel_plan");
+}
+
+function planAbsolutePath(projectRoot, source) {
+  const root = String(projectRoot || "").replace(/\\/g, "/").replace(/\/+$/, "");
+  const rel = String(source || "").replace(/^\/+/, "");
+  if (!rel) return "";
+  if (!root || root === ".") return rel;
+  return root + "/" + rel;
+}
+
+function renderCursorPlanLink(source, planAbs) {
+  if (!source) return "";
+  return `<button type="button" class="open-cursor" data-open-source="${esc(source)}" data-plan-abs="${esc(planAbs || "")}" title="Open plan in Cursor editor">Open in Cursor</button>`;
+}
+
+function renderDispositionSelect(group, options) {
+  const current = String(group.disposition || "active").trim();
+  const src = group.source || "";
+  const opts = (options || []).map(function(d) {
+    const sel = d === current ? " selected" : "";
+    return `<option value="${esc(d)}"${sel}>${esc(d)}</option>`;
+  }).join("");
+  return `<label class="disp-set">Disposition <select class="plan-disposition" data-source="${esc(src)}" data-prev="${esc(current)}" title="Set plan frontmatter disposition">${opts}</select></label>`;
+}
+
+function renderActionButtons(group) {
+  if (group.is_archived) {
+    return `<div class="plan-actions archived-only"><span class="pill archived-tag">Archived</span><span class="hint">Shown from .plan.archives — run /masterplan to sync master index.</span></div>`;
+  }
+  const gates = group.action_gates || {};
+  const src = group.source || "";
+  function btn(action, label, enabled, extraClass, title) {
+    const dis = enabled ? "" : " disabled";
+    const tip = title || (enabled ? "" : gateReason(gates, action));
+    const titleAttr = tip ? ` title="${esc(tip)}"` : "";
+    const cls = extraClass ? ` ${extraClass}` : "";
+    return `<button type="button" class="plan-action${cls}" data-action="${esc(action)}" data-source="${esc(src)}"${dis}${titleAttr}>${esc(label)}</button>`;
+  }
+  return `<div class="plan-actions" data-source="${esc(src)}">
+    ${btn("audit", "Recheck", gateEnabled(gates, "audit"), "", "Compare plan todos against repo files (paths in backticks); proposes frontmatter sync when files exist")}
+    ${btn("apply_sync", "Apply sync", gateEnabled(gates, "apply_sync"), "", "Apply Recheck proposals to plan frontmatter todos")}
+    ${btn("research", "Research", gateEnabled(gates, "research"), "", "Send a deep-research prompt to chat")}
+    ${btn("merge_ready", "Merge-ready", gateEnabled(gates, "merge_ready"))}
+    ${btn("archive", "Archive", gateEnabled(gates, "archive"), "", "Move plan to .plan.archives/ (branch/PR are not deleted)")}
+    ${btn("cancel_plan", "Cancel plan", canCancelPlan(group), "danger", "Scratch plan: cancel todos, move to archive (branch/PR are not deleted)")}
+    ${btn("continue", "Continue", gateEnabled(gates, "continue"))}
+    <div class="action-result-wrap"><div class="action-result" data-result="${esc(src)}"></div></div>
+  </div>`;
+}
+
+function showActionProgress(resultEl, label) {
+  resultEl.className = "action-result";
+  resultEl.innerHTML = esc(label) + '<div class="action-progress"><span></span></div>';
+}
+
+function formatAuditResult(audit) {
+  if (!audit) return "Recheck finished.";
+  const proposals = audit.proposals || [];
+  let html = esc(audit.summary || ("Recheck: " + proposals.length + " proposal(s)"));
+  html += '<div class="audit-detail">Recheck compares todo text to files under this repo (e.g. paths in backticks).</div>';
+  if (proposals.length) {
+    html += '<ul class="audit-detail">';
+    proposals.slice(0, 5).forEach(function(p) {
+      html += "<li>" + esc((p.todo_id || "") + ": " + (p.suggested_status || "") + " (" + (p.confidence || "") + ")") + "</li>";
+    });
+    if (proposals.length > 5) html += "<li>…+" + (proposals.length - 5) + " more</li>";
+    html += "</ul>";
+  } else {
+    html += '<div class="audit-detail">No todo drift detected.</div>';
+  }
+  return html;
+}
+
+function renderTimestampTags(group) {
+  const tags = group.timestamp_tags || [];
+  const updatedAt = group.updated_at || "";
+  const now = new Date();
+  const currentYm = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0");
+  const isCurrentMonth = updatedAt.slice(0, 7) === currentYm;
+  return tags.map(function(tag) {
+    const cls = isCurrentMonth && String(tag).startsWith("updated") ? " ts-current-month" : "";
+    return `<span class="pill ts-tag${cls}">${esc(tag)}</span>`;
+  }).join("");
+}
+
+function parseUpdatedMs(iso) {
+  if (!iso) return 0;
+  const t = Date.parse(iso);
+  return isNaN(t) ? 0 : t;
+}
+
+function matchesDateFilter(updatedAt, filter) {
+  if (!filter) return true;
+  const ms = parseUpdatedMs(updatedAt);
+  if (!ms) return false;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (filter === "week") {
+    const weekStart = new Date(today);
+    weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
+    return ms >= weekStart.getTime();
+  }
+  if (filter === "month") {
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    return ms >= monthStart.getTime();
+  }
+  if (filter === "prev-month") {
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    return ms >= prevStart.getTime() && ms < monthStart.getTime();
+  }
+  return true;
+}
+
+function captureOpenCards(root) {
+  const open = {};
+  if (!root) return open;
+  root.querySelectorAll(".plan-card[open]").forEach(function(card) {
+    const src = card.getAttribute("data-source");
+    if (src) open[src] = true;
+  });
+  return open;
+}
+
+function updateApplySyncButton(source, audit) {
+  const root = document.getElementById("root");
+  if (!root || !audit || !audit.proposals || !audit.proposals.length) return;
+  const cards = root.querySelectorAll(".plan-card");
+  let card = null;
+  cards.forEach(function(c) {
+    if (c.getAttribute("data-source") === source) card = c;
+  });
+  if (!card) return;
+  const btn = card.querySelector('.plan-action[data-action="apply_sync"]');
+  if (btn) {
+    btn.disabled = false;
+    btn.removeAttribute("title");
+  }
+}
+
+function renderDashboard(raw) {
+  const payload = raw && raw.dashboard ? raw.dashboard : raw;
+  const root = document.getElementById("root");
+  const status = document.getElementById("status");
+  if (!payload) {
+    root.innerHTML = "<p class='hint'>No plan board data.</p>";
+    return;
+  }
+  if (status) status.textContent = "Updated " + (payload.generated_at || "");
+
+  const groups = payload.plan_groups || [];
+  const summary = payload.summary || {};
+  if (!groups.length) {
+    root.innerHTML = "<p class='hint'>" + esc(payload.hint || "Plan board empty.") + "</p>";
+    return;
+  }
+
+  let summaryHtml = `
+    <div class="summary-grid">
+      <div class="card"><div class="label">Plans</div><div class="value">${summary.plan_count || groups.length}</div></div>
+      <div class="card"><div class="label">Open items</div><div class="value">${summary.item_count || 0}</div></div>
+      <div class="card"><div class="label">Blocked</div><div class="value">${summary.blocked_items || 0}</div></div>
+      <div class="card"><div class="label">Outstanding</div><div class="value">${summary.outstanding_items || 0}</div></div>
+      ${summary.archived_count ? `<div class="card"><div class="label">Archived</div><div class="value">${summary.archived_count}</div></div>` : ""}
+    </div>`;
+
+  let totalTodos = groups.reduce(function(acc, g) {
+    return acc + ((g.todo_summary && g.todo_summary.total) || 0);
+  }, 0);
+  const doneTodos = groups.reduce(function(acc, g) {
+    const ts = g.todo_summary || {};
+    return acc + (ts.completed || 0) + (ts.cancelled || 0);
+  }, 0);
+  if (totalTodos > 0) {
+    summaryHtml += `<p class="hint">Frontmatter todos: ${doneTodos}/${totalTodos} complete (${progressPct({total: totalTodos, completed: doneTodos, cancelled: 0})}%)</p>`;
+  }
+
+  let nextHtml = "";
+  const actions = payload.next_actions || [];
+  if (actions.length) {
+    nextHtml = "<ul class='next-actions'><li>" + actions.map(esc).join("</li><li>") + "</li></ul>";
+  }
+
+  const dispositionOptions = Array.from(new Set(groups.map(function(g) { return g.disposition || "—"; }))).sort();
+  const session = window.__planBoardSession;
+  if (session.showArchived === undefined) session.showArchived = false;
+  session.projectRoot = payload.project_root || session.projectRoot || ".";
+  session.dispositionOptions = payload.disposition_options || session.dispositionOptions || [
+    "active", "meta", "research-needed", "replan-needed", "merge-ready",
+    "needs-fix", "backlogged", "scratched", "implemented", "archived"
+  ];
+  session.filters = session.filters || { disp: "", date: "", prOnly: false };
+  session.openSources = Object.assign({}, session.openSources || {}, captureOpenCards(root));
+
+  let controlsHtml = `
+    <div class="toolbar">
+      <button id="run-masterplan" type="button">Run /masterplan</button>
+      <span class="hint" id="masterplan-status"></span>
+      <label>Disposition
+        <select id="disp-filter">
+          <option value="">All</option>
+          ${dispositionOptions.map(function(d) {
+            const sel = session.filters.disp === d ? " selected" : "";
+            return `<option value="${esc(d)}"${sel}>${esc(d)}</option>`;
+          }).join("")}
+        </select>
+      </label>
+      <label>Updated
+        <select id="date-filter">
+          <option value=""${session.filters.date === "" ? " selected" : ""}>Any time</option>
+          <option value="week"${session.filters.date === "week" ? " selected" : ""}>This week</option>
+          <option value="month"${session.filters.date === "month" ? " selected" : ""}>This month</option>
+          <option value="prev-month"${session.filters.date === "prev-month" ? " selected" : ""}>Last month</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="show-archived"${session.showArchived ? " checked" : ""} /> Show archived</label>
+      <label><input type="checkbox" id="pr-only"${session.filters.prOnly ? " checked" : ""} /> PR only</label>
+      <button id="expand-all" type="button">Expand all</button>
+      <button id="collapse-all" type="button">Collapse all</button>
+      <span class="hint" id="filter-count"></span>
+    </div>`;
+
+  const allCards = groups.map(function(group, idx) {
+    const counts = group.status_counts || {};
+    const ts = group.todo_summary || {};
+    const pct = progressPct(ts);
+    const todoLabel = ts.total ? `${(ts.completed || 0) + (ts.cancelled || 0)}/${ts.total} todos` : `${counts.Outstanding || 0} open items`;
+    const rollups = group.item_rollups || null;
+    const rollupText = rollups
+      ? `Items ${rollups.implemented}/${rollups.active}/${rollups.blocked}/${rollups.outstanding}/${rollups.unknown} (impl/active/blk/out/unk)`
+      : `${counts.Outstanding || 0} out · ${counts["In Progress"] || 0} active · ${counts.Blocked || 0} blocked`;
+
+    const boardItems = (group.items || []).map(function(item) {
+      return `<li>
+        <span class="pill ${statusClass(item.status)}">${esc(item.status)}</span>
+        <span class="item-text">${esc(item.item)}</span>
+        ${item.gaps && item.gaps !== "—" ? `<div class="item-gaps">Gaps: ${esc(item.gaps)}</div>` : ""}
+      </li>`;
+    }).join("");
+
+    const fmTodos = (group.todos || []).map(function(todo) {
+      return `<li>
+        <span class="pill ${todoStatusClass(todo.status)}">${todoStatusLabel(todo.status)}</span>
+        <span class="todo-text">${esc(todo.content)}</span>
+        ${todo.id ? `<div class="todo-id">${esc(todo.id)}</div>` : ""}
+      </li>`;
+    }).join("");
+
+    const src = group.source || "";
+    const srcShort = src.split("/").pop() || src;
+    const planAbs = group.plan_abs_path || planAbsolutePath(session.projectRoot, src);
+    const updatedAt = group.updated_at || "";
+    const shouldOpen = (session.openSources && session.openSources[src]) || idx < 2;
+    const openAttr = shouldOpen ? " open" : "";
+
+    let body = "";
+    if (group.overview) {
+      body += `<div class="plan-overview">${esc(group.overview)}</div>`;
+    }
+    if (fmTodos) {
+      body += `<div class="section-title">Plan todos (frontmatter)</div><ul class="todo-list">${fmTodos}</ul>`;
+    }
+    if (boardItems) {
+      body += `<div class="section-title">Task board items</div><ul class="plan-items">${boardItems}</ul>`;
+    }
+    if (!body) {
+      body = "<p class='hint'>No todo detail available.</p>";
+    }
+    body = renderActionButtons(group) + body;
+
+    const archivedClass = group.is_archived ? " is-archived" : "";
+    const archivedAttr = group.is_archived ? ' data-archived="1"' : "";
+
+    return `<details class="plan-card${archivedClass}" data-disposition="${esc(group.disposition || "—")}" data-has-pr="${group.pr ? "1" : "0"}" data-source="${esc(src)}" data-updated-at="${esc(updatedAt)}"${archivedAttr}${openAttr}>
+      <summary>
+        <div class="plan-title">
+          <span class="plan-title-text">#${esc(group.seq)} — ${esc(group.plan)}</span>
+          <span class="progress-pill">${esc(todoLabel)} · ${pct}%</span>
+        </div>
+        <div class="progress-bar"><span style="width:${pct}%"></span></div>
+        <div class="plan-meta">
+          ${renderDispositionSelect(group, session.dispositionOptions)}
+          <span class="pill progress">${esc(group.next_verb || "—")}</span>
+          <span>Owner: ${esc(group.owner)}</span>
+          <span>Priority: ${esc(group.priority)}</span>
+          <span>Branch: <code>${esc(group.branch)}</code></span>
+          ${group.pr ? `<span>PR: ${renderPrLink(group.pr)}</span>` : ""}
+          ${group.parent ? `<span>Parent: ${esc(group.parent)}</span>` : ""}
+          ${renderTimestampTags(group)}
+        </div>
+        <div class="rollup">${esc(rollupText)} · ${renderCursorPlanLink(src, planAbs)} · <button type="button" class="open-plan-file" data-open-source="${esc(src)}" data-plan-abs="${esc(planAbs)}" title="Open plan file">${esc(srcShort)}</button></div>
+      </summary>
+      <div class="plan-body">${body}</div>
+    </details>`;
+  });
+
+  root.innerHTML = summaryHtml + nextHtml + controlsHtml + allCards.join("");
+  updateMasterplanGlow();
+
+  async function pollPlanAction(extra) {
+    const params = Object.assign({ path: session.projectRoot || "." }, extra || {});
+    return callTool("poll_plan_board", params);
+  }
+
+  async function refreshBoardFromServer() {
+    const data = await pollPlanAction({});
+    if (data && data.plan_groups) renderDashboard(data);
+    return data;
+  }
+
+  function applyActionPayload(data, source, opts) {
+    if (!data) return null;
+    const result = data.action_result || null;
+    if (data.action_result && data.action === "audit" && source) {
+      session.audits[source] = data.action_result;
+    }
+    if (opts && opts.needsMasterplan) markMasterplanNeeded();
+    if (data.plan_groups && !(opts && opts.skipBoardRender)) {
+      renderDashboard(data);
+    }
+    return result;
+  }
+
+  async function runPlanAction(action, source, resultEl) {
+    resultEl.className = "action-result";
+    const dismissed = "Not cancelled — dialog dismissed.";
+    try {
+      if (action === "research") {
+        showActionProgress(resultEl, "Sending research prompt…");
+        const data = await pollPlanAction({ action: "research", source: source });
+        const handoff = applyActionPayload(data, source) || data;
+        const msg = (handoff && handoff.message) || ("Research plan " + source);
+        sendChatMessage(msg);
+        resultEl.className = "action-result ok";
+        resultEl.textContent = "Research prompt sent to chat.";
+        return;
+      }
+      if (action === "audit") {
+        showActionProgress(resultEl, "Recheck running — scanning todos vs repo files…");
+        session.openSources = Object.assign({}, session.openSources || {}, captureOpenCards(root));
+        if (source) session.openSources[source] = true;
+        const data = await pollPlanAction({ action: "audit", source: source, dry_run: true });
+        const audit = (data && data.action_result) || null;
+        if (audit && source) {
+          session.audits[source] = audit;
+          updateApplySyncButton(source, audit);
+        }
+        resultEl.className = "action-result ok";
+        resultEl.innerHTML = formatAuditResult(audit);
+        return;
+      }
+      if (action === "apply_sync") {
+        const audit = session.audits[source];
+        if (!audit || !audit.proposals || !audit.proposals.length) {
+          resultEl.className = "action-result err";
+          resultEl.textContent = "Run Recheck first.";
+          return;
+        }
+        if (!(await planDialogConfirm("Apply todo sync?", "Apply " + audit.proposals.length + " todo sync proposal(s) to frontmatter?"))) {
+          resultEl.textContent = dismissed;
+          return;
+        }
+        showActionProgress(resultEl, "Applying todo sync…");
+        const data = await pollPlanAction({
+          action: "apply_sync",
+          source: source,
+          proposals: audit.proposals,
+          confirm: true
+        });
+        const applied = applyActionPayload(data, source, { needsMasterplan: true });
+        if (applied && applied.ok) {
+          resultEl.className = "action-result ok";
+          resultEl.textContent = "Applied: " + (applied.applied || []).join(", ");
+          delete session.audits[source];
+        } else {
+          resultEl.className = "action-result err";
+          resultEl.textContent = (applied && applied.reason) || "Apply failed";
+        }
+        return;
+      }
+      if (action === "merge_ready") {
+        if (!(await planDialogConfirm("Mark merge-ready?", "Set disposition to merge-ready for this plan?"))) {
+          resultEl.textContent = dismissed;
+          return;
+        }
+        showActionProgress(resultEl, "Updating disposition…");
+        const data = await pollPlanAction({ action: "merge_ready", source: source, confirm: true });
+        const res = applyActionPayload(data, source, { needsMasterplan: true });
+        if (res && res.ok) {
+          resultEl.className = "action-result ok";
+          resultEl.textContent = "Marked merge-ready.";
+        } else {
+          resultEl.className = "action-result err";
+          resultEl.textContent = (res && res.reason) || "Failed";
+        }
+        return;
+      }
+      if (action === "archive") {
+        const card = root.querySelector('.plan-card[data-source="' + source + '"]');
+        const branchEl = card ? card.querySelector(".plan-meta code") : null;
+        const branchHint = branchEl && branchEl.textContent && branchEl.textContent.trim() !== "—"
+          ? " Branch " + branchEl.textContent.trim() + " will remain in git."
+          : "";
+        if (!(await planDialogConfirm("Archive plan?", "Move this plan to .plan.archives/?" + branchHint))) {
+          resultEl.textContent = dismissed;
+          return;
+        }
+        showActionProgress(resultEl, "Archiving…");
+        const data = await pollPlanAction({ action: "archive", source: source, confirm: true });
+        const res = applyActionPayload(data, source, { needsMasterplan: true });
+        if (res && res.ok) {
+          resultEl.className = "action-result ok";
+          resultEl.textContent = "Archived to " + (res.archived_to || "archive");
+        } else {
+          resultEl.className = "action-result err";
+          resultEl.textContent = (res && res.reason) || "Failed";
+        }
+        return;
+      }
+      if (action === "cancel_plan") {
+        const dialog = await planDialogCancelPlan();
+        if (!dialog || !dialog.confirmed) {
+          resultEl.className = "action-result";
+          resultEl.textContent = dismissed;
+          return;
+        }
+        showActionProgress(resultEl, "Cancelling plan…");
+        const data = await pollPlanAction({
+          action: "cancel_plan",
+          source: source,
+          confirm: true,
+          cancel_note: dialog.note || ""
+        });
+        const res = applyActionPayload(data, source, { needsMasterplan: true });
+        if (res && res.ok) {
+          resultEl.className = "action-result ok";
+          resultEl.textContent = "Plan cancelled → " + (res.archived_to || "archive");
+        } else {
+          resultEl.className = "action-result err";
+          resultEl.textContent = (res && res.reason) || "Failed";
+        }
+        return;
+      }
+      if (action === "continue") {
+        if (!(await planDialogConfirm("Continue build?", "Queue branch-setup and continue build for this plan?"))) {
+          resultEl.textContent = dismissed;
+          return;
+        }
+        showActionProgress(resultEl, "Queueing branch…");
+        const data = await pollPlanAction({ action: "continue", source: source, confirm: true });
+        const res = applyActionPayload(data, source, { needsMasterplan: true });
+        if (res && res.ok) {
+          sendChatMessage(res.handoff_message || ("Continue " + source));
+          resultEl.className = "action-result ok";
+          resultEl.textContent = "Queued branch " + (res.branch || "");
+        } else {
+          resultEl.className = "action-result err";
+          resultEl.textContent = (res && res.reason) || "Failed";
+        }
+        return;
+      }
+    } catch (err) {
+      resultEl.className = "action-result err";
+      resultEl.textContent = err.message || String(err);
+    }
+  }
+
+  root.querySelectorAll(".plan-action").forEach(function(button) {
+    button.addEventListener("click", function(ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (button.disabled) return;
+      const action = button.getAttribute("data-action");
+      const source = button.getAttribute("data-source") || "";
+      const wrap = button.closest(".plan-actions");
+      const resultEl = wrap ? wrap.querySelector(".action-result") : null;
+      if (action && source && resultEl) runPlanAction(action, source, resultEl);
+    });
+  });
+
+  root.querySelectorAll(".open-cursor, .open-plan-file").forEach(function(button) {
+    button.addEventListener("click", function(ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const source = button.getAttribute("data-open-source") || "";
+      const planAbs = button.getAttribute("data-plan-abs") || "";
+      if (source) openPlanInEditor(source, session.projectRoot || ".", planAbs);
+    });
+  });
+
+  root.querySelectorAll(".plan-disposition").forEach(function(select) {
+    select.addEventListener("click", function(ev) { ev.stopPropagation(); });
+    select.addEventListener("mousedown", function(ev) { ev.stopPropagation(); });
+    select.addEventListener("change", async function(ev) {
+      ev.stopPropagation();
+      const source = select.getAttribute("data-source") || "";
+      const prev = select.getAttribute("data-prev") || select.value;
+      const newDisp = select.value;
+      if (!source || newDisp === prev) return;
+      if (!(await planDialogConfirm("Set disposition?", 'Set disposition to "' + newDisp + '" for this plan?'))) {
+        select.value = prev;
+        return;
+      }
+      session.openSources = Object.assign({}, session.openSources || {}, captureOpenCards(root));
+      session.openSources[source] = true;
+      const status = document.getElementById("status");
+      try {
+        if (status) status.textContent = "Updating disposition…";
+        const data = await pollPlanAction({
+          action: "set_disposition",
+          source: source,
+          disposition: newDisp,
+          confirm: true
+        });
+        const res = applyActionPayload(data, source, { needsMasterplan: true });
+        if (res && res.ok) {
+          select.setAttribute("data-prev", newDisp);
+          if (status) status.textContent = "Disposition → " + newDisp + " (run /masterplan to sync board)";
+        } else {
+          select.value = prev;
+          if (status) status.textContent = (res && res.reason) || "Failed to set disposition";
+        }
+      } catch (err) {
+        select.value = prev;
+        if (status) status.textContent = err.message || String(err);
+      }
+    });
+  });
+
+  root.querySelectorAll(".plan-card").forEach(function(card) {
+    card.addEventListener("toggle", function() {
+      const src = card.getAttribute("data-source");
+      if (!src) return;
+      session.openSources = session.openSources || {};
+      if (card.open) session.openSources[src] = true;
+      else delete session.openSources[src];
+    });
+  });
+
+  function updateFilters() {
+    const disp = document.getElementById("disp-filter");
+    const prOnly = document.getElementById("pr-only");
+    const showArchived = document.getElementById("show-archived");
+    const dateFilter = document.getElementById("date-filter");
+    const wantedDisp = disp ? disp.value : "";
+    const wantedDate = dateFilter ? dateFilter.value : "";
+    const onlyPr = prOnly ? !!prOnly.checked : false;
+    session.filters = { disp: wantedDisp, date: wantedDate, prOnly: onlyPr };
+    const includeArchived = showArchived ? !!showArchived.checked : false;
+    const archivedDispSelected = wantedDisp === "archived" || wantedDisp === "scratched";
+    let shown = 0;
+    const cards = root.querySelectorAll(".plan-card");
+    cards.forEach(function(card) {
+      const isArchived = card.getAttribute("data-archived") === "1";
+      const matchesArchived = !isArchived || includeArchived || archivedDispSelected;
+      const matchesDisp = !wantedDisp || card.getAttribute("data-disposition") === wantedDisp;
+      const matchesPr = !onlyPr || card.getAttribute("data-has-pr") === "1";
+      const matchesDate = matchesDateFilter(card.getAttribute("data-updated-at") || "", wantedDate);
+      const visible = matchesArchived && matchesDisp && matchesPr && matchesDate;
+      card.style.display = visible ? "" : "none";
+      if (visible) shown += 1;
+    });
+    const count = document.getElementById("filter-count");
+    if (count) count.textContent = `${shown}/${groups.length} shown`;
+  }
+
+  const dispEl = document.getElementById("disp-filter");
+  const prEl = document.getElementById("pr-only");
+  const dateEl = document.getElementById("date-filter");
+  const archivedEl = document.getElementById("show-archived");
+  if (dispEl) dispEl.addEventListener("change", updateFilters);
+  if (prEl) prEl.addEventListener("change", updateFilters);
+  if (dateEl) dateEl.addEventListener("change", updateFilters);
+  if (archivedEl) {
+    archivedEl.addEventListener("change", function() {
+      session.showArchived = !!archivedEl.checked;
+      if (session.showArchived) {
+        refreshBoardFromServer().catch(function(err) {
+          const status = document.getElementById("status");
+          if (status) status.textContent = "Refresh failed: " + (err.message || String(err));
+          updateFilters();
+        });
+      } else {
+        updateFilters();
+      }
+    });
+  }
+  updateFilters();
+
+  if (!session.boardHydrated) {
+    session.boardHydrated = true;
+    refreshBoardFromServer().catch(function() {});
+  }
+
+  const masterplanBtn = document.getElementById("run-masterplan");
+  const masterplanStatus = document.getElementById("masterplan-status");
+  if (masterplanBtn) {
+    masterplanBtn.addEventListener("click", async function() {
+      masterplanBtn.disabled = true;
+      if (masterplanStatus) masterplanStatus.textContent = "Running…";
+      try {
+        const data = await pollPlanAction({ action: "masterplan" });
+        const res = (data && data.action_result) || {};
+        if (masterplanStatus) {
+          masterplanStatus.textContent = res.summary || (res.ok ? "Done" : "Failed");
+        }
+        if (data && data.plan_groups) {
+          clearMasterplanNeeded();
+          renderDashboard(data);
+        }
+      } catch (err) {
+        if (masterplanStatus) masterplanStatus.textContent = err.message || String(err);
+      } finally {
+        masterplanBtn.disabled = false;
+      }
+    });
+  }
+
+  const expandBtn = document.getElementById("expand-all");
+  const collapseBtn = document.getElementById("collapse-all");
+  if (expandBtn) {
+    expandBtn.addEventListener("click", function() {
+      root.querySelectorAll(".plan-card").forEach(function(card) {
+        if (card.style.display !== "none") card.setAttribute("open", "open");
+      });
+    });
+  }
+  if (collapseBtn) {
+    collapseBtn.addEventListener("click", function() {
+      root.querySelectorAll(".plan-card").forEach(function(card) {
+        card.removeAttribute("open");
+      });
+    });
+  }
+}
+"""
+
+
+def token_dashboard_html() -> str:
+    return _html_page("Braindrain Token Dashboard", _TOKEN_RENDER_JS)
+
+
+def plan_board_html() -> str:
+    return _html_page("Braindrain Plan Board", _PLAN_RENDER_JS)
+
+
+def sigint_map_html() -> str:
+    from braindrain.mcp_apps.sigint_html import sigint_map_html as _sigint_html
+
+    return _sigint_html()

@@ -58,6 +58,7 @@ def _load_config(path: Path, style: str) -> dict[str, Any]:
     raw = path.read_text(encoding="utf-8", errors="ignore")
     if style == "goose_yaml":
         import yaml
+
         return yaml.safe_load(raw) or {}
     if style == "toml_mcp_servers":
         try:
@@ -77,9 +78,11 @@ def _load_config(path: Path, style: str) -> dict[str, Any]:
 def _render_output(obj: dict[str, Any], style: str) -> str:
     if style == "goose_yaml":
         import yaml
+
         return yaml.dump(obj, default_flow_style=False, allow_unicode=True)
     if style == "toml_mcp_servers":
         import tomli_w
+
         return tomli_w.dumps(obj)
     # Keep JSONC-compatible files as plain JSON output for safety.
     _ = style
@@ -151,7 +154,6 @@ def _ensure_server_entry(config: dict[str, Any], target: Target, launcher: str) 
         return config
 
     if target.style == "goose_yaml":
-        import yaml  # already a dep
         block = _get_nested(config, "mcp_servers")
         if not isinstance(block, dict):
             block = {}
@@ -223,7 +225,9 @@ def _build_targets(detected_configs: dict[str, Any]) -> list[Target | CliCommand
 
 def _ask_selection(targets: list[Target | CliCommandTarget]) -> list[Target | CliCommandTarget]:
     print("\nSelect MCP targets to configure (interactive checklist):")
-    print("Enter comma-separated numbers, 'all', or press Enter for Cursor + Zed + Codex CLI (TOML).")
+    print(
+        "Enter comma-separated numbers, 'all', or press Enter for Cursor + Zed + Codex CLI (TOML)."
+    )
     for idx, target in enumerate(targets, start=1):
         marker = "detected" if target.detected else "not-detected"
         exists = "exists" if target.path.exists() else "new-file"
@@ -256,12 +260,19 @@ def _ask_selection(targets: list[Target | CliCommandTarget]) -> list[Target | Cl
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Configure MCP client config files for BRAINDRAIN.")
-    parser.add_argument("--launcher", default="", help="Absolute path to config/braindrain launcher")
-    parser.add_argument("--detected-configs", default="", help="JSON object from env_probe summary.app_configs")
+    parser = argparse.ArgumentParser(
+        description="Configure MCP client config files for BRAINDRAIN."
+    )
+    parser.add_argument(
+        "--launcher", default="", help="Absolute path to config/braindrain launcher"
+    )
+    parser.add_argument(
+        "--detected-configs", default="", help="JSON object from env_probe summary.app_configs"
+    )
     args = parser.parse_args()
 
     import os
+
     launcher = args.launcher or os.environ.get("BRAINDRAIN_LAUNCHER_PATH", "")
     if not launcher:
         # derive from script location as last resort
@@ -290,7 +301,9 @@ def main() -> int:
         except Exception as e:
             print(f"\nSkipping {target.display}: could not parse {target.path} ({e})")
             continue
-        before_text = target.path.read_text(encoding="utf-8", errors="ignore") if target.path.exists() else ""
+        before_text = (
+            target.path.read_text(encoding="utf-8", errors="ignore") if target.path.exists() else ""
+        )
         after_obj = _ensure_server_entry(before_obj, target, launcher)
         after_text = _render_output(after_obj, target.style)
         planned.append((target, before_text, after_text))
@@ -323,6 +336,7 @@ def main() -> int:
         return 0
 
     import subprocess
+
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     applied = 0
     for target, before, after in planned:
@@ -336,7 +350,9 @@ def main() -> int:
 
             print(f"Running: {after}")
             try:
-                result = subprocess.run(shlex.split(after), shell=False, capture_output=True, text=True, timeout=30)
+                result = subprocess.run(
+                    shlex.split(after), shell=False, capture_output=True, text=True, timeout=30
+                )
                 if result.returncode == 0:
                     print(f"APPLIED: {target.display}")
                     applied += 1

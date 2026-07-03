@@ -14,6 +14,19 @@ warn()  { echo -e "${YELLOW}⚠${RESET}  $*"; }
 die()   { echo -e "${RED}✗${RESET}  $*" >&2; exit 1; }
 header(){ echo -e "\n${BOLD}$*${RESET}"; }
 
+inplace_sed() {
+    local expr="$1"
+    shift
+    local file
+    for file in "$@"; do
+        if [[ "$OS" == "Darwin" ]]; then
+            sed -i '' "$expr" "$file"
+        else
+            sed -i "$expr" "$file"
+        fi
+    done
+}
+
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV="$REPO/.venv"
 LOG_DIR="$REPO/.braindrain/install-logs"
@@ -131,27 +144,26 @@ fi
 VENV_PYTHON="$VENV/bin/python"
 VENV_PIP="$VENV/bin/pip"
 
-header "4. Dependencies (full install)"
-info "Upgrading pip/setuptools/wheel ..."
-pip_with_retry "bootstrap pip tooling" "$VENV_PIP" install --upgrade pip setuptools wheel || die "pip bootstrap failed (see $LOG_FILE)."
-
-if [[ "$OS" == "Linux" ]]; then
-    if ! command -v nvidia-smi >/dev/null 2>&1; then
-        export PIP_EXTRA_INDEX_URL="${PIP_EXTRA_INDEX_URL:-https://download.pytorch.org/whl/cpu}"
-        export PIP_PREFER_BINARY=1
-        info "Linux CPU-only mode detected; enabling PyTorch CPU wheel index."
-        info "PIP_EXTRA_INDEX_URL=$PIP_EXTRA_INDEX_URL"
+header "4. Dependencies (default install — no torch)"
+if command -v uv >/dev/null 2>&1; then
+    info "Using uv sync (lockfile-backed; canonical manifest: pyproject.toml)"
+    if pip_with_retry "uv sync" uv sync; then
+        PIP_OK=1
+        ok "Dependencies installed via uv"
     else
-        info "NVIDIA GPU detected; keeping default PyPI resolution."
+        warn "uv sync failed. Review: $LOG_FILE"
+    fi
+else
+    info "uv not found — falling back to editable pip install (-e .)"
+    pip_with_retry "bootstrap pip tooling" "$VENV_PIP" install --upgrade pip setuptools wheel || die "pip bootstrap failed (see $LOG_FILE)."
+    if pip_with_retry "editable install" "$VENV_PIP" install -e "$REPO"; then
+        PIP_OK=1
+        ok "Dependencies installed"
+    else
+        warn "Dependency install failed. Review: $LOG_FILE"
     fi
 fi
-
-if pip_with_retry "install requirements.txt" "$VENV_PIP" install -r "$REPO/requirements.txt"; then
-    PIP_OK=1
-    ok "Dependencies installed"
-else
-    warn "Dependency install failed. Review: $LOG_FILE"
-fi
+info "Optional in-process embeddings (pulls torch): pip install -e \".[embeddings]\""
 
 header "5. AGENTS.md generation + env probe"
 AGENTS_TEMPLATE="$REPO/AGENTS.md.template"
@@ -217,11 +229,11 @@ ENV_EXAMPLE="$REPO/.env.example"
 if [[ -f "$ENV_EXAMPLE" ]]; then
     # Check if BRAINDRAIN_LAUNCHER_PATH is already set (uncommented)
     if grep -q "^BRAINDRAIN_LAUNCHER_PATH=" "$ENV_EXAMPLE"; then
-        sed -i '' "s|^BRAINDRAIN_LAUNCHER_PATH=.*|BRAINDRAIN_LAUNCHER_PATH=$LAUNCHER_PATH|" "$ENV_EXAMPLE"
+        inplace_sed "s|^BRAINDRAIN_LAUNCHER_PATH=.*|BRAINDRAIN_LAUNCHER_PATH=$LAUNCHER_PATH|" "$ENV_EXAMPLE"
         ok "Updated BRAINDRAIN_LAUNCHER_PATH in .env.example"
     # Check if BRAINDRAIN_LAUNCHER_PATH is commented out
     elif grep -q "# BRAINDRAIN_LAUNCHER_PATH=" "$ENV_EXAMPLE"; then
-        sed -i '' "s|^# BRAINDRAIN_LAUNCHER_PATH=.*|BRAINDRAIN_LAUNCHER_PATH=$LAUNCHER_PATH|" "$ENV_EXAMPLE"
+        inplace_sed "s|^# BRAINDRAIN_LAUNCHER_PATH=.*|BRAINDRAIN_LAUNCHER_PATH=$LAUNCHER_PATH|" "$ENV_EXAMPLE"
         ok "Uncommented and set BRAINDRAIN_LAUNCHER_PATH in .env.example"
     # Otherwise append it
     else
@@ -424,4 +436,4 @@ echo "   - search_tools(\"environment + mcp setup\", top_k=5)"
 echo "   - get_token_dashboard()"
 echo ""
 echo -e "${BOLD}Update command${RESET}"
-echo "cd \"$REPO\" && \"$VENV_PIP\" install -r requirements.txt"
+echo "cd \"$REPO\" && (command -v uv >/dev/null && uv sync || \"$VENV_PIP\" install -e .)"

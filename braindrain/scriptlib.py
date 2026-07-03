@@ -10,12 +10,11 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import yaml
-
 
 SCRIPTLIB_DIR = ".scriptlib"
 SCRIPTLIB_LIBRARY_DIR = "library"
@@ -72,7 +71,7 @@ _session_store_client = None
 
 @dataclass
 class ScriptRoots:
-    project_root: Optional[Path]
+    project_root: Path | None
     global_root: Path
 
 
@@ -88,7 +87,7 @@ def render_guidance(content: str, *, enabled: bool) -> str:
 
 
 def now_utc() -> str:
-    return datetime.now(tz=timezone.utc).isoformat()
+    return datetime.now(tz=UTC).isoformat()
 
 
 def global_scriptlib_root() -> Path:
@@ -122,6 +121,19 @@ def canonical_id_for_path(path: Path, base_dir: Path) -> str:
     return slug.replace("/", "--").strip("-") or "script"
 
 
+def _sanitize_slug(value: str | None) -> str:
+    """Ensure a string is safe for use in path construction (no traversal)."""
+    if not value or not isinstance(value, str):
+        return ""
+    # Whitelist: lowercase, digits, underscore, hyphen, dot.
+    slug = value.strip().lower()
+    slug = re.sub(r"[^a-z0-9._-]+", "-", slug)
+    # Collapse consecutive dots and remove any ".." sequences to block traversal.
+    while ".." in slug:
+        slug = slug.replace("..", ".")
+    return slug.strip(".-")
+
+
 def _default_settings(*, scope: str) -> dict[str, Any]:
     return {
         "enabled": False,
@@ -142,7 +154,9 @@ def read_settings(root: Path) -> dict[str, Any]:
         data = json.loads(p.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return {}
-    defaults = _default_settings(scope="global" if root.resolve() == global_scriptlib_root().resolve() else "project")
+    defaults = _default_settings(
+        scope="global" if root.resolve() == global_scriptlib_root().resolve() else "project"
+    )
     defaults.update(data)
     defaults["ignore_dirs"] = sorted({str(item) for item in defaults.get("ignore_dirs", []) or []})
     defaults["shared_pins"] = dict(defaults.get("shared_pins") or {})
@@ -158,7 +172,9 @@ def write_settings(root: Path, data: dict[str, Any]) -> None:
     payload["shared_pins"] = dict(payload.get("shared_pins") or {})
     payload["maintenance"] = dict(payload.get("maintenance") or {})
     root.mkdir(parents=True, exist_ok=True)
-    settings_path(root).write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    settings_path(root).write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
 
 
 def is_enabled(root: Path) -> bool:
@@ -169,7 +185,9 @@ def enabled_for_workspace(project_path: str | Path) -> bool:
     return is_enabled(project_scriptlib_root(project_path))
 
 
-def ensure_root_layout(root: Path, *, scope: str, enabled: bool, dry_run: bool = False) -> dict[str, Any]:
+def ensure_root_layout(
+    root: Path, *, scope: str, enabled: bool, dry_run: bool = False
+) -> dict[str, Any]:
     result: dict[str, Any] = {
         "ok": True,
         "root": str(root),
@@ -195,9 +213,14 @@ def ensure_root_layout(root: Path, *, scope: str, enabled: bool, dry_run: bool =
     settings.setdefault("created_at", now_utc())
     write_settings(root, settings)
     if not index_path(root).exists():
-        index_path(root).write_text(json.dumps({"entries": [], "generated_at": now_utc()}, indent=2) + "\n", encoding="utf-8")
+        index_path(root).write_text(
+            json.dumps({"entries": [], "generated_at": now_utc()}, indent=2) + "\n",
+            encoding="utf-8",
+        )
     if not catalog_path(root).exists():
-        catalog_path(root).write_text("# Scriptlib Catalog\n\n_No entries yet._\n", encoding="utf-8")
+        catalog_path(root).write_text(
+            "# Scriptlib Catalog\n\n_No entries yet._\n", encoding="utf-8"
+        )
     result["action"] = "ensured"
     return result
 
@@ -221,7 +244,9 @@ def enable(
     return result
 
 
-def disable(project_path: str = ".", *, scope: str = "project", dry_run: bool = False) -> dict[str, Any]:
+def disable(
+    project_path: str = ".", *, scope: str = "project", dry_run: bool = False
+) -> dict[str, Any]:
     if scope not in {"project", "global"}:
         return {"ok": False, "error": f"Unsupported scope: {scope}"}
     root = project_scriptlib_root(project_path) if scope == "project" else global_scriptlib_root()
@@ -258,7 +283,9 @@ def _get_session_store():
     return _session_store_client
 
 
-def _record_scriptlib_metric(metric_type: str, *, value: float = 1.0, metadata: dict[str, Any] | None = None) -> None:
+def _record_scriptlib_metric(
+    metric_type: str, *, value: float = 1.0, metadata: dict[str, Any] | None = None
+) -> None:
     client = _get_wiki_brain()
     if client is None:
         return
@@ -414,7 +441,7 @@ def _parse_revision(value: Any, *, default: int = 1) -> int:
 def _normalize_channel(value: str | None, *, default: str) -> str:
     if not value:
         return default
-    return value.strip().lower() or default
+    return _sanitize_slug(value) or default
 
 
 def _approval_actions(scope: str, promotion_state: str) -> list[str]:
@@ -427,7 +454,9 @@ def _approval_actions(scope: str, promotion_state: str) -> list[str]:
 
 def _normalize_entry(entry: dict[str, Any], *, root: Path) -> dict[str, Any]:
     scope = entry.get("scope") or _scope_for_root(root)
-    promotion_state = entry.get("promotion_state") or ("promoted" if scope == "shared" else "harvested")
+    promotion_state = entry.get("promotion_state") or (
+        "promoted" if scope == "shared" else "harvested"
+    )
     default_channel = PINNED_SHARED_DEFAULT_CHANNEL if scope == "shared" else "workspace"
     channel = _normalize_channel(entry.get("channel"), default=default_channel)
     revision = _parse_revision(entry.get("revision") or entry.get("version"), default=1)
@@ -436,7 +465,9 @@ def _normalize_entry(entry: dict[str, Any], *, root: Path) -> dict[str, Any]:
     entry["channel"] = channel
     entry["revision"] = revision
     entry["schema_version"] = SCRIPTLIB_SCHEMA_VERSION
-    entry["approval_required_actions"] = list(entry.get("approval_required_actions") or _approval_actions(scope, promotion_state))
+    entry["approval_required_actions"] = list(
+        entry.get("approval_required_actions") or _approval_actions(scope, promotion_state)
+    )
     entry["requires_approval"] = bool(entry["approval_required_actions"])
     entry["provenance"] = dict(
         entry.get("provenance")
@@ -460,9 +491,13 @@ def _normalize_entry(entry: dict[str, Any], *, root: Path) -> dict[str, Any]:
     return entry
 
 
-def _normalize_index_entry(entry: dict[str, Any], *, root: Path, project_path: str | None = None) -> dict[str, Any]:
+def _normalize_index_entry(
+    entry: dict[str, Any], *, root: Path, project_path: str | None = None
+) -> dict[str, Any]:
     scope = entry.get("scope") or _scope_for_root(root)
-    promotion_state = entry.get("promotion_state") or ("promoted" if scope == "shared" else "harvested")
+    promotion_state = entry.get("promotion_state") or (
+        "promoted" if scope == "shared" else "harvested"
+    )
     default_channel = PINNED_SHARED_DEFAULT_CHANNEL if scope == "shared" else "workspace"
     revision = _parse_revision(entry.get("revision") or entry.get("version"), default=1)
     payload = dict(entry)
@@ -470,7 +505,9 @@ def _normalize_index_entry(entry: dict[str, Any], *, root: Path, project_path: s
     payload["promotion_state"] = promotion_state
     payload["channel"] = _normalize_channel(payload.get("channel"), default=default_channel)
     payload["revision"] = revision
-    payload["approval_required_actions"] = list(payload.get("approval_required_actions") or _approval_actions(scope, promotion_state))
+    payload["approval_required_actions"] = list(
+        payload.get("approval_required_actions") or _approval_actions(scope, promotion_state)
+    )
     payload["requires_approval"] = bool(payload["approval_required_actions"])
     payload.setdefault("provenance", {})
     payload.setdefault("shared_pin", None)
@@ -479,8 +516,12 @@ def _normalize_index_entry(entry: dict[str, Any], *, root: Path, project_path: s
         pin = _project_pin(project_path, payload.get("canonical_id", ""))
         if pin and scope == "shared":
             payload["shared_pin"] = pin
-            latest = _latest_shared_entry(global_scriptlib_root(), payload["canonical_id"], channel=pin.get("channel"))
-            payload["update_availability"] = bool(latest and latest.get("revision", 0) > int(pin.get("revision", 0)))
+            latest = _latest_shared_entry(
+                global_scriptlib_root(), payload["canonical_id"], channel=pin.get("channel")
+            )
+            payload["update_availability"] = bool(
+                latest and latest.get("revision", 0) > int(pin.get("revision", 0))
+            )
     return payload
 
 
@@ -520,7 +561,9 @@ def _score_from_runs(entry: dict[str, Any]) -> float:
     native_bonus = 5 if entry.get("execution_mode") == "native_copy" else 0
     shared_bonus = 5 if entry.get("scope") == "shared" else 0
     flaky_penalty = min(failures * 2, 15)
-    score = (success_rate * 80.0) + 10.0 + status_bonus + native_bonus + shared_bonus - flaky_penalty
+    score = (
+        (success_rate * 80.0) + 10.0 + status_bonus + native_bonus + shared_bonus - flaky_penalty
+    )
     return round(max(0.0, min(100.0, score)), 2)
 
 
@@ -576,16 +619,25 @@ def refresh_index(root: Path, *, dry_run: bool = False) -> dict[str, Any]:
         if not dry_run:
             meta_path = Path(entry["_metadata_path"])
             payload = {k: v for k, v in entry.items() if not k.startswith("_")}
-            meta_path.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=False), encoding="utf-8")
+            meta_path.write_text(
+                yaml.safe_dump(payload, sort_keys=False, allow_unicode=False), encoding="utf-8"
+            )
 
     index_payload = {
         "generated_at": now_utc(),
-        "entries": sorted(indexed, key=lambda item: (-float(item.get("success_score", 0.0)), item.get("script_id", ""))),
+        "entries": sorted(
+            indexed,
+            key=lambda item: (-float(item.get("success_score", 0.0)), item.get("script_id", "")),
+        ),
     }
     if not dry_run:
         root.mkdir(parents=True, exist_ok=True)
-        index_path(root).write_text(json.dumps(index_payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        catalog_path(root).write_text(build_catalog(index_payload["entries"], root=root), encoding="utf-8")
+        index_path(root).write_text(
+            json.dumps(index_payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        catalog_path(root).write_text(
+            build_catalog(index_payload["entries"], root=root), encoding="utf-8"
+        )
     return {"ok": True, "root": str(root), "entries": len(indexed), "dry_run": dry_run}
 
 
@@ -654,9 +706,7 @@ def _candidate_files(project_root: Path, *, ignore_dirs: list[str] | None = None
         current = Path(current_root)
         rel_current = current.relative_to(project_root)
         dirnames[:] = [
-            name
-            for name in dirnames
-            if not _should_ignore_dir(rel_current / name, ignore_set)
+            name for name in dirnames if not _should_ignore_dir(rel_current / name, ignore_set)
         ]
         for filename in filenames:
             path = current / filename
@@ -675,7 +725,9 @@ def _project_pin(project_path: str | Path, canonical_id: str) -> dict[str, Any] 
     return dict((settings.get("shared_pins") or {}).get(canonical_id) or {}) or None
 
 
-def _find_entry_in_root(script_id: str, *, root: Path, variant: str | None = None) -> tuple[Optional[dict[str, Any]], Optional[Path]]:
+def _find_entry_in_root(
+    script_id: str, *, root: Path, variant: str | None = None
+) -> tuple[dict[str, Any] | None, Path | None]:
     for entry in _iter_entry_metadata(root):
         if entry.get("script_id") == script_id or entry.get("canonical_id") == script_id:
             if variant and entry.get("variant") != variant:
@@ -684,7 +736,9 @@ def _find_entry_in_root(script_id: str, *, root: Path, variant: str | None = Non
     return None, None
 
 
-def _latest_shared_entry(root: Path, canonical_id: str, *, channel: str | None = None) -> dict[str, Any] | None:
+def _latest_shared_entry(
+    root: Path, canonical_id: str, *, channel: str | None = None
+) -> dict[str, Any] | None:
     entries = [
         entry
         for entry in _iter_entry_metadata(root)
@@ -694,7 +748,9 @@ def _latest_shared_entry(root: Path, canonical_id: str, *, channel: str | None =
         entries = [entry for entry in entries if entry.get("channel") == channel]
     if not entries:
         return None
-    entries.sort(key=lambda item: (int(item.get("revision", 1)), item.get("updated_at", "")), reverse=True)
+    entries.sort(
+        key=lambda item: (int(item.get("revision", 1)), item.get("updated_at", "")), reverse=True
+    )
     return entries[0]
 
 
@@ -711,7 +767,9 @@ def _promotion_candidates(project_path: str | Path) -> list[dict[str, Any]]:
             continue
         if float(entry.get("success_score", 0.0)) < 70.0:
             continue
-        latest = _latest_shared_entry(global_root, entry["canonical_id"], channel=PINNED_SHARED_DEFAULT_CHANNEL)
+        latest = _latest_shared_entry(
+            global_root, entry["canonical_id"], channel=PINNED_SHARED_DEFAULT_CHANNEL
+        )
         if latest and latest.get("source_hash") == entry.get("source_hash"):
             continue
         out.append(
@@ -731,7 +789,11 @@ def harvest_workspace(project_path: str = ".", *, dry_run: bool = False) -> dict
     project_root = Path(project_path).expanduser().resolve()
     root = project_scriptlib_root(project_root)
     if not is_enabled(root):
-        return {"ok": False, "error": "scriptlib is not enabled for this workspace", "root": str(root)}
+        return {
+            "ok": False,
+            "error": "scriptlib is not enabled for this workspace",
+            "root": str(root),
+        }
 
     ensure_root_layout(root, scope="project", enabled=True, dry_run=False)
     settings = read_settings(root)
@@ -813,7 +875,9 @@ def harvest_workspace(project_path: str = ".", *, dry_run: bool = False) -> dict
             entry["success_score"] = existing_entry.get("success_score", entry["success_score"])
             entry["common_mistakes"] = existing_entry.get("common_mistakes", [])
             entry["run_history"] = existing_entry.get("run_history", [])
-            entry["approval_required_actions"] = existing_entry.get("approval_required_actions", entry["approval_required_actions"])
+            entry["approval_required_actions"] = existing_entry.get(
+                "approval_required_actions", entry["approval_required_actions"]
+            )
             if existing_entry.get("execution_mode") == "native_copy":
                 entry["execution_mode"] = "native_copy"
 
@@ -830,7 +894,14 @@ def harvest_workspace(project_path: str = ".", *, dry_run: bool = False) -> dict
             else:
                 updated += 1
 
-        meta_path.write_text(yaml.safe_dump({k: v for k, v in entry.items() if not k.startswith("_")}, sort_keys=False, allow_unicode=False), encoding="utf-8")
+        meta_path.write_text(
+            yaml.safe_dump(
+                {k: v for k, v in entry.items() if not k.startswith("_")},
+                sort_keys=False,
+                allow_unicode=False,
+            ),
+            encoding="utf-8",
+        )
         harvested.append(entry)
 
     if not dry_run:
@@ -838,9 +909,15 @@ def harvest_workspace(project_path: str = ".", *, dry_run: bool = False) -> dict
         _record_scriptlib_metric(
             "scriptlib_harvest",
             value=float(len(harvested)),
-            metadata={"project_root": str(project_root), "files_copied": copied, "files_updated": updated},
+            metadata={
+                "project_root": str(project_root),
+                "files_copied": copied,
+                "files_updated": updated,
+            },
         )
-        _touch_scriptlib_session(tool_name="scriptlib_harvest_workspace", key_decision="harvested project scripts")
+        _touch_scriptlib_session(
+            tool_name="scriptlib_harvest_workspace", key_decision="harvested project scripts"
+        )
 
     return {
         "ok": True,
@@ -934,7 +1011,7 @@ def search(
     ranked: list[dict[str, Any]] = []
     project_root = str(project_scriptlib_root(project_path))
     for root in roots:
-        for entry in (_load_index(root).get("entries") or []):
+        for entry in _load_index(root).get("entries") or []:
             entry = _normalize_index_entry(entry, root=root, project_path=project_path)
             if capability and capability not in (entry.get("tags") or []):
                 continue
@@ -948,10 +1025,21 @@ def search(
             match_score = sum(haystack.count(token) for token in tokens) if tokens else 1
             overlay_bonus = 15.0 if str(root) == project_root else 0.0
             pin_bonus = 10.0 if entry.get("shared_pin") else 0.0
-            score = (match_score * 5.0) + float(entry.get("success_score", 0.0)) / 10.0 + overlay_bonus + pin_bonus
+            score = (
+                (match_score * 5.0)
+                + float(entry.get("success_score", 0.0)) / 10.0
+                + overlay_bonus
+                + pin_bonus
+            )
             ranked.append({**entry, "_library_root": str(root), "_score": round(score, 2)})
 
-    ranked.sort(key=lambda item: (-item["_score"], -float(item.get("success_score", 0.0)), item.get("script_id", "")))
+    ranked.sort(
+        key=lambda item: (
+            -item["_score"],
+            -float(item.get("success_score", 0.0)),
+            item.get("script_id", ""),
+        )
+    )
     top = ranked[:limit]
     return {
         "ok": True,
@@ -962,7 +1050,9 @@ def search(
     }
 
 
-def _find_entry(script_id: str, *, project_path: str = ".", variant: str | None = None) -> tuple[Optional[dict[str, Any]], Optional[Path]]:
+def _find_entry(
+    script_id: str, *, project_path: str = ".", variant: str | None = None
+) -> tuple[dict[str, Any] | None, Path | None]:
     for root in _active_roots(project_path):
         for entry in _iter_entry_metadata(root):
             if entry.get("script_id") == script_id or entry.get("canonical_id") == script_id:
@@ -972,7 +1062,9 @@ def _find_entry(script_id: str, *, project_path: str = ".", variant: str | None 
     return None, None
 
 
-def describe(script_id: str, *, project_path: str = ".", variant: str | None = None) -> dict[str, Any]:
+def describe(
+    script_id: str, *, project_path: str = ".", variant: str | None = None
+) -> dict[str, Any]:
     entry, root = _find_entry(script_id, project_path=project_path, variant=variant)
     if entry is None or root is None:
         return {"ok": False, "error": f"Script not found: {script_id}"}
@@ -981,14 +1073,22 @@ def describe(script_id: str, *, project_path: str = ".", variant: str | None = N
     payload["recommended_run_mode"] = entry.get("execution_mode")
     if payload.get("scope") == "shared":
         pin = _project_pin(project_path, payload.get("canonical_id", ""))
-        latest = _latest_shared_entry(global_scriptlib_root(), payload["canonical_id"], channel=payload.get("channel"))
+        latest = _latest_shared_entry(
+            global_scriptlib_root(), payload["canonical_id"], channel=payload.get("channel")
+        )
         payload["shared_pin"] = pin
-        payload["update_availability"] = bool(pin and latest and latest.get("revision", 0) > int(pin.get("revision", 0)))
+        payload["update_availability"] = bool(
+            pin and latest and latest.get("revision", 0) > int(pin.get("revision", 0))
+        )
     return {"ok": True, "script": payload}
 
 
 def _command_for_entry(entry: dict[str, Any], *, use_copy: bool) -> list[str]:
-    target = entry.get("copy_path") if use_copy else str(Path(entry["source_workspace_root"]) / entry["source_path"])
+    target = (
+        entry.get("copy_path")
+        if use_copy
+        else str(Path(entry["source_workspace_root"]) / entry["source_path"])
+    )
     runtime = entry.get("runtime")
     if runtime == "python":
         return [sys.executable, target]
@@ -1039,11 +1139,17 @@ def record_result(
     entry["success_score"] = _score_from_runs(entry)
     meta_path = Path(entry["_metadata_path"])
     payload = {k: v for k, v in entry.items() if not k.startswith("_")}
-    meta_path.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=False), encoding="utf-8")
+    meta_path.write_text(
+        yaml.safe_dump(payload, sort_keys=False, allow_unicode=False), encoding="utf-8"
+    )
     refresh_index(root)
     _record_scriptlib_metric(
         "scriptlib_run_success" if outcome == "success" else "scriptlib_run_failure",
-        metadata={"script_id": payload["script_id"], "scope": payload.get("scope"), "status": payload.get("status")},
+        metadata={
+            "script_id": payload["script_id"],
+            "scope": payload.get("scope"),
+            "status": payload.get("status"),
+        },
     )
     return {
         "ok": True,
@@ -1165,15 +1271,21 @@ def fork(
         return {"ok": False, "error": f"Script not found: {script_id}"}
 
     variant = entry.get("variant", "copy")
-    version = new_variant_or_version
+    version = _sanitize_slug(new_variant_or_version)
+    if not version:
+        return {"ok": False, "error": f"Invalid version name: {new_variant_or_version}"}
     src_dir = Path(entry["_entry_dir"])
     dst_dir = _entry_dir(root, entry["canonical_id"], variant, version)
     if dst_dir.exists():
         return {"ok": False, "error": f"Target version already exists: {version}"}
     shutil.copytree(src_dir, dst_dir)
     meta_path = dst_dir / SCRIPTLIB_METADATA_FILE
-    payload = _normalize_entry(yaml.safe_load(meta_path.read_text(encoding="utf-8")) or {}, root=root)
-    script_copy = next((p for p in dst_dir.iterdir() if p.is_file() and p.name != SCRIPTLIB_METADATA_FILE), None)
+    payload = _normalize_entry(
+        yaml.safe_load(meta_path.read_text(encoding="utf-8")) or {}, root=root
+    )
+    script_copy = next(
+        (p for p in dst_dir.iterdir() if p.is_file() and p.name != SCRIPTLIB_METADATA_FILE), None
+    )
     payload["version"] = version
     payload["revision"] = _parse_revision(version, default=int(entry.get("revision", 1)))
     payload["script_id"] = f"{payload['canonical_id']}:{payload['variant']}:{version}"
@@ -1183,7 +1295,9 @@ def fork(
     payload["run_history"] = []
     if script_copy is not None:
         payload["copy_path"] = str(script_copy)
-    meta_path.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=False), encoding="utf-8")
+    meta_path.write_text(
+        yaml.safe_dump(payload, sort_keys=False, allow_unicode=False), encoding="utf-8"
+    )
     refresh_index(root)
     return {
         "ok": True,
@@ -1231,7 +1345,9 @@ def promote(
 
     next_revision = (int(latest.get("revision", 0)) if latest else 0) + 1
     version = f"{normalized_channel}-r{next_revision}"
-    shared_dir = _entry_dir(shared_root, entry["canonical_id"], entry.get("variant", "copy"), version)
+    shared_dir = _entry_dir(
+        shared_root, entry["canonical_id"], entry.get("variant", "copy"), version
+    )
     if dry_run:
         return {
             "ok": True,
@@ -1245,8 +1361,12 @@ def promote(
 
     shutil.copytree(Path(entry["_entry_dir"]), shared_dir)
     shared_meta = shared_dir / SCRIPTLIB_METADATA_FILE
-    payload = _normalize_entry(yaml.safe_load(shared_meta.read_text(encoding="utf-8")) or {}, root=shared_root)
-    shared_script = next((p for p in shared_dir.iterdir() if p.is_file() and p.name != SCRIPTLIB_METADATA_FILE), None)
+    payload = _normalize_entry(
+        yaml.safe_load(shared_meta.read_text(encoding="utf-8")) or {}, root=shared_root
+    )
+    shared_script = next(
+        (p for p in shared_dir.iterdir() if p.is_file() and p.name != SCRIPTLIB_METADATA_FILE), None
+    )
     payload.update(
         {
             "script_id": f"{entry['canonical_id']}:{entry.get('variant', 'copy')}:{version}",
@@ -1261,8 +1381,12 @@ def promote(
             "provenance": {
                 "source_workspace_root": entry.get("source_workspace_root"),
                 "source_path": entry.get("source_path"),
-                "original_source_workspace_root": entry.get("provenance", {}).get("original_source_workspace_root", entry.get("source_workspace_root")),
-                "original_source_path": entry.get("provenance", {}).get("original_source_path", entry.get("source_path")),
+                "original_source_workspace_root": entry.get("provenance", {}).get(
+                    "original_source_workspace_root", entry.get("source_workspace_root")
+                ),
+                "original_source_path": entry.get("provenance", {}).get(
+                    "original_source_path", entry.get("source_path")
+                ),
                 "promoted_from_script_id": entry.get("script_id"),
                 "promoted_from_library_root": str(project_root),
             },
@@ -1270,11 +1394,17 @@ def promote(
     )
     if shared_script is not None:
         payload["copy_path"] = str(shared_script)
-    shared_meta.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=False), encoding="utf-8")
+    shared_meta.write_text(
+        yaml.safe_dump(payload, sort_keys=False, allow_unicode=False), encoding="utf-8"
+    )
     refresh_index(shared_root)
     _record_scriptlib_metric(
         "scriptlib_promote",
-        metadata={"canonical_id": entry["canonical_id"], "channel": normalized_channel, "revision": next_revision},
+        metadata={
+            "canonical_id": entry["canonical_id"],
+            "channel": normalized_channel,
+            "revision": next_revision,
+        },
     )
     _store_scriptlib_fact(
         title=f"Promoted script {entry['canonical_id']}",
@@ -1282,7 +1412,9 @@ def promote(
         tags=[normalized_channel, "promotion"],
         metadata={"shared_script_id": payload["script_id"]},
     )
-    _touch_scriptlib_session(tool_name="scriptlib_promote", key_decision=f"promoted {entry['canonical_id']} to shared")
+    _touch_scriptlib_session(
+        tool_name="scriptlib_promote", key_decision=f"promoted {entry['canonical_id']} to shared"
+    )
     return {
         "ok": True,
         "action": "promoted",
@@ -1293,7 +1425,9 @@ def promote(
     }
 
 
-def _resolve_shared_entry(script_id: str, *, channel: str | None = None, target_revision: int | None = None) -> dict[str, Any] | None:
+def _resolve_shared_entry(
+    script_id: str, *, channel: str | None = None, target_revision: int | None = None
+) -> dict[str, Any] | None:
     shared_root = global_scriptlib_root()
     exact, _ = (None, None)
     if script_id.count(":") >= 2:
@@ -1323,7 +1457,9 @@ def list_updates(project_path: str = ".") -> dict[str, Any]:
     updates: list[dict[str, Any]] = []
     current: list[dict[str, Any]] = []
     for canonical_id, pin in sorted(pins.items()):
-        latest = _latest_shared_entry(global_scriptlib_root(), canonical_id, channel=pin.get("channel"))
+        latest = _latest_shared_entry(
+            global_scriptlib_root(), canonical_id, channel=pin.get("channel")
+        )
         item = {
             "canonical_id": canonical_id,
             "current_pin": pin,
@@ -1346,7 +1482,13 @@ def list_updates(project_path: str = ".") -> dict[str, Any]:
             item["status"] = "update_available"
             updates.append(item)
         current.append(item)
-    return {"ok": True, "root": str(root), "pins": len(pins), "updates": updates, "current": current}
+    return {
+        "ok": True,
+        "root": str(root),
+        "pins": len(pins),
+        "updates": updates,
+        "current": current,
+    }
 
 
 def apply_update(
@@ -1395,13 +1537,22 @@ def apply_update(
     write_settings(root, settings)
     _record_scriptlib_metric(
         "scriptlib_apply_update",
-        metadata={"canonical_id": target["canonical_id"], "channel": target["channel"], "revision": target["revision"]},
+        metadata={
+            "canonical_id": target["canonical_id"],
+            "channel": target["channel"],
+            "revision": target["revision"],
+        },
     )
-    _touch_scriptlib_session(tool_name="scriptlib_apply_update", key_decision=f"pinned {target['canonical_id']} to {target['script_id']}")
+    _touch_scriptlib_session(
+        tool_name="scriptlib_apply_update",
+        key_decision=f"pinned {target['canonical_id']} to {target['script_id']}",
+    )
     return {"ok": True, "action": action, "pin": pin_payload}
 
 
-def catalog_status(project_path: str = ".", *, include_entries: bool = False, limit: int = 20) -> dict[str, Any]:
+def catalog_status(
+    project_path: str = ".", *, include_entries: bool = False, limit: int = 20
+) -> dict[str, Any]:
     project_root = project_scriptlib_root(project_path)
     shared_root = global_scriptlib_root()
     project_enabled = is_enabled(project_root)
@@ -1473,7 +1624,7 @@ def run_maintenance(
 
     refreshed = [refresh_index(root, dry_run=dry_run) for root in roots]
     settings = read_settings(project_root)
-    ignore_dirs = sorted({*(settings.get("ignore_dirs") or []), *((add_ignore_dirs or []))})
+    ignore_dirs = sorted({*(settings.get("ignore_dirs") or []), *(add_ignore_dirs or [])})
     if add_ignore_dirs and not dry_run:
         settings["ignore_dirs"] = ignore_dirs
         settings["maintenance"] = {
@@ -1517,14 +1668,21 @@ def run_maintenance(
                     "duplicate_groups": len(report["duplicate_candidates"]),
                 },
             )
-        _touch_scriptlib_session(tool_name="scriptlib_run_maintenance", key_decision="ran scriptlib maintenance")
+        _touch_scriptlib_session(
+            tool_name="scriptlib_run_maintenance", key_decision="ran scriptlib maintenance"
+        )
     return report
 
 
 def seed_if_enabled(project_path: str = ".", *, dry_run: bool = False) -> dict[str, Any]:
     root = project_scriptlib_root(project_path)
     if not is_enabled(root):
-        return {"ok": True, "skipped": "scriptlib_disabled", "root": str(root), "guidance_enabled": False}
+        return {
+            "ok": True,
+            "skipped": "scriptlib_disabled",
+            "root": str(root),
+            "guidance_enabled": False,
+        }
     result = ensure_root_layout(root, scope="project", enabled=True, dry_run=dry_run)
     result["guidance_enabled"] = True
     return result

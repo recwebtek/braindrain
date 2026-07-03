@@ -1,7 +1,9 @@
 # braindrain
 
+[![CI](https://github.com/recwebtek/braindrain/actions/workflows/ci.yml/badge.svg)](https://github.com/recwebtek/braindrain/actions/workflows/ci.yml)
+
 **Version:** V1.0.3  
-**Last Updated:** 2026-04-16
+**Last Updated:** 2026-06-11
 
 An MCP server that keeps AI agents lean. It stops context windows bloating with redundant tool definitions, large raw outputs, and repeated environment discovery — and gives agents the right information at the right time instead.
 
@@ -99,7 +101,17 @@ Set `embeddings.default_provider` (default: `lmstudio_local`). Programmatic help
 - `ingest_codebase` — runs `ai_distiller` first only when repo file count exceeds `options.distiller_when_file_count_gt` (default 200).
 - `refactor_prep_token_light` — `filescope` + `text_editor` before `repo_mapper` / `jcodemunch` when `token_budget` &lt; 2000.
 
-**Benchmark harness** (machine-local): `python3 .scriptlib/benchmark_token_savings_brain_mcp_hub_v1.py --repo-root .` → writes `.braindrain/plan-reports/token-benchmark-*.md`.
+**Benchmark harness** (machine-local report under `.braindrain/plan-reports/`):
+
+```bash
+# Tracked CLI (also mirrored in .scriptlib/ when scriptlib is enabled)
+python3 scripts/benchmark_token_savings_brain_mcp_hub_v1.py --repo-root . --fail-on-regression
+
+# Pytest marker (used by nightly token-benchmark workflow)
+uv run pytest -m token_benchmark
+```
+
+Replays deterministic fixtures in `tests/fixtures/token_benchmark/` through **hub-on** paths (`route_output`, `search_tools`, cached `get_env_context`, session compaction) vs a **hub-off** naive full-context baseline. Metrics align with `braindrain/telemetry.py` (`estimated_raw_tokens` / `actual_context_tokens` / `saved_tokens`). Minimum savings floor defaults to **25%** (`TOKEN_BENCHMARK_MIN_SAVINGS_PCT`). Nightly CI uploads the markdown report as a workflow artifact (not committed).
 
 
 ### Workflows
@@ -127,7 +139,16 @@ Set `embeddings.default_provider` (default: `lmstudio_local`). Programmatic help
 | `run_workflow(name, args)`                               | Execute a workflow. Intermediate output is routed through the sandbox — only the final summary returns to the agent.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 
-`list_workflows()` includes `init_project_memory` and **`prime_cursor_orchestration`** (calls `prime_workspace` with `bundle=cursor-orchestration` — deploys agents, hooks, skills, `scripts/daily_plan_audit.py`, and `scripts/plan_build_guard.py`). Consumer slash command: `/prime-braindrain` (from templates). Plan Build: run `python3 scripts/plan_build_guard.py --plan <path>` before edits (see Ruler `RULES.md`).
+`list_workflows()` includes `init_project_memory` and **`prime_cursor_orchestration`** (calls `prime_workspace` with `bundle=cursor-orchestration` — deploys agents, hooks, skills, `scripts/daily_plan_audit.py`, and `scripts/plan_build_guard.py`). Consumer slash commands (from `config/templates/cursor/commands/`, installed by `prime_workspace` into `.cursor/commands/`):
+
+| Command | When to use |
+| ------- | ----------- |
+| `/prime-braindrain` | Onboard or refresh Cursor orchestration (rules, hooks, skills, auditor scripts). |
+| `/brainlog` | **End of chat** — finalize L1 session compaction, token checkpoint, optional L2 wiki-brain promotion, L3 dream guidance, and reminders to update `.braindrain/AGENT_MEMORY.md` / `OPS.md` / `SESSION_PROGRESS.md`. |
+| `/masterplan` | Manual planning close-out (`daily_plan_audit.py`); use after editing `*.plan.md`, not as a substitute for `/brainlog`. See cadence table in `config/templates/cursor/commands/masterplan.md`. |
+| `/metaplan-closeout` | Split a `disposition: meta` umbrella plan into child `*.plan.md` files + `_master` links (`plan_meta_closeout.py`). |
+
+Plan Build: run `python3 scripts/plan_build_guard.py --plan <path>` before edits (see Ruler `RULES.md`). Meta plans are blocked (`meta_plan_no_build`) — close out with `/metaplan-closeout` first.
 
 ### Telemetry
 
@@ -139,6 +160,24 @@ Set `embeddings.default_provider` (default: `lmstudio_local`). Programmatic help
 | `record_token_checkpoint(phase, task, note, context_tags, path=".")` | Append schema `1.0` rows to `<path>/.braindrain/token-metrics.jsonl`. Use the **workspace root** for `path` (same as `export_mcp_catalog`), not the JSONL file path. |
 
 Async MCP tools record observer `tool_call` rows via `asyncio.to_thread` so SQLite writes do not block the event loop.
+
+### MCP Apps (inline dashboards)
+
+Cursor and other MCP App hosts can render interactive `ui://` HTML from braindrain without loading a separate frontend stack.
+
+| Tool | When to use |
+| ---- | ----------- |
+| `show_token_dashboard()` | Inline token savings snapshot (JSON via `get_token_dashboard` stays separate). |
+| `show_plan_board(path="")` | Interactive plan task board from `.braindrain/plan-reports/`. |
+| `show_sigint_map(path="", session_id="")` | Operational topology graph (session, tools, hooks, plans, external MCP peers). |
+| `poll_plan_board(...)` | **App-only** — refresh board and all plan-board write actions from the iframe (audit, sync, archive, disposition, masterplan). |
+| `poll_sigint_map(...)` | **App-only** — refresh SIGINT map graph from the iframe (8s auto-poll). |
+
+**Plan board UI:** filters, per-plan disposition dropdown, Recheck/Apply sync, archive/cancel, timestamp tags, and open-in-editor flow. Full reference: [`braindrain/mcp_apps/PLAN_BOARD_UI.md`](braindrain/mcp_apps/PLAN_BOARD_UI.md).
+
+**SIGINT map UI:** SVG force graph of active-session ops intelligence from observer events + project config. Full reference: [`braindrain/mcp_apps/SIGINT_MAP_UI.md`](braindrain/mcp_apps/SIGINT_MAP_UI.md).
+
+Restart the braindrain MCP server after `braindrain/mcp_apps/` or registration changes.
 
 
 ### Token Checkpoint Protocol
@@ -216,7 +255,7 @@ cd braindrain
 - Validates Python **3.11-3.14** (fails fast on unsupported runtimes like 3.15+)
 - Creates `.env.dev` early (before dependency steps) so env setup never gets skipped
 - Installs full dependencies with visible progress, retries, and install logging to `.braindrain/install-logs/`
-- On Linux CPU-only machines, prefers PyTorch CPU wheels to avoid accidental CUDA downloads
+- Default install is **torch-free** (`pyproject.toml` is canonical); optional in-process embeddings via `pip install -e ".[embeddings]"`
 - Runs fresh `get_env_context()` probe and regenerates `AGENTS.md`
 - Creates `.braindrain/` (gitignored, machine-local — never committed)
 - Runs an interactive MCP target checklist (Cursor, Windsurf, Zed, OpenCode, Antigravity, Codex, etc.), previews diffs, creates backups, then applies on confirmation
@@ -225,10 +264,44 @@ cd braindrain
 
 ### Manual setup (if you prefer)
 
+**With [uv](https://docs.astral.sh/uv/) (recommended for contributors — lockfile-backed):**
+
+```bash
+uv sync --group dev
+uv run pytest
+```
+
+**Classic pip (still supported):**
+
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-pip install -r requirements.txt
+pip install -e .
+# optional in-process embeddings (pulls torch):
+pip install -e ".[embeddings]"
+```
+
+`requirements.txt` is a thin compat shim (`-e .`) pointing at `pyproject.toml`.
+
+### Contributing (lint + hooks)
+
+```bash
+uv sync --group dev
+uv run ruff check
+uv run ruff format --check
+uv run pytest -m "not local_only"
+
+pre-commit install   # once per clone
+pre-commit run --all-files
+```
+
+CI runs the same checks on Python 3.11 / 3.12 / 3.14 across Ubuntu and macOS. Tests marked `local_only` (machine-local services, launchd, LM Studio, etc.) are skipped in CI. The **token benchmark** suite (`pytest -m token_benchmark`) runs on a separate nightly schedule via `.github/workflows/token-benchmark.yml`.
+
+**MCP tool schema snapshot** (`tests/test_mcp_tool_schemas.py`): CI fails if native tool definitions drift from `tests/fixtures/mcp_tool_schemas_snapshot.json`. After you intentionally change `@mcp.tool()` signatures, descriptions, or `outputSchema`, regenerate and commit the fixture:
+
+```bash
+uv run python scripts/regenerate_mcp_tool_schemas_snapshot.py
+uv run pytest tests/test_mcp_tool_schemas.py -q
 ```
 
 ### Installer options
@@ -288,6 +361,12 @@ Replace `/path/to/braindrain` with the absolute path to your clone. `install.sh`
 ```
 
 If the MCP log shows `**[MCP Allowlist] No serverName provided for adapter**`, either add `**"serverName": "braindrain"**` on that server object in `**~/.cursor/mcp.json**`, or run `**prime_workspace(..., patch_user_cursor_mcp=true)**` once so braindrain patches the global file. `install.sh` / `configure_mcp.py` and project-level `prime_workspace` set this for generated configs; UI-created entries may omit it.
+
+### Remote transport (non-stdio)
+
+- braindrain now uses FastMCP `streamable-http` for remote mode with `stateless_http=true`.
+- Legacy SSE remote transport has been removed.
+- MCP protocol headers (including `MCP-Protocol-Version`) are validated by FastMCP's Streamable HTTP transport stack.
 
 **Large `prime_workspace` results:** the MCP tool defaults to `**compact_mcp_response=true`** (smaller JSON) to avoid **ClosedResourceError** / connection closed while returning the tool result. Set `**compact_mcp_response=false`** only if you need the full `templates.deployed` map and untruncated Ruler logs.
 
@@ -396,7 +475,7 @@ Each device runs its own environment probe and gets its own `env_context` — co
 To pull updates:
 
 ```bash
-cd braindrain && git pull && .venv/bin/pip install -r requirements.txt
+cd braindrain && git pull && (command -v uv >/dev/null && uv sync || .venv/bin/pip install -e .)
 ```
 
 ---
@@ -404,6 +483,44 @@ cd braindrain && git pull && .venv/bin/pip install -r requirements.txt
 ## Configuration
 
 Main config: `config/hub_config.yaml`
+
+**Startup validation (Pydantic v2)** — `braindrain/config_schema.py` validates the YAML at server load via `braindrain/config.py`:
+
+- Invalid types or missing required fields (e.g. `mcp_tools[].name`) **fail fast** with dotted field paths.
+- Unknown **top-level** keys log a warning and are ignored (forward-compat).
+- The legacy `livingdash:` block is **not** validated; if present it is ignored (superseded by MCP Apps dashboard work).
+- Restart the braindrain MCP server after config or schema changes.
+
+**Memory stack (L0–L3)** — explicit sections in `hub_config.yaml` (defaults match server fallbacks):
+
+- `observer` — episodic tool-call ring buffer (`~/.braindrain/events.db`)
+- `sessions` — session store + inactivity compaction (`~/.braindrain/sessions.db`)
+- `wiki_brain` — durable recall/forgetting weights (`~/.braindrain/wiki-brain/brain.db`)
+- `lessons` / `memory_learning` — promotion guardrails for facts and playbooks
+- `dreaming` — consolidation policy (`quiet_minutes`, scan limits, `storage.base_dir`, `weights`, `triggers.macos_host_idle`)
+- `provider_context` — strategy for vendor-native vs Braindrain durable memory (`provider-native-first`)
+
+Restart the braindrain MCP server after changing these blocks. Machine-local ops detail: `.braindrain/OPS.md` (memory stack table).
+
+### Host-idle dream (macOS, manual opt-in)
+
+Two-step enablement (config alone does **not** install or start a watcher):
+
+1. **Install watcher for this workspace** (once per repo): `./scripts/install_dream_watch_launchd.sh`
+2. **Enable in this workspace config**: `dreaming.triggers.macos_host_idle.enabled: true` in `config/hub_config.yaml`
+
+The watcher polls HID keyboard/mouse idle time (`IOHIDSystem`). When idle exceeds `idle_threshold_seconds`, it runs consolidation using `mode` (default `full`). Shared memory DBs stay under `~/.braindrain/`; per-workspace state lives under `~/.braindrain/dreaming/workspaces/<workspace_hash>/`.
+
+| Knob | Default | Purpose |
+| --- | --- | --- |
+| `idle_threshold_seconds` | 300 | Host idle before dream is considered |
+| `poll_interval_seconds` | 120 | launchd poll interval (install script reads this) |
+| `cooldown_minutes` | 60 | Minimum gap between host-idle dream runs |
+| `bypass_session_quiet` | true | When true, host idle can dream even if a Cursor session was active recently |
+| `mode` | full | Dream mode passed to `DreamEngine.run` |
+
+Manual one-shot (no launchd): `./scripts/macos_dream_watch.sh`  
+Legacy cron path still works: `scripts/run_dream_cron.sh`
 
 Environment variables (copy `.env.example` to `.env.dev` to start):
 
@@ -454,8 +571,10 @@ python3 scripts/daily_plan_audit.py \
 ```
 braindrain/
 ├── braindrain/
-│   ├── server.py               # FastMCP server — all MCP tools registered here
-│   ├── workspace_primer.py     # prime_workspace: Ruler templates, subagents, Cursor hooks
+│   ├── server.py               # FastMCP server entrypoint + tool registration
+│   ├── tools/                  # Tool-domain implementations (tokens, memory, workflows, etc.)
+│   ├── primer/                 # Workspace primer submodules (detect/deploy/apply/memory/prime)
+│   ├── workspace_primer.py     # compatibility exports for legacy primer imports
 │   ├── env_probe.py            # OS fingerprint probe, synthesis, and cache
 │   ├── config.py               # YAML config loader
 │   ├── context_mode_client.py  # context-mode stdio client (output routing)
@@ -468,6 +587,7 @@ braindrain/
 │   ├── rerank.py               # optional search_index rerank (lexical / mixedbread / auto)
 │   ├── embeddings_client.py    # local-first embeddings (LM Studio, Ollama, cloud)
 │   ├── embeddings_router.py    # provider priority + quota backoff
+│   ├── mcp_apps/               # MCP Apps ui:// dashboards (token, plan board, SIGINT map)
 │   ├── repo_stats.py           # file-count gating for workflows
 │   └── types.py
 ├── config/
@@ -479,7 +599,8 @@ braindrain/
 │   ├── hub_config.yaml         # tools, workflows, model tiers, embeddings
 │   ├── braindrain              # launcher script (self-detecting, venv-pinned)
 │   ├── opencode_mcp.jsonc      # OpenCode reference config
-│   └── com.braindrain.mcp.plist  # macOS launchd service template
+│   ├── com.braindrain.mcp.plist  # macOS launchd service template
+│   └── com.braindrain.dream-watch.plist  # macOS host-idle dream watcher template
 ├── AGENTS.md                   # agent protocol — generated per device by install.sh
 ├── AGENTS.md.template          # template used to generate AGENTS.md
 ├── VERSION                     # semver for releases (kept in sync with this README)
@@ -498,6 +619,7 @@ braindrain/
   - Source-of-truth for those generated rule files is `config/templates/ruler/RULES.md` (and `.ruler/ruler.toml`).
   - **Important**: files like `CLAUDE.md` are **generated artifacts** (gitignored) and should be treated as **disposable**. Edit the templates instead, then re-run Ruler.
   - If a project already has older `.ruler/*` files, call `prime_workspace(..., sync_templates=true)` to refresh those templates safely and propagate new guidance without manual cleanup.
+- **Cursor slash commands**: when Cursor is in scope, `prime_workspace()` copies `config/templates/cursor/commands/*.md` → `.cursor/commands/` (create-only by default; `sync_templates=true` refreshes with backups). Shipped commands include `/prime-braindrain`, `/brainlog`, and `/build-plan` (see table under Workflows).
 - **Cursor hooks (not Ruler)**: when the resolved agent set includes Cursor, `prime_workspace()` copies `config/templates/cursor/hooks.json` and `config/templates/cursor/hooks/*.sh` into `.cursor/` (create-only by default; `sync_templates=true` overwrites with timestamped backups). Hook templates currently include:
   - `.cursor/hooks/on-stop-observe.sh` (lightweight stop-event observation)
   - `.cursor/hooks/on-stop-gitops.sh` (TASK-GRAPH branch queueing)
@@ -508,7 +630,7 @@ braindrain/
   - `.cursor/agents/` when Cursor is in the resolved agent set, and
   - `.codex/agents/` when Codex is in the resolved agent set (same files; IDE-specific layout only).
   Skills deploy from `config/templates/cursor-skills/<id>/` → `.cursor/skills/<id>/` for each id in the active bundle `skills:` list (e.g. `cursor-orchestration`: coordinator, gitops, scriptlib-librarian). See `docs/skill-braindrain-hub-pr.md`.
-  Operational scripts (`daily_plan_audit`, `plan_build_guard`, `plan_branch_utils`) copy from hub `scripts/` → project `scripts/` per bundle `operational_scripts`.
+  Operational scripts (`daily_plan_audit`, `plan_build_guard`, `plan_branch_utils`) copy from hub `scripts/` → project `scripts/` per bundle `operational_scripts`. Re-prime upgrades them when the hub revision changes (content-hash marker), so plan branch/PR reconciliation reaches consumer workspaces without tracking `*.plan.md` in git.
   Existing files are create-only by default; set `sync_subagents=true` to update with backups. `.cursor/` is gitignored at repo root; do not commit generated agent/skill files—edit templates and re-run `prime_workspace`.
 - **Codex config merge**: `prime_workspace()` appends/updates a managed `BRAINDRAIN SUBAGENTS` block in `.codex/config.toml` only when allowed by policy (`sync_subagents=true` for existing files). Existing MCP server entries remain intact.
 - **Project memory artifacts**: initialized by `prime_workspace()` (or `init_project_memory()`) and kept separate from generated protocol files:
@@ -555,6 +677,7 @@ Implemented now (runtime behavior in this repo):
     - `.cursor/hooks/on-stop-gitops.sh`
     - `.cursor/hooks/on-stop-daily-plan-audit.sh`
     - `scripts/run_dream_cron.sh`
+    - `scripts/macos_dream_watch.sh` + `scripts/install_dream_watch_launchd.sh` (macOS host-idle, opt-in)
 
 Memory artifacts and paths:
 
@@ -564,9 +687,32 @@ Memory artifacts and paths:
 - Daily planning audit reports path:
   - `.braindrain/plan-reports/plan-audit-YYYY-MM-DD.md` (full report, now plan-centric cards grouped by IDE -> disposition)
   - `.braindrain/plan-reports/latest.md` (latest mirror)
-  - `.braindrain/plan-reports/plan-task-board.md` (active item board with IDE + inherited owner)
-  - `.braindrain/plan-reports/master-plan.md` (generated master mirror + drift detection + **Branch** and **PR** columns)
-  - `.braindrain/plan-reports/next-actions.md` (verb queue: `MERGE`, `FIX`, `REPLAN`, `RESEARCH`, `IMPLEMENT`, `BACKLOG`)
+  - `.braindrain/plan-reports/plan-task-board.md` (active item board with **Seq** / **Plan** columns, sorted by `_master.plan.md` execution order then item status)
+  - `.braindrain/plan-reports/master-plan.md` (generated master mirror + **Implementation sequence** build queue + drift detection + **Branch** and **PR** columns)
+  - `.braindrain/plan-reports/overlap-relations.md` (plan-level overlap pairs and clusters snapshot)
+  - `.braindrain/plan-reports/next-actions.md` (verb queue: `MERGE`, `FIX`, `REPLAN`, `RESEARCH`, `IMPLEMENT`, `BACKLOG`, **READY_TO_ARCHIVE**)
+
+### Planning overseer (`/masterplan`)
+
+The daily auditor (`scripts/daily_plan_audit.py`, Cursor `/masterplan`) treats **frontmatter `todos`** as the status source when present, orders the build queue from `_master.plan.md` (`execution_order:` or `## active` link order), and adds overseer sections to `master-plan.md`:
+
+- **Implementation sequence** — numbered build queue (excludes archived / implemented / merge-ready)
+- **Overlap clusters** — shared paths, token Jaccard, identical branches, declared `supersedes`
+- **Goal alignment** — scores active plans against goals from `.cursor/PRD.md`, `.cursor/TASK-GRAPH.md`, `.cursor/project-context.json`, and `_master.plan.md` `goalposts:`
+
+Run read-only by default. Human-confirmed write-back uses explicit CLI flags (never the daily-gated stop hook):
+
+```bash
+python3 scripts/daily_plan_audit.py --repo-root . --trigger "manual-masterplan-command"
+python3 scripts/daily_plan_audit.py --repo-root . --trigger "manual-masterplan-command" \
+  --apply-disposition-sync --apply-archive
+python3 scripts/daily_plan_audit.py --repo-root . --trigger "manual-masterplan-command" \
+  --apply-overlap-relations
+python3 scripts/daily_plan_audit.py --repo-root . --trigger "manual-masterplan-command" \
+  --apply-goal-tags
+```
+
+Optional defaults in `config/hub_config.yaml` under `planning_auditor:` (`overlap_jaccard_threshold`, `apply_overlap_relations`, `apply_goal_tags`, `goal_alignment_min_score`). CLI threshold and `--apply-*` flags override YAML for one-off runs. Machine-local run paths: `.braindrain/OPS.md`.
   - Primary plan discovery now scans known IDE plan dirs (`.cursor/plans`, `.codex/plans`, `.kiro/plans`, `.windsurf/plans`, etc.), and each plan/action is tagged with its IDE source.
   - Branch resolution for each plan is hybrid by precedence: frontmatter `branch:` -> `.cursor/.gitops-queue.json` (`planSource` exact match, then fuzzy) -> `.cursor/.gitops-memory.jsonl` -> local git branch slug match (`git_local`) -> `—`.
   - PR column: `gh pr list --head <branch> --state all` when `gh` is available (`none` if no PR; `—` if gh unavailable).

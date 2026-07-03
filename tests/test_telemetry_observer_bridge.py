@@ -36,6 +36,7 @@ def test_record_tool_io_writes_telemetry_and_observer_tool_call(
         observer_store=observer,
         session_id="test-session",
         hash_tool_args=False,
+        project_root="/tmp/workspace",
     )
 
     assert result["saved_tokens"] > 0
@@ -47,6 +48,8 @@ def test_record_tool_io_writes_telemetry_and_observer_tool_call(
     stats = observer.get_event_stats(session_id="test-session")
     assert stats["total_events"] == 1
     assert stats["by_type"].get("tool_call") == 1
+    events = observer.query_events(session_id="test-session", limit=1)
+    assert events[0].metadata.get("project_root") == "/tmp/workspace"
 
     lines = (telemetry.log_file).read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) >= 1
@@ -105,3 +108,29 @@ def test_observe_mcp_tool_async_wrapper_uses_async_observer_path(
             record_async.assert_awaited_once()
 
     asyncio.run(_run())
+
+
+def test_observe_mcp_tool_emits_session_start_once(
+    telemetry: TelemetrySession, observer: ObserverStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("BRAINDRAIN_SESSION_ID", "session-start-test")
+    observe = make_observe_mcp_tool(
+        telemetry=telemetry,
+        observer_enabled=lambda: True,
+        observer_store_getter=lambda: observer,
+        hash_args_enabled=lambda: False,
+        wrap_tool=lambda _name: True,
+    )
+
+    @observe
+    def sample_tool(text: str) -> dict:
+        return {"echo": text}
+
+    sample_tool("first")
+    sample_tool("second")
+
+    events = observer.query_events(session_id="session-start-test", limit=10)
+    session_start_count = sum(1 for event in events if event.event_type == "session_start")
+    tool_call_count = sum(1 for event in events if event.event_type == "tool_call")
+    assert session_start_count == 1
+    assert tool_call_count == 2

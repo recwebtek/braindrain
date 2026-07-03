@@ -1,0 +1,21 @@
+{
+  "id": "mixed_agent_turn",
+  "description": "Composite turn: env cache, large routed output, and deferred tool search.",
+  "steps": [
+    {
+      "type": "env_context",
+      "repeat": 100
+    },
+    {
+      "type": "large_output",
+      "source": "tests:pytest",
+      "line": "FAILED tests/test_example.py::test_case - AssertionError: expected neutral placeholder\n",
+      "repeat": 650
+    },
+    {
+      "type": "search_tools",
+      "query": "search index context mode",
+      "top_k": 5
+    }
+  ]
+}

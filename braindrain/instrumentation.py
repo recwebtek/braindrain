@@ -8,11 +8,13 @@ import hashlib
 import inspect
 import json
 import os
+import threading
 import time
-from typing import Any, Callable, Optional, Protocol
+from collections.abc import Callable
+from typing import Any, Protocol
 
 from braindrain.observer import BrainEvent, ObserverStore
-from braindrain.telemetry import TelemetrySession, estimate_tokens
+from braindrain.telemetry import TelemetrySession
 
 
 class TokenEstimator(Protocol):
@@ -29,7 +31,40 @@ def hash_args(payload: Any) -> str:
 
 
 def _default_session_id() -> str:
-    return os.environ.get("BRAINDRAIN_SESSION_ID", "mcp-default")
+    return os.environ.get("BRAINDRAIN_SESSION_ID", f"mcp-{int(_PROCESS_START_TS)}")
+
+
+_PROCESS_START_TS = time.time()
+_SESSION_START_LOCK = threading.Lock()
+_SESSION_START_EMITTED: set[str] = set()
+
+
+def _resolve_session_id(session_id: str | None) -> str:
+    return session_id or _default_session_id()
+
+
+def _emit_session_start_if_needed(
+    *,
+    observer_store: ObserverStore,
+    session_id: str,
+    project_root: str | None = None,
+) -> None:
+    with _SESSION_START_LOCK:
+        if session_id in _SESSION_START_EMITTED:
+            return
+        _SESSION_START_EMITTED.add(session_id)
+
+    metadata: dict[str, Any] = {}
+    if project_root:
+        metadata["project_root"] = project_root
+    observer_store.record_event(
+        BrainEvent(
+            timestamp=time.time(),
+            session_id=session_id,
+            event_type="session_start",
+            metadata=metadata,
+        )
+    )
 
 
 def _serialize_for_tokens(value: Any, *, max_chars: int = 200_000) -> str:
@@ -82,9 +117,10 @@ def _build_tool_call_event(
     actual_tokens: int,
     saved_tokens: int,
     duration_ms: int,
-    session_id: Optional[str],
+    session_id: str | None,
     hash_tool_args: bool,
     args_hash_payload: Any,
+    project_root: str | None = None,
 ) -> BrainEvent:
     obs_meta: dict[str, Any] = {
         "module": module,
@@ -92,12 +128,14 @@ def _build_tool_call_event(
         "tokens_in_actual_est": actual_tokens,
         "tokens_saved_est": saved_tokens,
     }
+    if project_root:
+        obs_meta["project_root"] = project_root
     if hash_tool_args and args_hash_payload is not None:
         obs_meta["args_hash"] = hash_args(args_hash_payload)
 
     return BrainEvent(
         timestamp=time.time(),
-        session_id=session_id or _default_session_id(),
+        session_id=_resolve_session_id(session_id),
         event_type="tool_call",
         tool_name=tool_name,
         token_cost=raw_tokens + actual_tokens,
@@ -122,12 +160,13 @@ def record_tool_io(
     raw_text: str,
     actual_text: str,
     module: str = "tool_gate",
-    meta: Optional[dict[str, Any]] = None,
-    observer_store: Optional[ObserverStore] = None,
-    session_id: Optional[str] = None,
+    meta: dict[str, Any] | None = None,
+    observer_store: ObserverStore | None = None,
+    session_id: str | None = None,
     duration_ms: int = 0,
     hash_tool_args: bool = True,
     args_hash_payload: Any = None,
+    project_root: str | None = None,
 ) -> dict[str, Any]:
     """Record telemetry and optional observer tool_call event (sync MCP tools)."""
     event_meta = dict(meta or {})
@@ -155,6 +194,7 @@ def record_tool_io(
             session_id=session_id,
             hash_tool_args=hash_tool_args,
             args_hash_payload=args_hash_payload,
+            project_root=project_root,
         )
         _persist_observer_event(observer_store, brain_event)
 
@@ -172,12 +212,13 @@ async def record_tool_io_async(
     raw_text: str,
     actual_text: str,
     module: str = "tool_gate",
-    meta: Optional[dict[str, Any]] = None,
-    observer_store: Optional[ObserverStore] = None,
-    session_id: Optional[str] = None,
+    meta: dict[str, Any] | None = None,
+    observer_store: ObserverStore | None = None,
+    session_id: str | None = None,
     duration_ms: int = 0,
     hash_tool_args: bool = True,
     args_hash_payload: Any = None,
+    project_root: str | None = None,
 ) -> dict[str, Any]:
     """Record telemetry and observer tool_call event without blocking the event loop."""
     event_meta = dict(meta or {})
@@ -205,6 +246,7 @@ async def record_tool_io_async(
             session_id=session_id,
             hash_tool_args=hash_tool_args,
             args_hash_payload=args_hash_payload,
+            project_root=project_root,
         )
         await _persist_observer_event_async(observer_store, brain_event)
 
@@ -222,7 +264,8 @@ def make_observe_mcp_tool(
     observer_store_getter: Callable[[], ObserverStore],
     hash_args_enabled: Callable[[], bool],
     wrap_tool: Callable[[str], bool],
-    module_for: Optional[Callable[[str], str]] = None,
+    module_for: Callable[[str], str] | None = None,
+    project_root_getter: Callable[[], str | None] | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Factory for the MCP tool observer decorator."""
 
@@ -245,6 +288,15 @@ def make_observe_mcp_tool(
             if not observer_enabled() or not wrap_tool(tool_name):
                 return await fn(*args, **kwargs)
 
+            observer_store = observer_store_getter()
+            project_root = project_root_getter() if project_root_getter else None
+            session_id = _resolve_session_id(None)
+            _emit_session_start_if_needed(
+                observer_store=observer_store,
+                session_id=session_id,
+                project_root=project_root,
+            )
+
             start = time.perf_counter()
             result = await fn(*args, **kwargs)
             if _result_instrumented(result):
@@ -261,10 +313,12 @@ def make_observe_mcp_tool(
                 actual_text=actual_text,
                 module=_module(tool_name),
                 meta={"duration_ms": duration_ms},
-                observer_store=observer_store_getter(),
+                observer_store=observer_store,
+                session_id=session_id,
                 duration_ms=duration_ms,
                 hash_tool_args=hash_args_enabled(),
                 args_hash_payload={"args": args, "kwargs": kwargs},
+                project_root=project_root,
             )
 
             if tool_name == "get_env_context" and isinstance(result, dict) and result.get("cached"):
@@ -280,6 +334,15 @@ def make_observe_mcp_tool(
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
             if not observer_enabled() or not wrap_tool(tool_name):
                 return fn(*args, **kwargs)
+
+            observer_store = observer_store_getter()
+            project_root = project_root_getter() if project_root_getter else None
+            session_id = _resolve_session_id(None)
+            _emit_session_start_if_needed(
+                observer_store=observer_store,
+                session_id=session_id,
+                project_root=project_root,
+            )
 
             start = time.perf_counter()
             result = fn(*args, **kwargs)
@@ -297,10 +360,12 @@ def make_observe_mcp_tool(
                 actual_text=actual_text,
                 module=_module(tool_name),
                 meta={"duration_ms": duration_ms},
-                observer_store=observer_store_getter(),
+                observer_store=observer_store,
+                session_id=session_id,
                 duration_ms=duration_ms,
                 hash_tool_args=hash_args_enabled(),
                 args_hash_payload={"args": args, "kwargs": kwargs},
+                project_root=project_root,
             )
 
             if tool_name == "get_env_context" and isinstance(result, dict) and result.get("cached"):
