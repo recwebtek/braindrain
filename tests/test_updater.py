@@ -60,7 +60,6 @@ def git_pair(tmp_path: Path) -> dict[str, Path]:
 
     clone = tmp_path / "clone"
     _run_git(tmp_path, "clone", str(bare), str(clone))
-    _run_git(clone, "branch", "--set-upstream-to", "origin/main", "main")
 
     return {"bare": bare, "upstream": upstream, "clone": clone}
 
