@@ -64,12 +64,12 @@ def append_checkpoint(
     row = {
         "schema_version": SCHEMA_VERSION,
         "timestamp": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "task": task,
+        "task": telemetry.sanitize(task),
         "phase": phase_norm,
         "tool": tool,
         "totals": _totals_from_snapshot(snapshot),
         "context_tags": list(context_tags or []),
-        "note": note,
+        "note": telemetry.sanitize(note),
     }
 
     with open(out_path, "a", encoding="utf-8") as f:
