@@ -77,10 +77,11 @@ def test_stamp_plan_adds_frontmatter_when_missing(
     plan_path.parent.mkdir(parents=True)
     plan_path.write_text("# Alpha\n\nBody\n", encoding="utf-8")
 
+    now_str = stamp_module._iso_now()
     info = {
         "model": "fable-5:low",
         "cursor_mode": "manual",
-        "updated_at": "2026-07-03T10:00:00Z",
+        "updated_at": now_str,
     }
     assert stamp_module.stamp_plan_frontmatter(plan_path, info) is True
 
@@ -106,10 +107,11 @@ def test_stamp_plan_preserves_created_fields_on_resstamp(
         encoding="utf-8",
     )
 
+    now_str = stamp_module._iso_now()
     info = {
         "model": "fable-5:low",
         "cursor_mode": "manual",
-        "updated_at": "2026-07-03T10:00:00Z",
+        "updated_at": now_str,
     }
     stamp_module.stamp_plan_frontmatter(plan_path, info)
 
@@ -117,16 +119,17 @@ def test_stamp_plan_preserves_created_fields_on_resstamp(
     assert fm["created_by_model"] == "composer-2"
     assert fm["created_at"] == "2026-07-01T08:00:00Z"
     assert fm["last_modified_by_model"] == "fable-5:low"
-    assert fm["last_modified_at"] == "2026-07-03T10:00:00Z"
+    assert fm["last_modified_at"] == now_str
 
 
 def test_write_and_load_active_model(stamp_module, tmp_project_dir: Path) -> None:
+    now_str = stamp_module._iso_now()
     info = {
         "model": "fable-5:low",
         "model_id": "claude-fable-5-thinking-low",
         "cursor_mode": "manual",
         "conversation_id": "conv-1",
-        "updated_at": "2026-07-03T10:00:00Z",
+        "updated_at": now_str,
     }
     stamp_module.write_active_model(tmp_project_dir, info)
     loaded = stamp_module.load_active_model(
@@ -171,6 +174,9 @@ def test_auditor_reads_active_model_fallback(tmp_project_dir: Path) -> None:
     sys.modules[spec.name] = audit
     spec.loader.exec_module(audit)
 
+    from datetime import UTC, datetime
+    now_str = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
     state_dir = tmp_project_dir / ".braindrain"
     state_dir.mkdir(parents=True)
     (state_dir / "active-model.json").write_text(
@@ -178,7 +184,7 @@ def test_auditor_reads_active_model_fallback(tmp_project_dir: Path) -> None:
             {
                 "model": "fable-5:low",
                 "cursor_mode": "manual",
-                "updated_at": "2026-07-03T10:00:00Z",
+                "updated_at": now_str,
             }
         ),
         encoding="utf-8",
