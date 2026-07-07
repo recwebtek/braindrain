@@ -73,7 +73,8 @@ def count_repo_files(
         for name in filenames:
             if name.startswith("."):
                 continue
-            if ext_set and Path(name).suffix.lower() not in ext_set:
+            ext = os.path.splitext(name)[1].lower()
+            if ext_set and ext not in ext_set:
                 continue
             count += 1
             if count >= max_files:
