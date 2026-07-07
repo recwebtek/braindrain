@@ -7,6 +7,7 @@ import json
 import shutil
 import sys
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -121,12 +122,13 @@ def test_stamp_plan_preserves_created_fields_on_resstamp(
 
 
 def test_write_and_load_active_model(stamp_module, tmp_project_dir: Path) -> None:
+    now = stamp_module._iso_now()
     info = {
         "model": "fable-5:low",
         "model_id": "claude-fable-5-thinking-low",
         "cursor_mode": "manual",
         "conversation_id": "conv-1",
-        "updated_at": "2026-07-03T10:00:00Z",
+        "updated_at": now,
     }
     stamp_module.write_active_model(tmp_project_dir, info)
     loaded = stamp_module.load_active_model(
@@ -171,6 +173,9 @@ def test_auditor_reads_active_model_fallback(tmp_project_dir: Path) -> None:
     sys.modules[spec.name] = audit
     spec.loader.exec_module(audit)
 
+    # Use a fresh timestamp to satisfy ACTIVE_MODEL_MAX_AGE (24h)
+    now = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
     state_dir = tmp_project_dir / ".braindrain"
     state_dir.mkdir(parents=True)
     (state_dir / "active-model.json").write_text(
@@ -178,7 +183,7 @@ def test_auditor_reads_active_model_fallback(tmp_project_dir: Path) -> None:
             {
                 "model": "fable-5:low",
                 "cursor_mode": "manual",
-                "updated_at": "2026-07-03T10:00:00Z",
+                "updated_at": now,
             }
         ),
         encoding="utf-8",
