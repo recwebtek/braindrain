@@ -1148,11 +1148,11 @@ def ensure_codex_subagent_config(
 
 def _filter_ruler_toml_agents(toml_content: str, agents: list[str]) -> str:
     """
-    Filter Ruler v0.3+ ``default_agents`` and optional ``[agents.<id>]`` blocks.
+      Filter Ruler v0.3+ ``default_agents`` and optional ``[agents.<id>]`` blocks.
 
-  Preserves comments, ``mcp_servers``, and all other TOML sections. Supports the
-  legacy pre-v0.3 ``[agents]`` table (``key = { source = "RULES.md" }``) for
-  workspaces that have not yet re-primed.
+    Preserves comments, ``mcp_servers``, and all other TOML sections. Supports the
+    legacy pre-v0.3 ``[agents]`` table (``key = { source = "RULES.md" }``) for
+    workspaces that have not yet re-primed.
     """
     agent_set = set(agents)
 

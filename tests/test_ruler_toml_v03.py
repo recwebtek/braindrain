@@ -71,8 +71,8 @@ def test_materialize_template_substitutes_launcher_path() -> None:
     assert "BRAINDRAIN_LAUNCHER_PATH" not in content
     assert "/tmp/braindrain-launcher" in content
     assert "default_agents" in content
-    assert '[agents]\n' not in content
-    assert "source = \"RULES.md\"" not in content
+    assert "[agents]\n" not in content
+    assert 'source = "RULES.md"' not in content
 
 
 def test_deploy_templates_minimal_agents_filters_default_agents(tmp_path: Path) -> None:
