@@ -21,7 +21,10 @@ from plan_branch_utils import (  # noqa: E402
     parse_frontmatter_todos,
     parse_plan_frontmatter,
     plan_body_after_frontmatter,
+    plan_in_ide_plans_dir,
+    relative_plan_source,
     render_frontmatter_todos,
+    resolve_plan_path,
     set_frontmatter_yaml_block,
     slice_body_section,
 )
@@ -31,6 +34,11 @@ def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Meta-plan closeout: child skeletons + master links.")
     p.add_argument("--meta", required=True, help="Path to meta *.plan.md")
     p.add_argument("--repo-root", default=".", help="Git repository root")
+    p.add_argument(
+        "--plans-root",
+        default=None,
+        help="Directory to resolve --meta against when plans live outside the code repo",
+    )
     p.add_argument("--dry-run", action="store_true", help="Report actions without writing files")
     p.add_argument(
         "--force",
@@ -180,9 +188,13 @@ def run_closeout(
     run_auditor: bool = True,
 ) -> dict[str, object]:
     meta_path = meta_path.resolve()
-    rel_meta = meta_path.relative_to(repo_root).as_posix()
-    if not str(rel_meta).startswith(".cursor/plans/"):
-        raise ValueError("meta plan must live under .cursor/plans/ (not QA-Logs/)")
+    if not meta_path.is_file():
+        raise ValueError(f"meta plan not found: {meta_path}")
+    rel_meta = relative_plan_source(meta_path, repo_root)
+    if not plan_in_ide_plans_dir(meta_path):
+        raise ValueError(
+            "meta plan must live in an IDE plans directory such as .cursor/plans/ (not QA-Logs/)"
+        )
 
     fm, specs = _validate_meta_plan(meta_path)
     parent_slug = meta_slug_from_path(meta_path)
@@ -277,8 +289,8 @@ def run_closeout(
 def main() -> int:
     args = _parse_args()
     repo_root = Path(args.repo_root).expanduser().resolve()
-    meta_arg = Path(args.meta)
-    meta_path = meta_arg if meta_arg.is_absolute() else (repo_root / meta_arg)
+    plans_root = Path(args.plans_root).expanduser().resolve() if args.plans_root else None
+    meta_path = resolve_plan_path(args.meta, repo_root, plans_root)
     try:
         result = run_closeout(
             meta_path,

@@ -151,9 +151,13 @@ Example JSONL row:
 Clicking **Build** on a Cursor plan runs the **default workspace agent**, not the coordinator subagent. Before any implementation edits when working from a `*.plan.md`:
 
 1. Resolve the plan branch: run `python3 scripts/daily_plan_audit.py --repo-root .` (or `/masterplan`) so frontmatter `branch:` is reconciled with **git** and **gh** — do not trust a stale auto-generated slug; then read `.braindrain/plan-reports/master-plan.md` for branch/PR.
-2. **First shell command:** `python3 scripts/plan_build_guard.py --plan <repo-relative-plan-path> --repo-root .`
+2. **First shell command:** `python3 scripts/plan_build_guard.py --plan <plan-path> --repo-root .`
 3. Proceed only when the guard reports `"ok": true` (creates branch with `git branch` if needed; checkout uses stash + `git switch` when dirty).
 4. Do not implement on an unrelated branch (e.g. a feature branch for a different plan).
+
+**Plans outside the code repo:** when plans live at the workspace root and code lives in a nested repo, pass both roots — `--repo-root <code-repo> --plans-root .`. The guard resolves the plan against `--plans-root`, the current directory, and the workspace above `--repo-root`, and reports `planOutsideRepo: true`. `plan_meta_closeout.py` accepts `--plans-root` the same way.
+
+**Base branch:** the guard branches from the repo default (`origin/HEAD`, else `main`/`master`/`develop`/`trunk`). Override with plan frontmatter `base_branch:` or `--base-branch <name>`.
 
 Gitops `branch-setup` mode must **not** checkout. Checkout is allowed only for `plan-execution` / Plan Build guard flows.
 
@@ -179,7 +183,7 @@ When you **create or finish editing** a tracked plan file under an IDE `plans/` 
 
 When a prompt spans **multiple independent features**:
 
-- Author **one** meta plan with `disposition: meta` under `.cursor/plans/` (not `QA-Logs/`).
+- Author **one** meta plan with `disposition: meta` under an IDE plans directory such as `.cursor/plans/` (not `QA-Logs/`).
 - Include `children_spec:` — each entry: `id`, `file`, `name`, `branch`, `section` (H2 anchor in the meta body).
 - Meta todos use `split-<id>`; mark `completed` only when the child file exists on disk.
 - **Do not Plan Build on the meta plan** — `plan_build_guard.py` returns `meta_plan_no_build`.
