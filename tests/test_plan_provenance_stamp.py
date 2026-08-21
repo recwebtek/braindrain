@@ -7,6 +7,7 @@ import json
 import shutil
 import sys
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,11 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _STAMP_SCRIPT_PATH = _REPO_ROOT / "scripts" / "plan_provenance_stamp.py"
 _BRANCH_UTILS_PATH = _REPO_ROOT / "scripts" / "plan_branch_utils.py"
+
+
+def _fresh_timestamp() -> str:
+    """Active-model reads apply a 24h freshness window, so fixtures must be current."""
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 @pytest.fixture
@@ -126,7 +132,7 @@ def test_write_and_load_active_model(stamp_module, tmp_project_dir: Path) -> Non
         "model_id": "claude-fable-5-thinking-low",
         "cursor_mode": "manual",
         "conversation_id": "conv-1",
-        "updated_at": "2026-07-03T10:00:00Z",
+        "updated_at": _fresh_timestamp(),
     }
     stamp_module.write_active_model(tmp_project_dir, info)
     loaded = stamp_module.load_active_model(
@@ -178,7 +184,7 @@ def test_auditor_reads_active_model_fallback(tmp_project_dir: Path) -> None:
             {
                 "model": "fable-5:low",
                 "cursor_mode": "manual",
-                "updated_at": "2026-07-03T10:00:00Z",
+                "updated_at": _fresh_timestamp(),
             }
         ),
         encoding="utf-8",
