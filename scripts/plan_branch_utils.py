@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -11,6 +12,12 @@ FRONTMATTER_BLOCK_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|$)", re.DOTALL)
 FRONTMATTER_KV_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.*?)\s*$")
 
 CHILDREN_SPEC_ITEM_KEYS = ("id", "file", "name", "branch", "section", "branches")
+
+BASE_BRANCH_FRONTMATTER_KEYS = ("base_branch", "baseBranch", "base")
+BASE_BRANCH_CANDIDATES = ("main", "master", "develop", "trunk")
+
+# How far above the code repo to look for a plan path (plans-at-workspace-root layouts).
+PLAN_LOOKUP_ANCESTOR_DEPTH = 3
 
 
 def _strip_quotes(value: str) -> str:
@@ -300,6 +307,81 @@ def slice_body_section(body: str, section_anchor: str) -> str:
     return "\n".join(lines[start_idx:end_idx]).strip() + "\n"
 
 
+def plan_lookup_roots(repo_root: Path, plans_root: Path | None = None) -> list[Path]:
+    """Directories a relative plan argument may be resolved against, in priority order."""
+    roots: list[Path] = []
+
+    def _add(candidate: Path) -> None:
+        resolved = candidate.expanduser().resolve()
+        if resolved not in roots:
+            roots.append(resolved)
+
+    if plans_root is not None:
+        _add(Path(plans_root))
+    repo = Path(repo_root).expanduser().resolve()
+    _add(repo)
+    _add(Path.cwd())
+    for ancestor in list(repo.parents)[:PLAN_LOOKUP_ANCESTOR_DEPTH]:
+        _add(ancestor)
+    return roots
+
+
+def resolve_plan_path(
+    plan_arg: Path | str,
+    repo_root: Path,
+    plans_root: Path | None = None,
+) -> Path:
+    """
+    Resolve a plan argument that may be absolute, plans-root relative, repo relative,
+    or relative to the workspace above the code repo.
+
+    Plans and code do not always share a repo: a workspace can keep `.cursor/plans/`
+    at its root while code lives in nested repos.
+    """
+    arg = Path(plan_arg).expanduser()
+    if arg.is_absolute():
+        return arg.resolve()
+    roots = plan_lookup_roots(repo_root, plans_root)
+    for root in roots:
+        candidate = root / arg
+        if candidate.is_file():
+            return candidate.resolve()
+    return (roots[0] / arg).resolve()
+
+
+def plan_is_inside_repo(plan_path: Path, repo_root: Path) -> bool:
+    try:
+        Path(plan_path).resolve().relative_to(Path(repo_root).expanduser().resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def relative_plan_source(plan_path: Path, repo_root: Path) -> str:
+    """
+    Plan identity relative to ``repo_root``, tolerating plans stored outside the repo.
+
+    Returns a repo-relative posix path when possible, otherwise a ``../`` relative
+    path, falling back to the absolute path when no relative path exists.
+    """
+    plan = Path(plan_path).expanduser().resolve()
+    root = Path(repo_root).expanduser().resolve()
+    try:
+        return plan.relative_to(root).as_posix()
+    except ValueError:
+        pass
+    try:
+        return Path(os.path.relpath(plan, root)).as_posix()
+    except ValueError:
+        return plan.as_posix()
+
+
+def plan_in_ide_plans_dir(plan_path: Path) -> bool:
+    """True for `<ide-dir>/plans/*.plan.md` (for example `.cursor/plans/`, `.codex/plans/`)."""
+    parent = Path(plan_path).expanduser().resolve().parent
+    return parent.name == "plans" and parent.parent.name.startswith(".")
+
+
 def parse_plan_disposition(plan_path: Path) -> str:
     fm = parse_plan_frontmatter(plan_path)
     return str(fm.get("disposition") or "active").strip()
@@ -362,48 +444,97 @@ def branch_name_for_plan(plan_path: Path, *, plan_type: str | None = None) -> st
     return f"{ptype}/{slug}"
 
 
-def resolve_base_branch(repo_root: Path) -> str:
+def _ref_exists(repo_root: Path, ref: str) -> bool:
     try:
         proc = subprocess.run(
-            ["git", "-C", str(repo_root), "show-ref", "--verify", "--quiet", "refs/heads/main"],
-            capture_output=True,
-            check=False,
-        )
-        if proc.returncode == 0:
-            return "main"
-        proc2 = subprocess.run(
-            ["git", "-C", str(repo_root), "symbolic-ref", "refs/remotes/origin/HEAD"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if proc2.returncode == 0 and proc2.stdout.strip():
-            ref = proc2.stdout.strip()
-            if ref.startswith("refs/remotes/origin/"):
-                return ref[len("refs/remotes/origin/") :]
-    except OSError:
-        pass
-    return "main"
-
-
-def branch_ref_exists(repo_root: Path, branch: str) -> bool:
-    try:
-        proc = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repo_root),
-                "show-ref",
-                "--verify",
-                "--quiet",
-                f"refs/heads/{branch}",
-            ],
+            ["git", "-C", str(repo_root), "show-ref", "--verify", "--quiet", ref],
             capture_output=True,
             check=False,
         )
         return proc.returncode == 0
     except OSError:
         return False
+
+
+def is_git_repo(repo_root: Path) -> bool:
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "--git-dir"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return proc.returncode == 0
+    except OSError:
+        return False
+
+
+def origin_default_branch(repo_root: Path) -> str:
+    """Default branch name from `refs/remotes/origin/HEAD`, or empty when unset."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo_root), "symbolic-ref", "refs/remotes/origin/HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return ""
+    ref = (proc.stdout or "").strip()
+    if proc.returncode != 0 or not ref.startswith("refs/remotes/origin/"):
+        return ""
+    return ref[len("refs/remotes/origin/") :]
+
+
+def plan_base_branch_override(plan_path: Path) -> str:
+    """Explicit base branch from plan frontmatter (`base_branch:`, `baseBranch:`, `base:`)."""
+    fm = parse_plan_frontmatter(plan_path)
+    for key in BASE_BRANCH_FRONTMATTER_KEYS:
+        value = str(fm.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def resolve_base_branch(repo_root: Path, override: str | None = None) -> str:
+    """
+    Branch to create plan branches from.
+
+    Priority: explicit override → `origin/HEAD` default → conventional local branches →
+    current branch. Remote-tracking form (`origin/<name>`) is returned when only the
+    remote branch exists, so `git branch` still works in a fresh clone.
+    """
+    explicit = (override or "").strip()
+    if explicit:
+        return explicit
+
+    candidates: list[str] = []
+    default = origin_default_branch(repo_root)
+    if default:
+        candidates.append(default)
+    candidates.extend(name for name in BASE_BRANCH_CANDIDATES if name not in candidates)
+
+    for name in candidates:
+        if branch_ref_exists(repo_root, name):
+            return name
+    for name in candidates:
+        if _ref_exists(repo_root, f"refs/remotes/origin/{name}"):
+            return f"origin/{name}"
+    return current_branch(repo_root) or "main"
+
+
+def resolve_plan_base_branch(
+    plan_path: Path,
+    repo_root: Path,
+    override: str | None = None,
+) -> str:
+    """Base branch for one plan: CLI override → plan frontmatter → repo default."""
+    explicit = (override or "").strip() or plan_base_branch_override(plan_path)
+    return resolve_base_branch(repo_root, explicit or None)
+
+
+def branch_ref_exists(repo_root: Path, branch: str) -> bool:
+    return _ref_exists(repo_root, f"refs/heads/{branch}")
 
 
 def create_branch_ref(repo_root: Path, branch: str, base_branch: str) -> tuple[bool, str]:

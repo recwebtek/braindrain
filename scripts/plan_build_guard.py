@@ -17,18 +17,37 @@ from plan_branch_utils import (
     checkout_plan_branch,
     create_branch_ref,
     current_branch,
+    is_git_repo,
     is_meta_plan,
     parse_plan_disposition,
-    resolve_base_branch,
+    plan_is_inside_repo,
+    plan_lookup_roots,
+    relative_plan_source,
+    resolve_plan_base_branch,
     resolve_plan_branch,
+    resolve_plan_path,
     slug_from_plan_path,
 )
 
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Plan Build branch guard (create + checkout).")
-    p.add_argument("--plan", required=True, help="Repo-relative or absolute path to *.plan.md")
-    p.add_argument("--repo-root", default=".", help="Git repository root")
+    p.add_argument(
+        "--plan", required=True, help="Absolute, repo-relative, or workspace-relative *.plan.md"
+    )
+    p.add_argument(
+        "--repo-root", default=".", help="Git repository root (where the branch is created)"
+    )
+    p.add_argument(
+        "--plans-root",
+        default=None,
+        help="Directory to resolve --plan against when plans live outside the code repo",
+    )
+    p.add_argument(
+        "--base-branch",
+        default=None,
+        help="Base branch for a new plan branch (overrides plan frontmatter and repo default)",
+    )
     p.add_argument(
         "--create-only",
         action="store_true",
@@ -45,13 +64,38 @@ def _parse_args() -> argparse.Namespace:
 def main() -> int:
     args = _parse_args()
     repo_root = Path(args.repo_root).expanduser().resolve()
-    plan_arg = Path(args.plan)
-    plan_path = plan_arg if plan_arg.is_absolute() else (repo_root / plan_arg)
-    if not plan_path.is_file():
-        print(json.dumps({"ok": False, "error": f"plan not found: {plan_path}"}))
+    plans_root = Path(args.plans_root).expanduser().resolve() if args.plans_root else None
+
+    if not is_git_repo(repo_root):
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": "not_a_git_repo",
+                    "repoRoot": repo_root.as_posix(),
+                    "message": "--repo-root must point at a git repository (the code repo).",
+                }
+            )
+        )
         return 2
 
-    rel_plan = plan_path.relative_to(repo_root).as_posix()
+    plan_path = resolve_plan_path(args.plan, repo_root, plans_root)
+    if not plan_path.is_file():
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": f"plan not found: {plan_path}",
+                    "searchedRoots": [
+                        root.as_posix() for root in plan_lookup_roots(repo_root, plans_root)
+                    ],
+                    "message": "Pass --plans-root when plans live outside the code repo.",
+                }
+            )
+        )
+        return 2
+
+    rel_plan = relative_plan_source(plan_path, repo_root)
     disposition = parse_plan_disposition(plan_path)
 
     if is_meta_plan(plan_path):
@@ -61,6 +105,7 @@ def main() -> int:
             "guardReason": "meta_plan_no_build",
             "disposition": disposition,
             "planSource": rel_plan,
+            "planPath": plan_path.as_posix(),
             "message": (
                 "Meta plans are not buildable. Run /metaplan-closeout to create child "
                 "plans, then Build on a child plan file."
@@ -70,12 +115,15 @@ def main() -> int:
         return 1
 
     branch = resolve_plan_branch(plan_path)
-    base = resolve_base_branch(repo_root)
+    base = resolve_plan_base_branch(plan_path, repo_root, args.base_branch)
     slug = slug_from_plan_path(plan_path)
 
     out: dict[str, object] = {
         "ok": True,
         "planSource": rel_plan,
+        "planPath": plan_path.as_posix(),
+        "repoRoot": repo_root.as_posix(),
+        "planOutsideRepo": not plan_is_inside_repo(plan_path, repo_root),
         "disposition": disposition,
         "branch": branch,
         "baseBranch": base,

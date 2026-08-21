@@ -83,6 +83,46 @@ def test_closeout_dry_run_creates_four_children(tmp_project_dir: Path) -> None:
     assert not (plans / "stackcraft-sidebar-ux.plan.md").exists()
 
 
+def test_closeout_meta_plan_outside_repo_root(tmp_project_dir: Path) -> None:
+    """Plans at workspace root, code repo nested — closeout must not crash on relative_to."""
+    m = _load_closeout()
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    nested_repo = tmp_project_dir / "PROSPECTOR"
+    nested_repo.mkdir()
+    meta = plans / "prospector-meta.plan.md"
+    meta.write_text(
+        "---\n"
+        "disposition: meta\n"
+        "children_spec:\n"
+        "  - id: intake\n"
+        "    file: prospector-intake.plan.md\n"
+        '    name: "Intake"\n'
+        "    branch: feature/prospector-intake\n"
+        "---\n\n"
+        "# Prospector\n",
+        encoding="utf-8",
+    )
+    result = m.run_closeout(meta, nested_repo, dry_run=False, run_auditor=False)
+    assert result["ok"] is True
+    assert result["metaPlan"].endswith(".cursor/plans/prospector-meta.plan.md")
+    assert result["metaPlan"].startswith("..")
+    assert (plans / "prospector-intake.plan.md").is_file()
+
+
+def test_closeout_rejects_plan_outside_plans_dir(tmp_project_dir: Path) -> None:
+    m = _load_closeout()
+    qa_logs = tmp_project_dir / "QA-Logs"
+    qa_logs.mkdir(parents=True)
+    meta = qa_logs / "stray.plan.md"
+    meta.write_text(
+        "---\ndisposition: meta\nchildren_spec:\n  - id: a\n    file: a.plan.md\n---\n\n# Stray\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="IDE plans directory"):
+        m.run_closeout(meta, tmp_project_dir, dry_run=True, run_auditor=False)
+
+
 def test_closeout_writes_children_and_master_links(tmp_project_dir: Path) -> None:
     m = _load_closeout()
     plans = tmp_project_dir / ".cursor" / "plans"

@@ -4,7 +4,7 @@ Split a **meta** umbrella plan (`disposition: meta`) into child `.cursor/plans/*
 
 ## Prerequisites
 
-- Meta plan lives under `.cursor/plans/` (not `QA-Logs/` or other paths).
+- Meta plan lives in an IDE plans directory such as `.cursor/plans/` or `.codex/plans/` (not `QA-Logs/`).
 - Meta frontmatter includes `children_spec:` with `id`, `file`, `name`, `branch`, and `section` per child.
 - Meta todos use `split-<id>` and flip to `completed` only when the child file exists.
 
@@ -17,6 +17,16 @@ python3 scripts/plan_meta_closeout.py --meta PATH/TO/meta.plan.md --repo-root .
 ```
 
 Add `--dry-run` to preview without writes. Add `--no-run-auditor` to skip the auditor invoke.
+
+When the workspace keeps plans at its root and code lives in a nested repo, point `--repo-root` at the
+code repo and `--plans-root` at the workspace:
+
+```bash
+python3 scripts/plan_meta_closeout.py \
+  --meta .cursor/plans/meta.plan.md \
+  --repo-root PROSPECTOR \
+  --plans-root .
+```
 
 The script:
 
@@ -48,4 +58,7 @@ When the script reports `body_pending: [...]`:
 
 # build ONE child (not the meta plan)
 python3 scripts/plan_build_guard.py --plan .cursor/plans/CHILD.plan.md --repo-root .
+
+# split layout: plans at workspace root, code in a nested repo
+python3 scripts/plan_build_guard.py --plan .cursor/plans/CHILD.plan.md --repo-root PROSPECTOR --plans-root .
 ```
