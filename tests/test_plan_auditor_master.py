@@ -1301,3 +1301,134 @@ def test_meta_plan_split_verb_when_children_missing(tmp_project_dir: Path) -> No
     assert actions
     assert actions[0].verb == "SPLIT"
     assert "metaplan-closeout" in actions[0].hint.lower()
+
+def test_meta_plan_missing_child_files_accepts_archives(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    plans = tmp_project_dir / ".cursor" / "plans"
+    archive = plans / ".plan.archives"
+    archive.mkdir(parents=True)
+    (archive / "child_a.plan.md").write_text("# Child A\n", encoding="utf-8")
+    meta = plans / "umbrella.plan.md"
+    meta.write_text(
+        "---\n"
+        "disposition: meta\n"
+        "owner: @test\n"
+        "dri: @test\n"
+        "children_spec:\n"
+        "  - id: a\n"
+        "    file: child_a.plan.md\n"
+        "    name: Child A\n"
+        "    branch: feature/a\n"
+        "    section: a\n"
+        "---\n"
+        "# Umbrella\n",
+        encoding="utf-8",
+    )
+    card = m.build_plan_card(meta, tmp_project_dir, items=[], default_owner="@test")
+    assert m.meta_plan_missing_child_files(card, tmp_project_dir) == []
+
+
+def test_ensure_plan_branches_creates_named_missing_ref(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    _git_init_with_branch(tmp_project_dir, "main")
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    plan_path = plans / "named.plan.md"
+    plan_path.write_text(
+        "---\n"
+        "disposition: active\n"
+        "owner: @ettienne\n"
+        "branch: feature/named-work\n"
+        "base_branch: main\n"
+        "---\n"
+        "# Named\n"
+        "- [ ] todo\n",
+        encoding="utf-8",
+    )
+    item = m.PlanItem(
+        item="todo",
+        source=".cursor/plans/named.plan.md",
+        status="Outstanding",
+        confidence="high",
+        evidence=[".cursor/plans/named.plan.md#item"],
+        why="test",
+        tokens={"todo"},
+    )
+    cards = m.build_cards_index(tmp_project_dir, [plan_path], [item], default_owner="@ettienne")
+    created = m.ensure_plan_branches(tmp_project_dir, cards)
+    assert ".cursor/plans/named.plan.md" in created
+    import subprocess
+
+    refs = subprocess.check_output(
+        ["git", "-C", str(tmp_project_dir), "branch", "--list", "feature/named-work"],
+        text=True,
+    )
+    assert "feature/named-work" in refs
+
+
+def test_resolve_audit_roots_split_and_mono(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    plans = tmp_project_dir / "workspace"
+    git = tmp_project_dir / "code"
+    plans.mkdir()
+    git.mkdir()
+    plans_home, git_home = m.resolve_audit_roots(git, plans)
+    assert plans_home == plans.resolve()
+    assert git_home == git.resolve()
+    mono_plans, mono_git = m.resolve_audit_roots(git, None)
+    assert mono_plans == git.resolve()
+    assert mono_git == git.resolve()
+
+
+def test_apply_archive_prunes_execution_order(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    master_path = plans / "_master.plan.md"
+    master_path.write_text(
+        "---\n"
+        "execution_order:\n"
+        "  - keep.plan.md\n"
+        "  - done.plan.md\n"
+        "archived_plans: []\n"
+        "---\n\n"
+        "# Master\n\n## active\n\n"
+        "- [Keep](keep.plan.md) — DRI: @test\n"
+        "- [Done](done.plan.md) — DRI: @test\n",
+        encoding="utf-8",
+    )
+    (plans / "keep.plan.md").write_text(
+        "---\ndisposition: active\nowner: @test\ndri: @test\n---\n# Keep\n",
+        encoding="utf-8",
+    )
+    plan_path = plans / "done.plan.md"
+    plan_path.write_text(
+        "---\n"
+        "disposition: active\n"
+        "owner: @test\n"
+        "dri: @test\n"
+        "todos:\n"
+        "  - id: x\n"
+        "    content: All done\n"
+        "    status: completed\n"
+        "---\n"
+        "# Done\n",
+        encoding="utf-8",
+    )
+    items = m.collect_plan_items(plan_path, tmp_project_dir)
+    cards = m.build_cards_index(tmp_project_dir, [plan_path], items, default_owner="@test")
+    ready = m.detect_ready_to_archive(list(cards.values()))
+    archived = m.apply_archive_plans(
+        tmp_project_dir,
+        ready,
+        cards,
+        master_path=master_path,
+        report_paths=[],
+    )
+    assert archived
+    master_text = master_path.read_text(encoding="utf-8")
+    fm = master_text.split("---", 2)[1]
+    exec_block = fm.split("execution_order:", 1)[1].split("archived_plans:", 1)[0]
+    assert "done.plan.md" not in exec_block
+    assert "keep.plan.md" in exec_block
+
