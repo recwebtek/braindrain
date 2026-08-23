@@ -510,7 +510,24 @@ def build_plan_card(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Daily planning audit report generator")
-    parser.add_argument("--repo-root", default=".", help="Repository root")
+    parser.add_argument(
+        "--repo-root",
+        default=".",
+        help=(
+            "Git/code repository root for branch and PR reconciliation. "
+            "When --plans-root is set, this should be the nested code repo "
+            "(same convention as plan_build_guard.py)."
+        ),
+    )
+    parser.add_argument(
+        "--plans-root",
+        default=None,
+        help=(
+            "Workspace root containing IDE plans (e.g. .cursor/plans/) and "
+            ".braindrain/plan-reports when plans live outside the code repo. "
+            "Defaults to --repo-root (mono-repo)."
+        ),
+    )
     parser.add_argument(
         "--output-dir",
         default=".braindrain/plan-reports",
@@ -642,6 +659,24 @@ def plan_marked_archived(fm: dict[str, object]) -> bool:
     if str(arch).strip().lower() in ("true", "yes", "1"):
         return True
     return False
+
+
+
+def resolve_audit_roots(
+    repo_root: Path,
+    plans_root: Path | str | None = None,
+) -> tuple[Path, Path]:
+    """Return ``(plans_home, git_home)`` for split-repo workspaces.
+
+    Matches ``plan_build_guard.py``: ``--repo-root`` is the git/code repo and
+    ``--plans-root`` is the workspace that holds ``.cursor/plans/``. When
+    ``plans_root`` is omitted, both homes are ``repo_root``.
+    """
+    git_home = Path(repo_root).expanduser().resolve()
+    if plans_root is None or str(plans_root).strip() == "":
+        return git_home, git_home
+    plans_home = Path(plans_root).expanduser().resolve()
+    return plans_home, git_home
 
 
 def relocate_archived_plans(repo_root: Path) -> list[str]:
@@ -1069,11 +1104,13 @@ def sync_master_archived_batch(
     master_path: Path,
     *,
     default_owner: str | None = None,
+    git_root: Path | None = None,
 ) -> list[str]:
     """Rewrite ``## archived`` with the latest batch (branch, PR, summary)."""
     if not master_path.is_file():
         return []
 
+    git_home = Path(git_root).resolve() if git_root is not None else Path(repo_root).resolve()
     archived_paths = discover_recent_archived_plans(repo_root)
     section_lines: list[str] = [
         f"_Last archived batch (newest first, max {ARCHIVED_BATCH_LIMIT}). "
@@ -1096,8 +1133,10 @@ def sync_master_archived_batch(
                 items=plan_items,
                 default_owner=default_owner,
             )
-        apply_branch_resolution(archived_cards, repo_root)
-        apply_pr_resolution(archived_cards, repo_root)
+        apply_branch_resolution(
+            archived_cards, repo_root, plans_root=repo_root, git_root=git_home
+        )
+        apply_pr_resolution(archived_cards, git_home)
 
         master_dir = master_path.parent
         for path in archived_paths:
@@ -1108,13 +1147,53 @@ def sync_master_archived_batch(
                 path.resolve(),
                 start=master_dir.resolve(),
             ).replace("\\", "/")
-            pr_details = _fetch_pr_details(repo_root, card.branch)
+            pr_details = _fetch_pr_details(git_home, card.branch)
             section_lines.extend(_format_archived_master_lines(card, rel_link, fm, pr_details))
             section_lines.append("")
 
     _replace_master_section(master_path, "archived", section_lines)
     _set_master_archived_plans_frontmatter(master_path, basenames)
     return basenames
+
+
+def _prune_master_execution_order(master_path: Path, removed_basenames: set[str]) -> None:
+    """Drop archived plan basenames from master ``execution_order:`` frontmatter."""
+    if not master_path.is_file() or not removed_basenames:
+        return
+    text = master_path.read_text(encoding="utf-8", errors="ignore")
+    match = FRONTMATTER_BLOCK_RE.match(text)
+    if not match:
+        return
+    fm_body = match.group(1)
+    lines = fm_body.splitlines()
+    out: list[str] = []
+    in_exec = False
+    changed = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("execution_order:"):
+            in_exec = True
+            out.append(line)
+            continue
+        if in_exec:
+            if stripped.startswith("- "):
+                item = stripped[2:].strip().strip('"').strip("'")
+                base = Path(item).name
+                if base in removed_basenames or item in removed_basenames:
+                    changed = True
+                    continue
+                out.append(line)
+                continue
+            if stripped == "" or stripped.startswith("#"):
+                out.append(line)
+                continue
+            # left the list
+            in_exec = False
+        out.append(line)
+    if not changed:
+        return
+    new_block = "---\n" + "\n".join(out).rstrip() + "\n---\n"
+    master_path.write_text(new_block + text[len(match.group(0)) :], encoding="utf-8")
 
 
 def apply_archive_plans(
@@ -1124,9 +1203,12 @@ def apply_archive_plans(
     *,
     master_path: Path | None,
     report_paths: list[Path],
+    git_root: Path | None = None,
 ) -> list[str]:
     """Archive READY_TO_ARCHIVE plans: move file, frontmatter, master, link rewrite."""
     archived: list[str] = []
+    removed_basenames: set[str] = set()
+    git_home = Path(git_root).resolve() if git_root is not None else Path(repo_root).resolve()
     for entry in ready:
         card = cards_by_source.get(entry.plan_source)
         if not card:
@@ -1148,22 +1230,27 @@ def apply_archive_plans(
         shutil.move(str(src_path), str(dest))
         old_rel = entry.plan_source
         new_rel = dest.relative_to(repo_root.resolve()).as_posix()
+        removed_basenames.add(Path(old_rel).name)
         card.disposition = "archived"
         card.source = new_rel
         cards_by_source[new_rel] = card
         cards_by_source.pop(old_rel, None)
         plan_paths: list[Path] = []
         for folder in KNOWN_IDE_DOTFOLDERS:
-            plans_root = repo_root / folder / "plans"
-            if plans_root.is_dir():
-                plan_paths.extend(plans_root.rglob("*.plan.md"))
+            folder_plans = repo_root / folder / "plans"
+            if folder_plans.is_dir():
+                plan_paths.extend(folder_plans.rglob("*.plan.md"))
         if master_path and master_path.is_file():
             plan_paths.append(master_path)
+            _move_master_plan_between_sections(
+                master_path, repo_root, card, old_rel, new_rel
+            )
         plan_paths.extend(report_paths)
         rewrite_plan_links_in_paths(plan_paths, old_rel, new_rel)
         archived.append(new_rel)
     if master_path and master_path.is_file() and archived:
-        sync_master_archived_batch(repo_root, master_path)
+        _prune_master_execution_order(master_path, removed_basenames)
+        sync_master_archived_batch(repo_root, master_path, git_root=git_home)
     return archived
 
 
@@ -2491,7 +2578,11 @@ def _first_active_item_excerpt(card: PlanCard) -> str:
 
 
 def meta_plan_missing_child_files(card: PlanCard, repo_root: Path) -> list[str]:
-    """Return child plan filenames from ``children_spec`` that are not on disk."""
+    """Return child plan filenames from ``children_spec`` that are not on disk.
+
+    Children already archived under ``.plan.archives/`` count as present so
+    completed meta plans do not false-positive as SPLIT.
+    """
     plan_path = repo_root / card.source
     if not plan_path.is_file():
         return []
@@ -2500,11 +2591,17 @@ def meta_plan_missing_child_files(card: PlanCard, repo_root: Path) -> list[str]:
     if not specs:
         return ["<children_spec missing>"]
     plans_dir = plan_path.parent
+    archive_dir = plans_dir / ".plan.archives"
     missing: list[str] = []
     for spec in specs:
         child_file = str(spec.get("file") or "").strip()
-        if child_file and not (plans_dir / child_file).is_file():
-            missing.append(child_file)
+        if not child_file:
+            continue
+        if (plans_dir / child_file).is_file():
+            continue
+        if (archive_dir / Path(child_file).name).is_file():
+            continue
+        missing.append(child_file)
     return missing
 
 
@@ -3054,6 +3151,7 @@ def build_cards_index(
     items: list[PlanItem],
     *,
     default_owner: str | None = None,
+    git_root: Path | None = None,
 ) -> dict[str, PlanCard]:
     """Build a map of plan source path -> PlanCard with item rollup attached."""
     items_by_source: dict[str, list[PlanItem]] = defaultdict(list)
@@ -3069,8 +3167,9 @@ def build_cards_index(
             default_owner=default_owner,
         )
         cards[rel] = card
-    apply_branch_resolution(cards, repo_root)
-    apply_pr_resolution(cards, repo_root)
+    git_home = Path(git_root).resolve() if git_root is not None else Path(repo_root).resolve()
+    apply_branch_resolution(cards, repo_root, plans_root=repo_root, git_root=git_home)
+    apply_pr_resolution(cards, git_home)
     sync_plan_phase_branches(repo_root, cards)
     return cards
 
@@ -3291,31 +3390,42 @@ def pick_best_branch_candidate(
     return best_branch, best_source
 
 
-def apply_branch_resolution(cards: dict[str, PlanCard], repo_root: Path) -> None:
+def apply_branch_resolution(
+    cards: dict[str, PlanCard],
+    repo_root: Path,
+    *,
+    plans_root: Path | None = None,
+    git_root: Path | None = None,
+) -> None:
     """Resolve plan branch using hybrid precedence reconciled with git + gh.
 
     Collect candidates from frontmatter, gitops queue/memory, and git_local fuzzy
     match, then ``pick_best_branch_candidate`` scores them using local refs and
     ``gh pr list --head``. Stale frontmatter alone must not hide an existing branch/PR.
+
+    ``repo_root`` remains the plans home for path resolution (backward compatible).
+    Optional ``plans_root`` / ``git_root`` split workspace plans from the code repo.
     """
-    queue_entries = _read_gitops_queue(repo_root)
+    plans_home = Path(plans_root).resolve() if plans_root is not None else Path(repo_root).resolve()
+    git_home = Path(git_root).resolve() if git_root is not None else Path(repo_root).resolve()
+    queue_entries = _read_gitops_queue(plans_home)
     queue_branches: list[str] = []
     for entry in queue_entries:
         value = entry.get("branchName") or entry.get("branch")
         if isinstance(value, str) and value.strip():
             queue_branches.append(value.strip())
 
-    memory_entries = _read_gitops_memory(repo_root)
+    memory_entries = _read_gitops_memory(plans_home)
     memory_branches: list[str] = []
     for entry in memory_entries:
         value = _extract_branch_from_memory_entry(entry)
         if value:
             memory_branches.append(value)
 
-    local_branches = _list_repo_branches(repo_root)
+    local_branches = _list_repo_branches(git_home)
 
     for card in cards.values():
-        plan_path = repo_root / card.source
+        plan_path = plans_home / card.source
         fm = parse_plan_frontmatter(plan_path) if plan_path.is_file() else {}
         fm_branch = str(fm.get("branch") or "").strip()
         candidates: list[tuple[str, str]] = []
@@ -3333,7 +3443,7 @@ def apply_branch_resolution(cards: dict[str, PlanCard], repo_root: Path) -> None
         git_match = _best_matching_branch(card, local_branches)
         if git_match:
             candidates.append((git_match, "git_local"))
-        branch, source = pick_best_branch_candidate(repo_root, candidates, local_branches)
+        branch, source = pick_best_branch_candidate(git_home, candidates, local_branches)
         card.branch = branch
         card.branch_source = source
         explicit_branch = str(fm.get("branch") or "").strip()
@@ -3448,34 +3558,58 @@ def _upsert_gitops_queue_entry(repo_root: Path, entry: dict[str, object]) -> Non
 def ensure_plan_branches(
     repo_root: Path,
     cards: dict[str, PlanCard],
+    *,
+    plans_root: Path | None = None,
+    git_root: Path | None = None,
 ) -> list[str]:
-    """Create missing branches for active plans and persist branch: frontmatter."""
+    """Create missing branches for active plans and persist branch: frontmatter.
+
+    Creates the named frontmatter branch when the git ref is missing (not only
+    when ``branch:`` is absent). Uses each plan's ``base_branch`` when set.
+    """
     from plan_branch_utils import (
         branch_name_for_plan,
         branch_ref_exists,
         create_branch_ref,
-        resolve_base_branch,
+        resolve_plan_base_branch,
     )
 
+    plans_home = Path(plans_root).resolve() if plans_root is not None else Path(repo_root).resolve()
+    git_home = Path(git_root).resolve() if git_root is not None else Path(repo_root).resolve()
     bootstrap_dispositions = {"active", "merge-ready"}
     created_sources: list[str] = []
-    base = resolve_base_branch(repo_root)
 
     for source, card in cards.items():
         if card.disposition not in bootstrap_dispositions:
             continue
-        if card.branch and card.branch != "—":
-            continue
-        plan_path = repo_root / source
+        plan_path = plans_home / source
         if not plan_path.is_file():
             continue
-        branch = branch_name_for_plan(plan_path)
-        if not branch_ref_exists(repo_root, branch):
-            ok, _msg = create_branch_ref(repo_root, branch, base)
+        branch = card.branch if card.branch and card.branch != "—" else branch_name_for_plan(plan_path)
+        if not branch:
+            continue
+        base = resolve_plan_base_branch(plan_path, git_home)
+        created_ref = False
+        if not branch_ref_exists(git_home, branch):
+            ok, _msg = create_branch_ref(git_home, branch, base)
             if not ok:
                 continue
+            created_ref = True
+        fm = parse_plan_frontmatter(plan_path)
+        fm_branch = str(fm.get("branch") or "").strip()
+        wrote_fm = False
+        if not fm_branch:
+            current = plan_path.read_text(encoding="utf-8", errors="ignore")
+            new_text = _inject_frontmatter_key(current, "branch", branch)
+            if new_text != current:
+                plan_path.write_text(new_text, encoding="utf-8")
+                wrote_fm = True
+        if not created_ref and not wrote_fm and fm_branch == branch and branch_ref_exists(git_home, branch):
+            # Already fully wired — nothing to record as created this run.
+            card.branch = branch
+            continue
         _upsert_gitops_queue_entry(
-            repo_root,
+            plans_home,
             {
                 "action": "branch-setup",
                 "branchName": branch,
@@ -3485,12 +3619,7 @@ def ensure_plan_branches(
                 "source": "daily_plan_audit",
             },
         )
-        current = plan_path.read_text(encoding="utf-8", errors="ignore")
-        if not re.search(r"(?m)^branch\s*:", current):
-            new_text = _inject_frontmatter_key(current, "branch", branch)
-            if new_text != current:
-                plan_path.write_text(new_text, encoding="utf-8")
-        append_plan_branch_registry(repo_root, source, branch)
+        append_plan_branch_registry(plans_home, source, branch)
         created_sources.append(source)
         card.branch = branch
         card.branch_source = "audit_created"
@@ -3498,13 +3627,19 @@ def ensure_plan_branches(
     return created_sources
 
 
+
 def bootstrap_plan_branches_from_git_local(
     repo_root: Path,
     cards: dict[str, PlanCard],
+    *,
+    plans_root: Path | None = None,
+    git_root: Path | None = None,
 ) -> list[str]:
     """Persist reconciled branch into frontmatter for active/merge-ready plans."""
     from plan_branch_utils import branch_ref_exists
 
+    plans_home = Path(plans_root).resolve() if plans_root is not None else Path(repo_root).resolve()
+    git_home = Path(git_root).resolve() if git_root is not None else Path(repo_root).resolve()
     bootstrap_dispositions = {"active", "merge-ready"}
     trusted_sources = {"git_local", "gitops_queue", "gitops_memory"}
     updated: list[str] = []
@@ -3515,7 +3650,7 @@ def bootstrap_plan_branches_from_git_local(
             continue
         if not card.branch or card.branch == "—":
             continue
-        path = repo_root / source
+        path = plans_home / source
         if not path.is_file():
             continue
         fm = parse_plan_frontmatter(path)
@@ -3523,7 +3658,7 @@ def bootstrap_plan_branches_from_git_local(
         if fm_branch == card.branch:
             continue
         has_pr = card.pr not in {"none", "—"}
-        if not has_pr and not branch_ref_exists(repo_root, card.branch):
+        if not has_pr and not branch_ref_exists(git_home, card.branch):
             continue
         current = path.read_text(encoding="utf-8", errors="ignore")
         new_text = _set_frontmatter_key(current, "branch", card.branch)
@@ -4459,7 +4594,10 @@ def render_plan_audit_history_dashboard(repo_root: Path) -> None:
 
 def main() -> int:
     args = parse_args()
-    repo_root = Path(args.repo_root).resolve()
+    cli_repo_root = Path(args.repo_root).resolve()
+    plans_home, git_home = resolve_audit_roots(cli_repo_root, getattr(args, "plans_root", None))
+    # Path-relative plan discovery / reports use plans_home; git/gh use git_home.
+    repo_root = plans_home
     auditor_runtime = resolve_planning_auditor_runtime(args, repo_root)
     overlap_jaccard_threshold = float(auditor_runtime["overlap_jaccard_threshold"])
     goal_alignment_min_score = int(auditor_runtime["goal_alignment_min_score"])
@@ -4496,16 +4634,26 @@ def main() -> int:
     for path in secondary:
         items.extend(collect_plan_items(path, repo_root))
 
-    cards_by_source = build_cards_index(repo_root, primary, items, default_owner=default_owner)
+    cards_by_source = build_cards_index(
+        repo_root, primary, items, default_owner=default_owner, git_root=git_home
+    )
     branches_created: list[str] = []
     if getattr(args, "ensure_branches", True):
-        branches_created = ensure_plan_branches(repo_root, cards_by_source)
-        apply_branch_resolution(cards_by_source, repo_root)
-        apply_pr_resolution(cards_by_source, repo_root)
-    branch_frontmatter_updated = bootstrap_plan_branches_from_git_local(repo_root, cards_by_source)
+        branches_created = ensure_plan_branches(
+            repo_root, cards_by_source, plans_root=repo_root, git_root=git_home
+        )
+        apply_branch_resolution(
+            cards_by_source, repo_root, plans_root=repo_root, git_root=git_home
+        )
+        apply_pr_resolution(cards_by_source, git_home)
+    branch_frontmatter_updated = bootstrap_plan_branches_from_git_local(
+        repo_root, cards_by_source, plans_root=repo_root, git_root=git_home
+    )
     if branch_frontmatter_updated:
-        apply_branch_resolution(cards_by_source, repo_root)
-        apply_pr_resolution(cards_by_source, repo_root)
+        apply_branch_resolution(
+            cards_by_source, repo_root, plans_root=repo_root, git_root=git_home
+        )
+        apply_pr_resolution(cards_by_source, git_home)
     branch_links = persist_resolved_plan_branches(repo_root, cards_by_source)
 
     disposition_synced: list[str] = []
@@ -4541,6 +4689,7 @@ def main() -> int:
             cards_by_source,
             master_path=master_path,
             report_paths=[],
+            git_root=git_home,
         )
         primary, secondary = discover_sources(repo_root)
         items = []
@@ -4548,10 +4697,14 @@ def main() -> int:
             items.extend(collect_plan_items(path, repo_root))
         for path in secondary:
             items.extend(collect_plan_items(path, repo_root))
-        cards_by_source = build_cards_index(repo_root, primary, items, default_owner=default_owner)
+        cards_by_source = build_cards_index(
+            repo_root, primary, items, default_owner=default_owner, git_root=git_home
+        )
         if getattr(args, "ensure_branches", True):
-            apply_branch_resolution(cards_by_source, repo_root)
-            apply_pr_resolution(cards_by_source, repo_root)
+            apply_branch_resolution(
+                cards_by_source, repo_root, plans_root=repo_root, git_root=git_home
+            )
+            apply_pr_resolution(cards_by_source, git_home)
         ready_to_archive = detect_ready_to_archive(list(cards_by_source.values()))
 
     overlap_edges, overlap_clusters = detect_plan_overlaps(
