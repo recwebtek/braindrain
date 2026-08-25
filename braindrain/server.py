@@ -847,10 +847,10 @@ def record_observer_event(
         session_id=session_id,
         event_type=event_type,
         tool_name=tool_name,
-        files_touched=files_touched or [],
+        files_touched=telemetry.sanitize(files_touched or []),
         token_cost=token_cost,
         duration_ms=duration_ms,
-        metadata=metadata or {},
+        metadata=telemetry.sanitize(metadata or {}),
     )
     return _get_observer_store().record_event(event)
 
@@ -1112,7 +1112,7 @@ def record_memory_metric(
         metric_type,
         value=value,
         source=source,
-        metadata=metadata or {},
+        metadata=telemetry.sanitize(metadata or {}),
     )
 
 
