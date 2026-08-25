@@ -170,8 +170,10 @@ def _resolve_pr_state(pr_url: str, *, timeout: float = 8.0) -> str:
     if not pr_url:
         return "none"
     try:
+        # Use -- separator to prevent argument injection from user-controlled pr_url.
+        # Flags must come before the -- separator.
         proc = subprocess.run(
-            ["gh", "pr", "view", pr_url, "--json", "state,mergedAt"],
+            ["gh", "pr", "view", "--json", "state,mergedAt", "--", pr_url],
             capture_output=True,
             text=True,
             timeout=timeout,
