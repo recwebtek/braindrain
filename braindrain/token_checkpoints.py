@@ -72,7 +72,9 @@ def append_checkpoint(
         "note": note,
     }
 
+    # Redact sensitive info (API keys, local paths) before disk persistence
+    sanitized_row = telemetry.sanitize(row)
     with open(out_path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        f.write(json.dumps(sanitized_row, ensure_ascii=False) + "\n")
 
-    return {"ok": True, "path": str(out_path), "checkpoint": row}
+    return {"ok": True, "path": str(out_path), "checkpoint": sanitized_row}
