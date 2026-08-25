@@ -47,7 +47,10 @@ def build_compact_package(
     max_items = 64
     max_item_len = 240
 
-    while _json_size(package) > max_bytes and max_items > 0:
+    while _json_size(package) > max_bytes:
+        if max_items <= 1 and max_item_len <= 40:
+            # Cannot truncate further, must break to avoid infinite loop
+            break
         max_items = max(1, max_items // 2)
         max_item_len = max(40, max_item_len - 40)
         for key in list_keys:
