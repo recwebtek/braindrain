@@ -63,9 +63,10 @@ def estimate_claude_tokens(text: str) -> int:
 # Paths: /Users/..., /Volumes/..., /home/..., /root/...
 _PATH_RE = re.compile(r"(/Users/|/Volumes/|/home/|/root/)([^\s'\",;]+)")
 # API Keys: OpenAI/Anthropic (sk-), Groq (gsk_), HuggingFace (hf_), Google AI (AIza),
-# AWS (AKIA/ASIA), Slack (xoxb/xoxp/...)
+# AWS (AKIA/ASIA), Slack (xoxb/xoxp/...), GitHub (ghp_), GitLab (glpat-),
+# npm (npm_), Stripe (sk_live/sk_test)
 _KEY_RE = re.compile(
-    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,}|A[KS]IA[A-Z0-9]{16,}|xox[bparc]-[a-zA-Z0-9-]{12,})",
+    r"(sk-[a-zA-Z0-9-]{20,}|gsk_[a-zA-Z0-9]{20,}|hf_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35,}|A[KS]IA[A-Z0-9]{16,}|xox[bparc]-[a-zA-Z0-9-]{12,}|ghp_[a-zA-Z0-9]{36}|glpat-[a-zA-Z0-9-]{20,}|npm_[a-zA-Z0-9]{36}|sk_(?:live|test)_[a-zA-Z0-9]{24,})",
     re.IGNORECASE,
 )
 # Generic secrets: password=value, "secret": "value", api_key: token
@@ -182,6 +183,11 @@ class TelemetrySession:
                         and "akia" not in val_lower
                         and "asia" not in val_lower
                         and "xox" not in val_lower
+                        and "ghp_" not in val_lower
+                        and "glpat-" not in val_lower
+                        and "npm_" not in val_lower
+                        and "sk_live" not in val_lower
+                        and "sk_test" not in val_lower
                         and "password" not in val_lower
                         and "secret" not in val_lower
                         and "token" not in val_lower
@@ -199,11 +205,7 @@ class TelemetrySession:
                 sanitized: dict[Any, Any] = {}
                 for key, value in val.items():
                     sanitized_key = _do_sanitize(key)
-                    if (
-                        isinstance(key, str)
-                        and _is_sensitive_dict_key(key)
-                        and isinstance(value, str)
-                    ):
+                    if isinstance(key, str) and _is_sensitive_dict_key(key):
                         sanitized[sanitized_key] = "[REDACTED_SECRET]"
                         continue
                     sanitized[sanitized_key] = _do_sanitize(value)
@@ -211,12 +213,7 @@ class TelemetrySession:
             if isinstance(val, list):
                 return [_do_sanitize(item) for item in val]
             if isinstance(val, tuple):
-                if (
-                    len(val) >= 2
-                    and isinstance(val[0], str)
-                    and _is_sensitive_dict_key(val[0])
-                    and isinstance(val[1], str)
-                ):
+                if len(val) >= 2 and isinstance(val[0], str) and _is_sensitive_dict_key(val[0]):
                     head = tuple(_do_sanitize(item) for item in val[:1])
                     tail = tuple(_do_sanitize(item) for item in val[2:])
                     return head + ("[REDACTED_SECRET]",) + tail
