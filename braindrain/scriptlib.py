@@ -492,7 +492,12 @@ def _normalize_entry(entry: dict[str, Any], *, root: Path) -> dict[str, Any]:
 
 
 def _normalize_index_entry(
-    entry: dict[str, Any], *, root: Path, project_path: str | None = None
+    entry: dict[str, Any],
+    *,
+    root: Path,
+    project_path: str | None = None,
+    settings: dict[str, Any] | None = None,
+    global_entries: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     scope = entry.get("scope") or _scope_for_root(root)
     promotion_state = entry.get("promotion_state") or (
@@ -513,11 +518,14 @@ def _normalize_index_entry(
     payload.setdefault("shared_pin", None)
     payload.setdefault("update_availability", None)
     if project_path:
-        pin = _project_pin(project_path, payload.get("canonical_id", ""))
+        pin = _project_pin(project_path, payload.get("canonical_id", ""), settings=settings)
         if pin and scope == "shared":
             payload["shared_pin"] = pin
             latest = _latest_shared_entry(
-                global_scriptlib_root(), payload["canonical_id"], channel=pin.get("channel")
+                global_scriptlib_root(),
+                payload["canonical_id"],
+                channel=pin.get("channel"),
+                entries=global_entries,
             )
             payload["update_availability"] = bool(
                 latest and latest.get("revision", 0) > int(pin.get("revision", 0))
@@ -720,9 +728,11 @@ def _project_settings(project_path: str | Path) -> dict[str, Any]:
     return read_settings(root)
 
 
-def _project_pin(project_path: str | Path, canonical_id: str) -> dict[str, Any] | None:
-    settings = _project_settings(project_path)
-    return dict((settings.get("shared_pins") or {}).get(canonical_id) or {}) or None
+def _project_pin(
+    project_path: str | Path, canonical_id: str, *, settings: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
+    data = settings if settings is not None else _project_settings(project_path)
+    return dict((data.get("shared_pins") or {}).get(canonical_id) or {}) or None
 
 
 def _find_entry_in_root(
@@ -737,21 +747,26 @@ def _find_entry_in_root(
 
 
 def _latest_shared_entry(
-    root: Path, canonical_id: str, *, channel: str | None = None
+    root: Path,
+    canonical_id: str,
+    *,
+    channel: str | None = None,
+    entries: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
-    entries = [
+    source = entries if entries is not None else _iter_entry_metadata(root)
+    candidates = [
         entry
-        for entry in _iter_entry_metadata(root)
+        for entry in source
         if entry.get("canonical_id") == canonical_id and entry.get("scope") == "shared"
     ]
     if channel:
-        entries = [entry for entry in entries if entry.get("channel") == channel]
-    if not entries:
+        candidates = [entry for entry in candidates if entry.get("channel") == channel]
+    if not candidates:
         return None
-    entries.sort(
+    candidates.sort(
         key=lambda item: (int(item.get("revision", 1)), item.get("updated_at", "")), reverse=True
     )
-    return entries[0]
+    return candidates[0]
 
 
 def _promotion_candidates(project_path: str | Path) -> list[dict[str, Any]]:
@@ -1009,10 +1024,21 @@ def search(
 
     tokens = [tok for tok in re.split(r"[^a-z0-9]+", query.lower()) if tok]
     ranked: list[dict[str, Any]] = []
-    project_root = str(project_scriptlib_root(project_path))
+    project_root_path = project_scriptlib_root(project_path)
+    project_root = str(project_root_path)
+    # Pre-load settings and shared metadata once to avoid O(N^2) file crawling in the loop.
+    project_settings = read_settings(project_root_path)
+    global_entries = _iter_entry_metadata(global_scriptlib_root())
+
     for root in roots:
         for entry in _load_index(root).get("entries") or []:
-            entry = _normalize_index_entry(entry, root=root, project_path=project_path)
+            entry = _normalize_index_entry(
+                entry,
+                root=root,
+                project_path=project_path,
+                settings=project_settings,
+                global_entries=global_entries,
+            )
             if capability and capability not in (entry.get("tags") or []):
                 continue
             if language and entry.get("language") != language:
