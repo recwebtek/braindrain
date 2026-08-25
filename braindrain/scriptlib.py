@@ -492,7 +492,12 @@ def _normalize_entry(entry: dict[str, Any], *, root: Path) -> dict[str, Any]:
 
 
 def _normalize_index_entry(
-    entry: dict[str, Any], *, root: Path, project_path: str | None = None
+    entry: dict[str, Any],
+    *,
+    root: Path,
+    project_path: str | None = None,
+    settings: dict[str, Any] | None = None,
+    latest_shared_map: dict[tuple[str, str | None], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     scope = entry.get("scope") or _scope_for_root(root)
     promotion_state = entry.get("promotion_state") or (
@@ -513,12 +518,24 @@ def _normalize_index_entry(
     payload.setdefault("shared_pin", None)
     payload.setdefault("update_availability", None)
     if project_path:
-        pin = _project_pin(project_path, payload.get("canonical_id", ""))
+        if settings is not None:
+            pin = (
+                dict((settings.get("shared_pins") or {}).get(payload.get("canonical_id", "")) or {})
+                or None
+            )
+        else:
+            pin = _project_pin(project_path, payload.get("canonical_id", ""))
+
         if pin and scope == "shared":
             payload["shared_pin"] = pin
-            latest = _latest_shared_entry(
-                global_scriptlib_root(), payload["canonical_id"], channel=pin.get("channel")
-            )
+            canonical_id = payload.get("canonical_id", "")
+            channel = pin.get("channel")
+            if latest_shared_map is not None:
+                latest = latest_shared_map.get((canonical_id, channel))
+            else:
+                latest = _latest_shared_entry(
+                    global_scriptlib_root(), canonical_id, channel=channel
+                )
             payload["update_availability"] = bool(
                 latest and latest.get("revision", 0) > int(pin.get("revision", 0))
             )
@@ -1009,10 +1026,34 @@ def search(
 
     tokens = [tok for tok in re.split(r"[^a-z0-9]+", query.lower()) if tok]
     ranked: list[dict[str, Any]] = []
-    project_root = str(project_scriptlib_root(project_path))
+    project_root_path = project_scriptlib_root(project_path)
+    project_root_str = str(project_root_path)
+
+    # Optimization: hoist read_settings and build latest_shared_map once.
+    settings = read_settings(project_root_path)
+    latest_shared_map: dict[tuple[str, str | None], dict[str, Any]] = {}
+    global_root = global_scriptlib_root()
+    if is_enabled(global_root):
+        for entry in _iter_entry_metadata(global_root):
+            if entry.get("scope") == "shared":
+                cid = entry.get("canonical_id")
+                chan = entry.get("channel")
+                rev = int(entry.get("revision", 0))
+                key = (cid, chan)
+                if key not in latest_shared_map or rev > int(
+                    latest_shared_map[key].get("revision", 0)
+                ):
+                    latest_shared_map[key] = entry
+
     for root in roots:
         for entry in _load_index(root).get("entries") or []:
-            entry = _normalize_index_entry(entry, root=root, project_path=project_path)
+            entry = _normalize_index_entry(
+                entry,
+                root=root,
+                project_path=project_path,
+                settings=settings,
+                latest_shared_map=latest_shared_map,
+            )
             if capability and capability not in (entry.get("tags") or []):
                 continue
             if language and entry.get("language") != language:
@@ -1023,7 +1064,7 @@ def search(
                 continue
             haystack = entry.get("search_text", "")
             match_score = sum(haystack.count(token) for token in tokens) if tokens else 1
-            overlay_bonus = 15.0 if str(root) == project_root else 0.0
+            overlay_bonus = 15.0 if str(root) == project_root_str else 0.0
             pin_bonus = 10.0 if entry.get("shared_pin") else 0.0
             score = (
                 (match_score * 5.0)
