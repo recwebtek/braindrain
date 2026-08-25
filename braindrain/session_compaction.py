@@ -47,9 +47,20 @@ def build_compact_package(
     max_items = 64
     max_item_len = 240
 
-    while _json_size(package) > max_bytes and max_items > 0:
-        max_items = max(1, max_items // 2)
+    # Cache size to avoid redundant json.dumps in loop
+    current_size = _json_size(package)
+
+    while current_size > max_bytes:
+        prev_max_items = max_items
+        prev_max_item_len = max_item_len
+
+        max_items = max(0, max_items // 2)
         max_item_len = max(40, max_item_len - 40)
+
+        # Safety break: if we can't reduce limits further, stop to avoid infinite loop
+        if max_items == prev_max_items and max_item_len == prev_max_item_len:
+            break
+
         for key in list_keys:
             package[key] = _truncate_list(
                 package[key], max_items=max_items, max_item_len=max_item_len
@@ -59,8 +70,12 @@ def build_compact_package(
             top = sorted(tools.items(), key=lambda kv: kv[1], reverse=True)[:max_items]
             package["tools_used"] = dict(top)
 
-    package["bytes"] = _json_size(package)
-    package["truncated"] = _json_size(package) >= max_bytes - 32
+        current_size = _json_size(package)
+        if max_items == 0 and max_item_len <= 40:
+            break
+
+    package["bytes"] = current_size
+    package["truncated"] = current_size >= max_bytes - 32
     return package
 
 
