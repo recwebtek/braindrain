@@ -80,3 +80,18 @@ def test_record_persists_sanitized_jsonl(tmp_path: Path) -> None:
     assert "abc123" not in line
     assert "[REDACTED_PATH]" in line
     assert "[REDACTED_SECRET]" in line
+
+
+def test_redacts_non_string_sensitive_values(tmp_path: Path) -> None:
+    session = _session(tmp_path)
+    payload = {
+        "password": 12345,
+        "api_key": True,
+        "nested": {
+            "token": {"sub": "data"}
+        }
+    }
+    sanitized = session.sanitize(payload)
+    assert sanitized["password"] == "[REDACTED_SECRET]"
+    assert sanitized["api_key"] == "[REDACTED_SECRET]"
+    assert sanitized["nested"]["token"] == "[REDACTED_SECRET]"
