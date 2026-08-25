@@ -580,6 +580,10 @@ class WikiBrain:
         return self._half_life(anchor, now, self.recency_half_life_days)
 
     def _row_to_record(self, row: sqlite3.Row) -> BrainRecord:
+        # Fast-path for common empty JSON defaults to avoid expensive json.loads() calls.
+        tags_raw = row["tags"]
+        evidence_raw = row["evidence_refs"]
+        meta_raw = row["metadata"]
         return BrainRecord(
             record_id=row["record_id"],
             record_class=row["record_class"],
@@ -590,9 +594,9 @@ class WikiBrain:
             status=row["status"],
             importance=float(row["importance"]),
             confidence=float(row["confidence"]),
-            tags=json.loads(row["tags"] or "[]"),
-            evidence_refs=json.loads(row["evidence_refs"] or "[]"),
-            metadata=json.loads(row["metadata"] or "{}"),
+            tags=[] if tags_raw in (None, "[]") else json.loads(tags_raw),
+            evidence_refs=[] if evidence_raw in (None, "[]") else json.loads(evidence_raw),
+            metadata={} if meta_raw in (None, "{}") else json.loads(meta_raw),
             supersedes_id=row["supersedes_id"],
             created_at=float(row["created_at"]),
             updated_at=float(row["updated_at"]),
