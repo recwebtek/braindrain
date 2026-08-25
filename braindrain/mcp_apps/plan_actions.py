@@ -103,8 +103,8 @@ def _branch_changed_files(repo_root: Path, branch: str) -> list[str]:
             if verify.returncode != 0:
                 continue
             for diff_args in (
-                ["git", "diff", "--name-only", f"{base_ref}...{branch}"],
-                ["git", "diff", "--name-only", base_ref, branch],
+                ["git", "diff", "--name-only", f"{base_ref}...{branch}", "--"],
+                ["git", "diff", "--name-only", base_ref, branch, "--"],
             ):
                 diff = subprocess.run(
                     diff_args,
@@ -171,7 +171,7 @@ def _resolve_pr_state(pr_url: str, *, timeout: float = 8.0) -> str:
         return "none"
     try:
         proc = subprocess.run(
-            ["gh", "pr", "view", pr_url, "--json", "state,mergedAt"],
+            ["gh", "pr", "view", "--json", "state,mergedAt", "--", pr_url],
             capture_output=True,
             text=True,
             timeout=timeout,
