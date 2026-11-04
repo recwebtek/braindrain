@@ -1167,6 +1167,68 @@ def test_sync_plan_phase_branches_writes_registry(
     assert cards[card.source].pr == "#109, #110"
 
 
+def test_sync_plan_phase_branches_keeps_closing_fence_on_rerun(
+    tmp_project_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    m = _load_audit_module()
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    plan_path = plans / "two-branch.plan.md"
+    plan_path.write_text(
+        "---\n"
+        "name: Two branch plan\n"
+        "disposition: active\n"
+        "branch: main\n"
+        "branches:\n"
+        "  - main\n"
+        "  - prod\n"
+        "---\n"
+        "# Two branch plan\n"
+        "- [ ] work item\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(m, "_fetch_pr_details", lambda *a, **k: None)
+
+    for _ in range(2):
+        items = m.collect_plan_items(plan_path, tmp_project_dir)
+        card = m.build_plan_card(plan_path, tmp_project_dir, items, default_owner="@test")
+        m.sync_plan_phase_branches(tmp_project_dir, {card.source: card})
+
+    text = plan_path.read_text(encoding="utf-8")
+    assert m.FRONTMATTER_BLOCK_RE.match(text)
+    assert text.startswith("---\nname: Two branch plan\n")
+    fence_glued = [ln for ln in text.splitlines() if ln.endswith("---") and ln != "---"]
+    assert fence_glued == []
+    assert text.count("\n---\n") == 1
+    assert m.parse_plan_frontmatter(text)["disposition"] == "active"
+
+
+def test_append_frontmatter_list_value_scalar_to_list_keeps_fence() -> None:
+    m = _load_audit_module()
+    text = "---\nname: X\nrelates_to: a.plan.md\n---\n# X\n"
+    out = m._append_frontmatter_list_value(text, "relates_to", "b.plan.md")
+    assert "relates_to:\n  - a.plan.md\n  - b.plan.md\n---\n# X\n" in out
+    assert m.FRONTMATTER_BLOCK_RE.match(out)
+
+
+def test_append_plan_branch_registry_keeps_closing_fence(tmp_project_dir: Path) -> None:
+    m = _load_audit_module()
+    plans = tmp_project_dir / ".cursor" / "plans"
+    plans.mkdir(parents=True)
+    plan_path = plans / "phase.plan.md"
+    plan_path.write_text(
+        "---\nname: Phase plan\nbranch: main\nbranches:\n  - main\n---\n# Phase plan\n",
+        encoding="utf-8",
+    )
+    source = ".cursor/plans/phase.plan.md"
+    assert m.append_plan_branch_registry(tmp_project_dir, source, "prod")
+    text = plan_path.read_text(encoding="utf-8")
+    assert m.FRONTMATTER_BLOCK_RE.match(text)
+    assert "  - prod\n---\n# Phase plan\n" in text
+    fence_glued = [ln for ln in text.splitlines() if ln.endswith("---") and ln != "---"]
+    assert fence_glued == []
+
+
 def test_format_plan_pr_summary_aggregates() -> None:
     m = _load_audit_module()
     card = m.PlanCard(

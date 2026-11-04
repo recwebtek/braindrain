@@ -36,6 +36,7 @@ from plan_branch_utils import (  # noqa: E402, I001
     parse_frontmatter_todos,
     parse_plan_frontmatter,
     remove_frontmatter_block as _remove_frontmatter_block,
+    render_frontmatter_block,
     remove_frontmatter_scalar as _remove_frontmatter_scalar,
     set_frontmatter_key as _set_frontmatter_key,
     set_frontmatter_yaml_block as _set_frontmatter_yaml_block,
@@ -1615,8 +1616,7 @@ def sync_plan_phase_branches(
                 ]
                 fm_body = _remove_frontmatter_block(fm_body, "branches")
                 fm_body = fm_body.rstrip() + "\n" + "\n".join(branches_lines) + "\n"
-            new_block = f"---\n{fm_body}---\n"
-            new_text = new_block + new_text[len(match.group(0)) :]
+            new_text = render_frontmatter_block(fm_body) + new_text[len(match.group(0)) :]
         if new_text != current:
             path.write_text(new_text, encoding="utf-8")
             updated.append(source)
@@ -1652,8 +1652,7 @@ def append_plan_branch_registry(
     fm_body = _remove_frontmatter_block(fm_body, "branches")
     branches_lines = ["branches:"] + [f"  - {name}" for name in branch_list]
     fm_body = fm_body.rstrip() + "\n" + "\n".join(branches_lines) + "\n"
-    new_block = f"---\n{fm_body}---\n"
-    new_text = new_block + current[len(match.group(0)) :]
+    new_text = render_frontmatter_block(fm_body) + current[len(match.group(0)) :]
     if new_text == current:
         return False
     path.write_text(new_text, encoding="utf-8")
@@ -2063,7 +2062,7 @@ def _append_frontmatter_list_value(text: str, key: str, value: str) -> str:
     """Append a list item under ``key`` without overwriting existing relation keys."""
     match = FRONTMATTER_BLOCK_RE.match(text)
     if not match:
-        return f"---\n{key}:\n  - {value}\n---\n\n{text}"
+        return render_frontmatter_block(f"{key}:\n  - {value}\n") + "\n" + text
     fm_body = match.group(1)
     fm = _parse_frontmatter_body(fm_body)
     existing = _frontmatter_relation_values(fm, key)
@@ -2092,10 +2091,7 @@ def _append_frontmatter_list_value(text: str, key: str, value: str) -> str:
                 break
         lines.insert(insert_at, f"  - {value}")
         updated_body = "\n".join(lines)
-        if not updated_body.endswith("\n"):
-            updated_body += "\n"
-    new_block = f"---\n{updated_body}---\n"
-    return new_block + text[len(match.group(0)) :]
+    return render_frontmatter_block(updated_body) + text[len(match.group(0)) :]
 
 
 def apply_overlap_relations(

@@ -90,9 +90,8 @@ def _inject_frontmatter_key(text: str, key: str, value: str) -> str:
         if re.search(rf"(?m)^{re.escape(key)}\s*:", fm_body):
             return text
         updated_body = fm_body.rstrip() + f"\n{key}: {value}\n"
-        new_block = f"---\n{updated_body}---\n"
-        return new_block + text[len(fm_block) :]
-    return f"---\n{key}: {value}\n---\n\n{text}"
+        return render_frontmatter_block(updated_body) + text[len(fm_block) :]
+    return render_frontmatter_block(f"{key}: {value}\n") + "\n" + text
 
 
 def set_frontmatter_key(text: str, key: str, value: str) -> str:
@@ -107,8 +106,20 @@ def set_frontmatter_key(text: str, key: str, value: str) -> str:
         updated_body = key_re.sub(f"{key}: {value}", fm_body, count=1)
     else:
         updated_body = fm_body.rstrip() + f"\n{key}: {value}\n"
-    new_block = f"---\n{updated_body}---\n"
-    return new_block + text[len(fm_block) :]
+    return render_frontmatter_block(updated_body) + text[len(fm_block) :]
+
+
+def render_frontmatter_block(body: str) -> str:
+    """Wrap a frontmatter body in ``---`` fences.
+
+    ``FRONTMATTER_BLOCK_RE`` captures the body without the newline before the
+    closing fence. Re-emitting that capture unchanged glues the fence onto the
+    last value (``key: "x"---``); the next run then fails to match and
+    prepends a second frontmatter block.
+    """
+    if not body.endswith("\n"):
+        body += "\n"
+    return f"---\n{body}---\n"
 
 
 def remove_frontmatter_scalar(fm_body: str, key: str) -> str:
@@ -136,7 +147,7 @@ def set_frontmatter_yaml_block(text: str, key: str, block_lines: list[str]) -> s
     match = FRONTMATTER_BLOCK_RE.match(text)
     if not match:
         body = "\n".join(block_lines) + "\n"
-        return f"---\n{body}---\n\n{text}"
+        return render_frontmatter_block(body) + "\n" + text
     fm_body = match.group(1)
     fm_body = remove_frontmatter_block(fm_body, key)
     fm_body = fm_body.rstrip()
@@ -145,8 +156,7 @@ def set_frontmatter_yaml_block(text: str, key: str, block_lines: list[str]) -> s
         fm_body += "\n" + block_text
     else:
         fm_body = block_text
-    new_block = f"---\n{fm_body}---\n"
-    return new_block + text[len(match.group(0)) :]
+    return render_frontmatter_block(fm_body) + text[len(match.group(0)) :]
 
 
 def plan_body_after_frontmatter(text: str) -> str:
